@@ -1,0 +1,14 @@
+query: !and
+  - !or
+    - !term "rust"
+    - !term "go"
+  - !field
+    name: "category"
+    value: "programming"
+  - !not
+    query: !or
+    - !term "deprecated"
+    - !term "legacy"
+  - !boost
+    query: !phrase "best practices"
+    factor: 2.5

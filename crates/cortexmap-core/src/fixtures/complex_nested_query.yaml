@@ -1,0 +1,7 @@
+query: !and
+  - !term "rust"
+  - !or
+    - !term "async"
+    - !term "tokio"
+  - !not
+    query: !term "outdated"
