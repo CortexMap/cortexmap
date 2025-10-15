@@ -5,6 +5,12 @@ edition = "2024"
 
 [dependencies]
 thiserror.workspace = true
-serde .workspace = true
+serde.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+tokio = { version = "1", features = ["full"] }
+futures = "0.3.31"
 
 cortexmap-core.workspace = true
+cortexmap-infra.workspace = true
