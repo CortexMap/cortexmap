@@ -10,7 +10,7 @@ pub async fn fetch<I: HttpInfra>(
 ) -> Result<(), FetchError> {
     let meta = fetch_metadata(blueprint, ctx.clone()).await?;
 
-    let mut pdf_streams = Vec::new();
+    let mut pdf_streams = Vec::with_capacity(meta.result.result.len());
     for pmc_id in meta.result.result.into_iter().filter_map(|v| v.pmcid) {
         let stream = fetch_pdf(&pmc_id, ctx.clone()).await?;
         pdf_streams.push(stream);
