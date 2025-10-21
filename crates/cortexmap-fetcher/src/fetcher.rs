@@ -19,11 +19,13 @@ pub async fn fetch<I: HttpInfra + Send + Sync + 'static>(
     )
     .await
     .into_iter()
-        // Ignoring all errors for now.
-        // We need more powerful type to
-        // catch list of errors.
-        // TODO: maybe we could use `tailcall-valid`
-        // for this.
+    // Ignoring all errors for now.
+    // We need more powerful type to
+    // catch list of errors (and to
+    // avoid failing on the first one).
+    // TODO: maybe we could use `tailcall-valid`
+    // for this or have some nexted FetchErrors'
+    // variant.
     .flatten()
     .flatten()
     .collect::<Vec<_>>();

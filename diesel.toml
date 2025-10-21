@@ -2,7 +2,7 @@
 # see https://diesel.rs/guides/configuring-diesel-cli
 
 [print_schema]
-file = "crates/cortexmap-infra/src/schema.rs"
+file = "crates/cortexmap-infra/schema.rs"
 custom_type_derives = ["diesel::query_builder::QueryId", "Clone"]
 
 #[migrations_directory]
