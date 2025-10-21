@@ -1,5 +1,4 @@
 mod cm_blueprint;
-mod db;
+mod connections;
 
 pub use cm_blueprint::*;
-pub use db::*;

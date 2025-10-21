@@ -26,8 +26,11 @@ pub async fn fetch_metadata<I: HttpInfra>(
     ctx: InfraContext<I>,
 ) -> Result<PMCIDs, FetchError> {
     let url = PUBMOD_URL
-        .replace("{query}", blueprint.query.as_str())
-        .replace("{pageSize}", blueprint.page_size.to_string().as_str());
+        .replace("{query}", blueprint.fetcher.query.as_str())
+        .replace(
+            "{pageSize}",
+            blueprint.fetcher.page_size.to_string().as_str(),
+        );
     let resp = ctx.infra.get(&url).await?;
     let body = serde_json::from_slice(&resp.bytes().await?)?;
     Ok(body)

@@ -1,9 +1,6 @@
-use crate::blueprint::Database;
+use crate::blueprint::connections::{Connections, Fetcher};
 
 pub struct Blueprint {
-    // TODO: divide these into structs like
-    // `Fetcher`, `Connections`, etc.
-    pub query: String,
-    pub page_size: u64,
-    pub db: Database,
+    pub fetcher: Fetcher,
+    pub connections: Connections,
 }

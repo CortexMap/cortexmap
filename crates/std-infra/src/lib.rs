@@ -1,6 +1,7 @@
 mod database;
 mod http;
 mod infra;
+mod s3;
 
 pub use database::*;
 
@@ -11,6 +12,10 @@ use std::sync::Arc;
 #[derive(derive_builder::Builder)]
 pub struct StdInfraContext {
     pub database_url: String,
+    pub endpoint: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub bucket: String,
 }
 
 impl StdInfraContext {
@@ -21,7 +26,13 @@ impl StdInfraContext {
         // so maybe we could initiate this statically
         // and always return the same instance.
         Ok(InfraContext {
-            infra: Arc::new(StdInfra::new(&self.database_url)?),
+            infra: Arc::new(StdInfra::new(
+                &self.database_url,
+                &self.endpoint,
+                &self.access_key,
+                &self.secret_key,
+                &self.bucket,
+            )?),
         })
     }
 }

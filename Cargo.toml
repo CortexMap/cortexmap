@@ -17,6 +17,11 @@ diesel = { version = "2.3.2", features = ["postgres", "r2d2", "chrono"] }
 chrono = "0.4.42"
 tokio = { version = "1.48.0", features = [] }
 derive_builder = "0.20.2"
+aws-sdk-s3 = { version = "1.108.0", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.8", features = ["hardcoded-credentials"] }
+aws-smithy-types = "1.3.3"
+http-body-util = "0.1.3"
+http-body = "1.0"
 
 cortexmap-core = { path = "crates/cortexmap-core" }
 cortexmap-infra = { path = "crates/cortexmap-infra" }

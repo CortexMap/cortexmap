@@ -10,5 +10,11 @@ bytes.workspace = true
 diesel.workspace = true
 tokio.workspace = true
 derive_builder.workspace = true
+futures.workspace = true
+aws-sdk-s3.workspace = true
+aws-credential-types.workspace = true
+aws-smithy-types.workspace = true
+http-body-util.workspace = true
+http-body.workspace = true
 
 cortexmap-infra.workspace = true
