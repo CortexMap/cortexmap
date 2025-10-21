@@ -13,7 +13,7 @@ pub enum FetchError {
     SerdeError(#[from] serde_json::Error),
 
     #[error("Join Error: {0}")]
-    JoinError(String),
+    JoinError(tokio::task::JoinError),
 
     #[error("Invalid PDF Source: {0}")]
     InvalidPdfSource(String),

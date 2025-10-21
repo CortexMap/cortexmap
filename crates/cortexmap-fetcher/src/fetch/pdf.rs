@@ -11,11 +11,11 @@ pub struct PdfStream {
     pub pmc_id: String,
 }
 
-pub async fn fetch_pdf<I: HttpInfra>(
-    pmc_id: &str,
+pub async fn fetch_pdf<I: HttpInfra + Send + Sync + 'static>(
+    pmc_id: String,
     ctx: InfraContext<I>,
 ) -> Result<PdfStream, FetchError> {
-    let url = URL.replace("{PMCID}", pmc_id);
+    let url = URL.replace("{PMCID}", &pmc_id);
     let response = ctx.infra.get(&url).await?;
 
     let stream = futures::stream::unfold(response, |mut resp| async move {
@@ -28,6 +28,6 @@ pub async fn fetch_pdf<I: HttpInfra>(
 
     Ok(PdfStream {
         stream: Box::pin(stream),
-        pmc_id: pmc_id.to_string(),
+        pmc_id,
     })
 }

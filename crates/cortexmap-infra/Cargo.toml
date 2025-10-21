@@ -8,3 +8,6 @@ thiserror.workspace = true
 bytes.workspace = true
 reqwest.workspace = true
 async-trait.workspace = true
+diesel.workspace = true
+chrono.workspace = true
+tokio.workspace = true
