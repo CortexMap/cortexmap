@@ -1,0 +1,14 @@
+query: !and
+  - !or
+    - !term "motor cortex"
+    - !term "M1"
+  - !or
+    - !term "fMRI"
+    - !term "optogenetics"
+  - !or
+    - !term "mouse"
+    - !term "human"
+
+pageSize: 10
+
+apiUrl: https://www.ebi.ac.uk/europepmc/webservices/rest/search?format=json&pageSize={{.pageSize}}&query={{.query}}
