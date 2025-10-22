@@ -7,7 +7,7 @@ use diesel::prelude::*;
 #[diesel(table_name = papers)]
 pub struct NewPaper {
     pub pmc_id: String,
-    pub s3_url: String,
+    pub s3_key: String,
     pub uid: String,
     pub query: String,
 }
@@ -19,7 +19,7 @@ pub struct NewPaper {
 pub struct Paper {
     pub id: i64,
     pub pmc_id: String,
-    pub s3_url: String,
+    pub s3_key: String,
     pub uid: String,
     pub query: String,
     pub created_at: chrono::NaiveDateTime,

@@ -13,3 +13,4 @@ chrono.workspace = true
 tokio.workspace = true
 futures.workspace = true
 aws-sdk-s3.workspace = true
+tracing.workspace = true

@@ -2,7 +2,9 @@ use crate::StdDatabaseInfra;
 use crate::http::StdHttpInfra;
 use crate::s3::StdS3Infra;
 use bytes::Bytes;
-use cortexmap_infra::{DatabaseInfra, HttpInfra, InfraError, NewPaper, Paper, S3Infra};
+use cortexmap_infra::{
+    ContentType, DatabaseInfra, HttpInfra, InfraError, NewPaper, Paper, S3Infra,
+};
 use futures::Stream;
 use reqwest::Response;
 use std::pin::Pin;
@@ -52,12 +54,12 @@ impl DatabaseInfra for StdInfra {
 
 #[async_trait::async_trait]
 impl S3Infra for StdInfra {
-    async fn put(
+    async fn put_s3(
         &self,
         key: &str,
-        content_type: &str,
+        content_type: ContentType,
         content: Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
     ) -> Result<(), InfraError> {
-        self.s3_infra.put(key, content_type, content).await
+        self.s3_infra.put_s3(key, content_type, content).await
     }
 }

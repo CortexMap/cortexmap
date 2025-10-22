@@ -1,10 +1,28 @@
+use std::fmt::{Display, Formatter};
 use crate::error::InfraError;
 use crate::{NewPaper, Paper};
 use bytes::Bytes;
 use futures::Stream;
 use reqwest::Response;
-use std::path::PathBuf;
 use std::pin::Pin;
+
+pub enum ContentType {
+    Text,
+    Pdf,
+}
+
+impl Display for ContentType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ContentType::Text => {
+                write!(f, "text/plain")
+            }
+            ContentType::Pdf => {
+                write!(f, "application/pdf")
+            }
+        }
+    }
+}
 
 #[async_trait::async_trait]
 pub trait HttpInfra {
@@ -21,10 +39,10 @@ pub trait DatabaseInfra {
 
 #[async_trait::async_trait]
 pub trait S3Infra {
-    async fn put(
+    async fn put_s3(
         &self,
         key: &str,
-        content_type: &str,
+        content_type: ContentType,
         content: Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
     ) -> Result<(), InfraError>;
 }

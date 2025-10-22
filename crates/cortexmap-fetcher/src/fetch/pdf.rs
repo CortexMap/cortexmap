@@ -7,7 +7,7 @@ use std::pin::Pin;
 const URL: &str = "https://europepmc.org/backend/ptpmcrender.fcgi?amp;blobtype=pdf&accid={PMCID}";
 
 pub struct PdfStream {
-    pub stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    pub stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send + Sync>>,
     pub pmc_id: String,
 }
 

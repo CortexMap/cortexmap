@@ -2,7 +2,7 @@ use aws_credential_types::Credentials;
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::Region;
 use bytes::Bytes;
-use cortexmap_infra::{InfraError, S3Infra};
+use cortexmap_infra::{ContentType, InfraError, S3Infra};
 use futures::{Stream, StreamExt};
 use std::pin::Pin;
 
@@ -31,10 +31,10 @@ impl StdS3Infra {
 
 #[async_trait::async_trait]
 impl S3Infra for StdS3Infra {
-    async fn put(
+    async fn put_s3(
         &self,
         key: &str,
-        content_type: &str,
+        content_type: ContentType,
         content: Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
     ) -> Result<(), InfraError> {
         // Convert the stream into http_body_util::StreamBody
@@ -54,7 +54,7 @@ impl S3Infra for StdS3Infra {
             .bucket(&self.bucket)
             .key(key)
             .body(byte_stream)
-            .content_type(content_type)
+            .content_type(content_type.to_string())
             .send()
             .await?;
 

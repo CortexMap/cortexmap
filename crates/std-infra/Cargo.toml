@@ -16,5 +16,6 @@ aws-credential-types.workspace = true
 aws-smithy-types.workspace = true
 http-body-util.workspace = true
 http-body.workspace = true
+uuid.workspace = true
 
 cortexmap-infra.workspace = true
