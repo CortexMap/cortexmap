@@ -5,6 +5,18 @@ edition = "2024"
 
 [dependencies]
 thiserror.workspace = true
-serde .workspace = true
+serde.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+futures.workspace = true
+bytes.workspace = true
+tokio = { version = "1.48.0", features = [] }
 
 cortexmap-core.workspace = true
+cortexmap-infra.workspace = true
+uuid = { version = "1.18.1", features = ["v4"] }
+tracing = "0.1.41"
+
+[dev-dependencies]
+# it's bad idea to use std-infra for tests..
+std-infra = { path = "../std-infra" }

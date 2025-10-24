@@ -1,0 +1,16 @@
+[package]
+name = "cortexmap-infra"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror.workspace = true
+bytes.workspace = true
+reqwest.workspace = true
+async-trait.workspace = true
+diesel.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+futures.workspace = true
+aws-sdk-s3.workspace = true
+tracing.workspace = true

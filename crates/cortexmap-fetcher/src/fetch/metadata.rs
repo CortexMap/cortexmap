@@ -1,20 +1,37 @@
 use crate::FetchError;
 use cortexmap_core::blueprint::Blueprint;
+use cortexmap_infra::{HttpInfra, InfraContext};
 use serde::Deserialize;
 
-const PUBMOD_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={query}&retmode=json";
+const PUBMOD_URL: &str = "https://www.ebi.ac.uk/europepmc/webservices/rest/search?format=json&pageSize={pageSize}&query={query}";
+
+#[derive(Debug, Deserialize)]
+pub struct PMCIDs {
+    #[serde(rename = "resultList")]
+    pub result: SearchResult,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct SearchResult {
-    esearchresult: SearchData,
+    pub result: Vec<SearchData>,
 }
-
 #[derive(Debug, Deserialize)]
 pub struct SearchData {
-    idlist: Vec<String>,
+    #[serde(default)]
+    pub pmcid: Option<String>,
 }
 
-pub fn fetch_metadata(blueprint: &Blueprint) -> Result<SearchResult, FetchError> {
-    let _url = PUBMOD_URL.replace("{query}", blueprint.query.as_str());
-    todo!()
+pub async fn fetch_metadata<I: HttpInfra>(
+    blueprint: &Blueprint,
+    ctx: InfraContext<I>,
+) -> Result<PMCIDs, FetchError> {
+    let url = PUBMOD_URL
+        .replace("{query}", blueprint.fetcher.query.as_str())
+        .replace(
+            "{pageSize}",
+            blueprint.fetcher.page_size.to_string().as_str(),
+        );
+    let resp = ctx.infra.get(&url).await?;
+    let body = serde_json::from_slice(&resp.bytes().await?)?;
+    Ok(body)
 }

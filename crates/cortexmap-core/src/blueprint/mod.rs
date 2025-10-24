@@ -1,3 +1,4 @@
-pub struct Blueprint {
-    pub query: String,
-}
+mod cm_blueprint;
+mod connections;
+
+pub use cm_blueprint::*;
