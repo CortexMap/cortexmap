@@ -8,7 +8,8 @@ thiserror.workspace = true
 serde.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
-futures = "0.3.31"
+futures.workspace = true
+bytes.workspace = true
 
 cortexmap-core.workspace = true
 cortexmap-infra.workspace = true
