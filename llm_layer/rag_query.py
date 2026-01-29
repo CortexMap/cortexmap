@@ -4,8 +4,12 @@ from typing import List, Tuple
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_community.vectorstores import Chroma
 from langchain_core.messages import SystemMessage, HumanMessage
+from dotenv import load_dotenv
+import os, shutil
 
-CHROMA_PATH = "chroma"
+load_dotenv()
+
+CHROMA_PATH = os.getenv('CHROMA_DB_PATH')
 
 # Strong, retrieval-grounded system prompt
 SYSTEM_PROMPT = """You are a careful, retrieval-grounded assistant.
