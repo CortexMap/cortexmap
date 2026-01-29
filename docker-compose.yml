@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cortexmap-postgres
+    environment:
+      POSTGRES_USER: cortexmap
+      POSTGRES_PASSWORD: cortexmap_dev
+      POSTGRES_DB: cortexmap
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cortexmap"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cortexmap-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: cortexmap-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"  # MinIO API
+      - "9001:9001"  # MinIO Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - cortexmap-network
+
+  # Optional: Create default bucket on startup
+  minio-setup:
+    image: minio/mc:latest
+    container_name: cortexmap-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/cortexmap --ignore-existing;
+      /usr/bin/mc anonymous set download myminio/cortexmap;
+      exit 0;
+      "
+    networks:
+      - cortexmap-network
+
+  # PostgreSQL visualization tools
+  adminer:
+    image: adminer:latest
+    container_name: cortexmap-adminer
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: 10.2.0.251:5432
+    networks:
+      - cortexmap-network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: cortexmap-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@cortexmap.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - cortexmap-network
+
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  cortexmap-network:
+    driver: bridge
