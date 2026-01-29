@@ -1,0 +1,160 @@
+.paper-card {
+  background: white;
+  border-radius: 16px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.paper-card:hover {
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+}
+
+.paper-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #f0f0f0;
+}
+
+.paper-id {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.paper-id-label {
+  font-size: 0.9rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.paper-id-value {
+  font-size: 0.9rem;
+  color: #333;
+  font-family: 'Courier New', monospace;
+  background: #f5f5f5;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+.paper-pmid {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.pmid-label {
+  font-size: 0.9rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.pmid-value {
+  font-size: 0.9rem;
+  color: #667eea;
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+}
+
+.components-status {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.component-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.75rem;
+  background: #f9f9f9;
+  border-radius: 8px;
+  transition: background 0.2s ease;
+}
+
+.component-row:hover {
+  background: #f0f0f0;
+}
+
+.component-label {
+  min-width: 80px;
+  font-weight: 600;
+  color: #333;
+  font-size: 0.95rem;
+}
+
+.component-details {
+  flex: 1;
+  margin-left: 1rem;
+}
+
+.metadata-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.metadata-preview strong {
+  color: #333;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.metadata-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.metadata-info span {
+  display: inline-block;
+}
+
+.abstract-preview {
+  font-size: 0.9rem;
+  color: #555;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.pdf-link {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  text-decoration: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.pdf-link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+}
+
+.error-message {
+  color: #e74c3c;
+  font-size: 0.85rem;
+  font-style: italic;
+  margin-left: auto;
+}
