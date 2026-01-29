@@ -2,10 +2,11 @@ mod database;
 mod http;
 mod infra;
 mod s3;
+mod task_queue;
 
 pub use database::*;
+pub use infra::StdInfra; // Make StdInfra public for testing
 
-use crate::infra::StdInfra;
 use cortexmap_infra::{InfraContext, InfraError};
 use std::sync::Arc;
 

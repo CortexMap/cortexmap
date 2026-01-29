@@ -1,17 +1,37 @@
 use anyhow::Result;
-use clap::Parser;
-use cortexmap_core::blueprint::connections::{Connections, Database, Fetcher, Postgresql, S3Info};
+use clap::{Parser, ValueEnum};
+use cortexmap_core::blueprint::connections::{
+    BackoffStrategy, ComponentRetryConfig, Connections, Database, Fetcher, Postgresql, RetryConfig,
+    S3Info,
+};
 use cortexmap_core::blueprint::Blueprint;
+use cortexmap_infra::TaskQueueInfra;
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::sync::Arc;
 use std_infra::StdInfraContextBuilder;
 use tracing::Level;
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Mode {
+    /// Synchronous mode: fetch and upload immediately (legacy behavior)
+    Sync,
+    /// Enqueue mode: add tasks to queue and exit
+    Enqueue,
+    /// Worker mode: run worker loop to process queue
+    Worker,
+    /// Status mode: show queue statistics
+    Status,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "cortexmap-cli")]
 #[command(about = "Fetch and store academic papers from Europe PMC", long_about = None)]
 struct Args {
+    /// Execution mode
+    #[arg(short, long, value_enum, default_value = "sync")]
+    mode: Mode,
+
     /// Search query for Europe PMC
     #[arg(short, long)]
     query: String,
@@ -44,6 +64,46 @@ struct Args {
     #[arg(long, env = "S3_BUCKET")]
     s3_bucket: String,
 
+    /// Timeout in seconds between processing each task in the queue
+    #[arg(long, default_value = "1")]
+    task_timeout_secs: u64,
+
+    /// Maximum number of retry attempts for failed components
+    #[arg(long, default_value = "3")]
+    max_retry_attempts: u32,
+
+    /// Sleep duration in seconds when queue is empty
+    #[arg(long, default_value = "5")]
+    empty_queue_sleep_secs: u64,
+
+    /// Backoff strategy: constant, linear, exponential, fibonacci
+    #[arg(long, default_value = "constant")]
+    backoff_strategy: String,
+
+    /// Maximum backoff delay in seconds (for non-constant strategies)
+    #[arg(long, default_value = "300")]
+    max_backoff_delay_secs: u64,
+
+    /// Jitter factor for exponential backoff (0.0 to 1.0)
+    #[arg(long, default_value = "0.1")]
+    backoff_jitter: f64,
+
+    /// Multiplier for stale task timeout detection
+    #[arg(long, default_value = "10")]
+    stale_task_multiplier: u64,
+
+    /// Max retries for summary component (overrides global max if set)
+    #[arg(long)]
+    summary_max_retries: Option<u32>,
+
+    /// Max retries for abstract component (overrides global max if set)
+    #[arg(long)]
+    abstract_max_retries: Option<u32>,
+
+    /// Max retries for PDF component (overrides global max if set)
+    #[arg(long)]
+    pdf_max_retries: Option<u32>,
+
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
@@ -61,12 +121,52 @@ async fn main() -> Result<()> {
     };
     tracing_subscriber::fmt().with_max_level(level).init();
 
+    // Parse backoff strategy
+    let backoff_strategy = match args.backoff_strategy.to_lowercase().as_str() {
+        "linear" => BackoffStrategy::Linear {
+            max_delay_secs: args.max_backoff_delay_secs,
+        },
+        "exponential" => BackoffStrategy::Exponential {
+            max_delay_secs: args.max_backoff_delay_secs,
+            jitter: args.backoff_jitter,
+        },
+        "fibonacci" => BackoffStrategy::Fibonacci {
+            max_delay_secs: args.max_backoff_delay_secs,
+        },
+        _ => BackoffStrategy::Constant, // Default to constant
+    };
+
+    // Create retry configuration
+    let component_max_retries = if args.summary_max_retries.is_some()
+        || args.abstract_max_retries.is_some()
+        || args.pdf_max_retries.is_some()
+    {
+        Some(ComponentRetryConfig {
+            summary_max_retries: args.summary_max_retries,
+            abstract_max_retries: args.abstract_max_retries,
+            pdf_max_retries: args.pdf_max_retries,
+        })
+    } else {
+        None
+    };
+
+    let retry_config = RetryConfig {
+        empty_queue_sleep_secs: args.empty_queue_sleep_secs,
+        stale_task_multiplier: args.stale_task_multiplier,
+        backoff_strategy,
+        component_max_retries,
+    };
+
     // Create the blueprint
     let blueprint = Blueprint {
         fetcher: Fetcher {
             query: args.query.clone(),
             page_size: args.page_size,
             upload_path_prefix: args.upload_prefix.clone(),
+            task_timeout_secs: args.task_timeout_secs,
+            max_retry_attempts: args.max_retry_attempts,
+            esearch_url: Fetcher::default().esearch_url, // Use default URL
+            retry_config,
         },
         connections: Connections {
             db: Database::Postgresql(Postgresql {
@@ -92,28 +192,77 @@ async fn main() -> Result<()> {
 
     let ctx = infra_ctx_builder.get()?;
 
-    // Setup progress bars
-    let multi_progress = Arc::new(MultiProgress::new());
-    let main_pb = multi_progress.add(ProgressBar::new_spinner());
-    main_pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
+    // Execute based on mode
+    match args.mode {
+        Mode::Sync => {
+            // Legacy synchronous mode - fetch and upload immediately
+            let multi_progress = Arc::new(MultiProgress::new());
+            let main_pb = multi_progress.add(ProgressBar::new_spinner());
+            main_pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.green} [{elapsed_precise}] {msg}")
+                    .unwrap(),
+            );
 
-    // Fetch metadata
-    main_pb.set_message(format!("Searching for papers: '{}'", args.query));
-    main_pb.enable_steady_tick(std::time::Duration::from_millis(100));
+            main_pb.set_message(format!("Searching for papers: '{}'", args.query));
+            main_pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
-    // Run the fetcher with progress tracking
-    match fetch_with_progress(&blueprint, ctx, multi_progress.clone()).await {
-        Ok(count) => {
-            main_pb.finish_with_message(format!("✓ Successfully processed {} papers", count));
-            Ok(())
+            match fetch_with_progress(&blueprint, ctx, multi_progress.clone()).await {
+                Ok(count) => {
+                    main_pb.finish_with_message(format!("✓ Successfully processed {} papers", count));
+                    Ok(())
+                }
+                Err(e) => {
+                    main_pb.finish_with_message(format!("✗ Failed: {}", e));
+                    Err(e.into())
+                }
+            }
         }
-        Err(e) => {
-            main_pb.finish_with_message(format!("✗ Failed: {}", e));
-            Err(e.into())
+        Mode::Enqueue => {
+            // Enqueue tasks and exit
+            println!("📋 Enqueueing tasks for query: '{}'", args.query);
+            
+            match cortexmap_fetcher::enqueue_query(&blueprint, ctx).await {
+                Ok(pmc_ids) => {
+                    println!("✓ Successfully enqueued {} tasks", pmc_ids.len());
+                    for pmc_id in &pmc_ids {
+                        // pmc_id already has "PMC" prefix from enqueue_query
+                        println!("  - {}", pmc_id);
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("✗ Failed to enqueue tasks: {}", e);
+                    Err(e.into())
+                }
+            }
+        }
+        Mode::Worker => {
+            // Run worker loop
+            println!("🔄 Starting worker (timeout: {}s, max retries: {})", 
+                     blueprint.fetcher.task_timeout_secs,
+                     blueprint.fetcher.max_retry_attempts);
+            println!("Press Ctrl+C to stop");
+            
+            match cortexmap_fetcher::worker_loop(ctx, blueprint).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    eprintln!("✗ Worker error: {}", e);
+                    Err(e.into())
+                }
+            }
+        }
+        Mode::Status => {
+            // Show queue statistics
+            println!("📊 Queue Status\n");
+            
+            let stats = ctx.infra.get_task_stats().await?;
+            println!("Total tasks:      {}", stats.total);
+            println!("├─ Pending:       {}", stats.pending);
+            println!("├─ In Progress:   {}", stats.in_progress);
+            println!("├─ Completed:     {}", stats.completed);
+            println!("└─ Failed:        {}", stats.failed);
+            Ok(())
         }
     }
 }

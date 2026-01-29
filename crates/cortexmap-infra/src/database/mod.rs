@@ -1,4 +1,4 @@
 mod models;
-mod schema;
+pub mod schema;
 pub use models::*;
 pub use schema::*;

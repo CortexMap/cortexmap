@@ -7,7 +7,7 @@ use diesel::r2d2::{ConnectionManager, Pool};
 pub type DbPool = Pool<ConnectionManager<PgConnection>>;
 
 pub struct StdDatabaseInfra {
-    pool: DbPool,
+    pub(crate) pool: DbPool,
 }
 
 impl StdDatabaseInfra {
