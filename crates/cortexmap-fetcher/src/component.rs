@@ -17,7 +17,7 @@ impl ComponentResult {
     /// Get the S3 key suffix for this component type
     pub fn key_suffix(&self) -> &'static str {
         match self {
-            ComponentResult::Summary(_) => "summary.json",
+            ComponentResult::Summary(_) => "summary.md",
             ComponentResult::Abstract(_) => "abstract.txt",
             ComponentResult::Pdf(_) => "paper.pdf",
         }
@@ -29,9 +29,8 @@ impl ComponentResult {
     ) -> Result<Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>, FetchError> {
         match self {
             ComponentResult::Summary(metadata) => {
-                let json = serde_json::to_vec_pretty(&metadata)
-                    .map_err(|e| FetchError::SerdeError(e))?;
-                let stream = futures::stream::once(async move { Bytes::from(json) });
+                let markdown = metadata_to_markdown(&metadata);
+                let stream = futures::stream::once(async move { Bytes::from(markdown) });
                 Ok(Box::pin(stream))
             }
             ComponentResult::Abstract(text) => {
@@ -47,6 +46,78 @@ impl ComponentResult {
             }
         }
     }
+}
+
+/// Convert ArticleMetadata to Markdown format
+fn metadata_to_markdown(metadata: &ArticleMetadata) -> String {
+    let mut md = String::new();
+    
+    // Title
+    if let Some(ref title) = metadata.title {
+        md.push_str(&format!("# {}\n\n", title));
+    }
+    
+    // Metadata section
+    md.push_str("## Metadata\n\n");
+    md.push_str(&format!("- **PMC ID**: PMC{}\n", metadata.uid));
+    
+    // DOI (from articleids)
+    if let Some(doi_id) = metadata.articleids.iter().find(|id| id.idtype == "doi") {
+        md.push_str(&format!("- **DOI**: {}\n", doi_id.value));
+    }
+    
+    // Journal
+    if let Some(ref journal) = metadata.fulljournalname {
+        md.push_str(&format!("- **Journal**: {}\n", journal));
+    } else if let Some(ref source) = metadata.source {
+        md.push_str(&format!("- **Journal**: {}\n", source));
+    }
+    
+    // Publication Date
+    if let Some(ref pubdate) = metadata.pubdate {
+        md.push_str(&format!("- **Publication Date**: {}\n", pubdate));
+    }
+    
+    // Volume/Issue/Pages
+    if let Some(ref volume) = metadata.volume {
+        md.push_str(&format!("- **Volume**: {}\n", volume));
+    }
+    if let Some(ref issue) = metadata.issue {
+        md.push_str(&format!("- **Issue**: {}\n", issue));
+    }
+    if let Some(ref pages) = metadata.pages {
+        md.push_str(&format!("- **Pages**: {}\n", pages));
+    }
+    
+    // Authors
+    if !metadata.authors.is_empty() {
+        md.push_str("- **Authors**: ");
+        let author_names: Vec<String> = metadata.authors.iter()
+            .map(|a| a.name.clone())
+            .collect();
+        md.push_str(&author_names.join(", "));
+        md.push_str("\n");
+    }
+    
+    md.push_str("\n");
+    
+    // Abstract (if available)
+    if let Some(ref abstract_text) = metadata.abstract_text {
+        md.push_str("## Abstract\n\n");
+        md.push_str(abstract_text);
+        md.push_str("\n\n");
+    }
+    
+    // Article IDs (PMC, PMID, DOI, etc.)
+    if !metadata.articleids.is_empty() {
+        md.push_str("## Article IDs\n\n");
+        for article_id in &metadata.articleids {
+            md.push_str(&format!("- **{}**: {}\n", article_id.idtype.to_uppercase(), article_id.value));
+        }
+        md.push_str("\n");
+    }
+    
+    md
 }
 
 /// Fetch a single component for a given PMC ID
@@ -79,7 +150,7 @@ pub fn determine_component_key(
 ) -> String {
     let sterilized = sterilize_prefix(prefix);
     let suffix = match component_type {
-        ComponentType::Summary => "summary.json",
+        ComponentType::Summary => "summary.md",
         ComponentType::Abstract => "abstract.txt",
         ComponentType::Pdf => "paper.pdf",
     };
@@ -107,7 +178,7 @@ mod tests {
 
         assert_eq!(
             determine_component_key(pmc_id, ComponentType::Summary, prefix),
-            "papers/PMC12345/summary.json"
+            "papers/PMC12345/summary.md"
         );
         assert_eq!(
             determine_component_key(pmc_id, ComponentType::Abstract, prefix),

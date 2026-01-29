@@ -320,12 +320,13 @@ where
     I: HttpInfra + DatabaseInfra + S3Infra + TaskQueueInfra + Send + Sync + 'static,
 {
     let timeout_secs = blueprint.fetcher.task_timeout_secs;
-    let empty_queue_sleep_secs = 5; // Sleep longer when queue is empty
+    let empty_queue_sleep_secs = blueprint.fetcher.retry_config.empty_queue_sleep_secs;
 
     tracing::info!(
-        "Starting worker loop (timeout: {}s, max retries: {})",
+        "Starting worker loop (timeout: {}s, max retries: {}, backoff: {:?})",
         timeout_secs,
-        blueprint.fetcher.max_retry_attempts
+        blueprint.fetcher.max_retry_attempts,
+        blueprint.fetcher.retry_config.backoff_strategy
     );
 
     loop {

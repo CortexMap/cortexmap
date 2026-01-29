@@ -39,7 +39,15 @@ where
 
     let pmc_ids: Vec<String> = id_list
         .iter()
-        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .filter_map(|v| v.as_str())
+        .map(|s| {
+            // Ensure PMC prefix
+            if s.starts_with("PMC") {
+                s.to_string()
+            } else {
+                format!("PMC{}", s)
+            }
+        })
         .collect();
 
     tracing::info!("Found {} PMC IDs, enqueueing tasks...", pmc_ids.len());

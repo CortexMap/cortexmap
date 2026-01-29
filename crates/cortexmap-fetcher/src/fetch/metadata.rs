@@ -9,6 +9,12 @@ const ESUMMARY_URL: &str =
 const EFETCH_URL: &str =
     "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={id}&retmode=xml";
 
+/// Strip "PMC" prefix from PMC ID if present
+/// NCBI API expects numeric IDs without the "PMC" prefix
+fn strip_pmc_prefix(pmc_id: &str) -> &str {
+    pmc_id.strip_prefix("PMC").unwrap_or(pmc_id)
+}
+
 // ESearch response structures
 #[derive(Debug, Deserialize)]
 pub struct ESearchResponse {
@@ -151,12 +157,44 @@ pub async fn fetch_metadata<I: HttpInfra>(
     Ok(MetadataCollection { articles })
 }
 
+/// Fetch summary (metadata without abstract) for a single PMC ID
+pub async fn fetch_summary<I: HttpInfra>(
+    pmc_uid: &str,
+    ctx: InfraContext<I>,
+) -> Result<ArticleMetadata, FetchError> {
+    // Strip "PMC" prefix for API call (NCBI expects numeric IDs)
+    let numeric_id = strip_pmc_prefix(pmc_uid);
+    
+    // ESummary for a single ID
+    let summary_url = ESUMMARY_URL.replace("{ids}", numeric_id);
+
+    tracing::info!("Fetching summary for PMC {}", pmc_uid);
+    let summary_resp = ctx.infra.get(&summary_url).await?;
+    let summary_result: ESummaryResponse = serde_json::from_slice(&summary_resp.bytes().await?)?;
+
+    // Extract metadata for this specific ID (use numeric_id for lookup)
+    if let Some(result_obj) = summary_result.result.as_object() {
+        if let Some(article) = result_obj.get(numeric_id) {
+            let metadata = serde_json::from_value::<ArticleMetadata>(article.clone())
+                .map_err(|e| FetchError::SerdeError(e))?;
+            return Ok(metadata);
+        }
+    }
+    
+    Err(FetchError::NotFound(format!(
+        "Summary not found for PMC {}",
+        pmc_uid
+    )))
+}
+
 // Helper function to fetch abstract from PMC
-async fn fetch_abstract<I: HttpInfra>(
+pub async fn fetch_abstract<I: HttpInfra>(
     pmc_uid: &str,
     ctx: InfraContext<I>,
 ) -> Result<String, FetchError> {
-    let fetch_url = EFETCH_URL.replace("{id}", pmc_uid);
+    // Strip "PMC" prefix for API call (NCBI expects numeric IDs)
+    let numeric_id = strip_pmc_prefix(pmc_uid);
+    let fetch_url = EFETCH_URL.replace("{id}", numeric_id);
 
     let resp = ctx.infra.get(&fetch_url).await?;
     let xml_content = resp.text().await?;

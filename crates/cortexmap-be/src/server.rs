@@ -1,7 +1,7 @@
 use crate::proto::queue_service_server::{QueueService as QueueServiceTrait, QueueServiceServer};
 use crate::proto::*;
 use crate::worker_manager::WorkerManager;
-use cortexmap_core::blueprint::connections::{Connections, Database, Fetcher, Postgresql, S3Info};
+use cortexmap_core::blueprint::connections::{Connections, Database, Fetcher, Postgresql, RetryConfig, S3Info};
 use cortexmap_core::blueprint::Blueprint;
 use cortexmap_fetcher::enqueue_query;
 use cortexmap_infra::{InfraContext, TaskQueueInfra};
@@ -46,6 +46,7 @@ impl QueueServer {
                 task_timeout_secs: 2,
                 max_retry_attempts: 3,
                 esearch_url: "https://www.ebi.ac.uk/europepmc/webservices/rest/search".to_string(),
+                retry_config: RetryConfig::default(),
             },
             connections: Connections {
                 db: Database::Postgresql(Postgresql {
