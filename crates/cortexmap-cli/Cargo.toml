@@ -1,0 +1,21 @@
+[package]
+name = "cortexmap-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cortexmap-fetcher = { path = "../cortexmap-fetcher" }
+cortexmap-core = { path = "../cortexmap-core" }
+cortexmap-infra = { path = "../cortexmap-infra" }
+std-infra = { path = "../std-infra" }
+
+tokio = { workspace = true, features = ["full"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+indicatif = "0.17"
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+futures.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
