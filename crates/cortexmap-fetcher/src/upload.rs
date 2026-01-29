@@ -1,47 +1,87 @@
+use crate::fetch::metadata::MetadataCollection;
 use crate::{FetchError, PdfStream};
 use cortexmap_core::blueprint::Blueprint;
 use cortexmap_infra::{ContentType, DatabaseInfra, InfraContext, NewPaper, S3Infra};
 use futures::StreamExt;
+use std::collections::HashMap;
 
 pub async fn upload<I: DatabaseInfra + S3Infra + Send + Sync + 'static>(
     streams: Vec<PdfStream>,
+    metadata_collection: MetadataCollection,
     blueprint: &Blueprint,
     ctx: InfraContext<I>,
 ) -> Result<(), FetchError> {
+    // Create a map of pmc_id -> metadata for quick lookup
+    let metadata_map: HashMap<String, _> = metadata_collection
+        .articles
+        .into_iter()
+        .map(|article| (article.pmcid.clone(), article.metadata))
+        .collect();
+
     for stream in streams {
         // TODO: skip if the paper alr exists in the DB.
 
-        let key = determine_key(&stream.pmc_id, blueprint);
-        // Map the stream to skip errors and unwrap Ok values
+        let pdf_key = determine_pdf_key(&stream.pmc_id, blueprint);
+        let metadata_key = determine_metadata_key(&stream.pmc_id, blueprint);
+        
+        // Upload metadata to S3 as JSON
+        if let Some(metadata) = metadata_map.get(&stream.pmc_id) {
+            let metadata_json = serde_json::to_vec_pretty(metadata)
+                .map_err(|e| FetchError::SerdeError(e))?;
+            
+            let metadata_stream = futures::stream::once(async move {
+                bytes::Bytes::from(metadata_json)
+            });
+            
+            if let Err(e) = ctx
+                .infra
+                .put_s3(&metadata_key, ContentType::Json, Box::pin(metadata_stream))
+                .await
+            {
+                tracing::warn!("Failed to upload metadata for {}: {:?}", stream.pmc_id, e);
+            } else {
+                tracing::info!("Uploaded metadata to S3: {}", metadata_key);
+            }
+        }
+        
+        // Upload PDF to S3
         let byte_stream = stream
             .stream
             .filter_map(|result| async move { result.ok() });
+            
         let res = ctx
             .infra
-            .put_s3(&key, ContentType::Pdf, Box::pin(byte_stream))
+            .put_s3(&pdf_key, ContentType::Pdf, Box::pin(byte_stream))
             .await;
+            
         if let Ok(()) = res {
-            // TODO: Upgrade err handling here.
+            // Insert minimal record into PostgreSQL as an index
             ctx.infra
                 .insert_paper(NewPaper {
-                    pmc_id: stream.pmc_id,
-                    s3_key: key,
+                    pmc_id: stream.pmc_id.clone(),
+                    s3_url: pdf_key.clone(),
                     uid: uuid::Uuid::new_v4().to_string(),
                     query: blueprint.fetcher.query.clone(),
                 })
                 .await
                 .map(|paper| {
-                    tracing::info!("Uploaded paper: {:?}", paper);
-                }).ok();
+                    tracing::info!("Uploaded PDF and indexed paper: {:?}", paper);
+                })
+                .ok();
         }
     }
 
     Ok(())
 }
 
-fn determine_key(pmcid: &str, blueprint: &Blueprint) -> String {
+fn determine_pdf_key(pmcid: &str, blueprint: &Blueprint) -> String {
     let prefix = sterilize_prefix(&blueprint.fetcher.upload_path_prefix);
-    format!("{prefix}/{pmcid}")
+    format!("{prefix}/{pmcid}/paper.pdf")
+}
+
+fn determine_metadata_key(pmcid: &str, blueprint: &Blueprint) -> String {
+    let prefix = sterilize_prefix(&blueprint.fetcher.upload_path_prefix);
+    format!("{prefix}/{pmcid}/metadata.json")
 }
 
 // Always returns a valid path

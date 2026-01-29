@@ -17,4 +17,7 @@ pub enum FetchError {
 
     #[error("Invalid PDF Source: {0}")]
     InvalidPdfSource(String),
+    
+    #[error("Not Found: {0}")]
+    NotFound(String),
 }

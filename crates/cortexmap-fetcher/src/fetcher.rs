@@ -8,14 +8,16 @@ pub async fn fetch<I: HttpInfra + DatabaseInfra + S3Infra + Send + Sync + 'stati
     blueprint: &Blueprint,
     ctx: InfraContext<I>,
 ) -> Result<(), FetchError> {
-    let meta = fetch_metadata(blueprint, ctx.clone()).await?;
+    let metadata_collection = fetch_metadata(blueprint, ctx.clone()).await?;
 
     let pdf_streams = futures::future::join_all(
-        meta.result
-            .result
-            .into_iter()
-            .filter_map(|v| v.pmcid)
-            .map(|pmc_id| tokio::spawn(fetch_pdf(pmc_id, ctx.clone()))),
+        metadata_collection
+            .articles
+            .iter()
+            .map(|article| {
+                let pmc_id = article.pmcid.clone();
+                tokio::spawn(fetch_pdf(pmc_id, ctx.clone()))
+            }),
     )
     .await
     .into_iter()
@@ -30,5 +32,5 @@ pub async fn fetch<I: HttpInfra + DatabaseInfra + S3Infra + Send + Sync + 'stati
     .flatten()
     .collect::<Vec<_>>();
 
-    upload::upload(pdf_streams, blueprint, ctx).await
+    upload::upload(pdf_streams, metadata_collection, blueprint, ctx).await
 }

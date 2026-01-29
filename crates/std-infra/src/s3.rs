@@ -35,28 +35,33 @@ impl S3Infra for StdS3Infra {
         &self,
         key: &str,
         content_type: ContentType,
-        content: Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
+        mut content: Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
     ) -> Result<(), InfraError> {
-        // Convert the stream into http_body_util::StreamBody
-        let stream_body = http_body_util::StreamBody::new(
-            content.map(|bytes| Ok::<_, std::convert::Infallible>(http_body::Frame::data(bytes))),
-        );
+        // Collect the entire stream into a single Bytes buffer
+        // This avoids streaming checksum issues with HTTP trailers
+        let mut buffer = Vec::new();
+        while let Some(chunk) = content.next().await {
+            buffer.extend_from_slice(&chunk);
+        }
+        
+        let byte_stream = aws_sdk_s3::primitives::ByteStream::from(buffer);
 
-        // Convert to AWS SDK types
-        let byte_stream = aws_sdk_s3::primitives::ByteStream::from_body_1_x(
-            aws_smithy_types::body::SdkBody::from_body_1_x(
-                http_body_util::combinators::BoxBody::new(stream_body),
-            ),
-        );
-
-        self.client
+        let result = self.client
             .put_object()
             .bucket(&self.bucket)
             .key(key)
             .body(byte_stream)
             .content_type(content_type.to_string())
             .send()
-            .await?;
+            .await;
+        
+        // Enhanced error logging
+        if let Err(e) = &result {
+            eprintln!("S3 PUT ERROR for key '{}': {:?}", key, e);
+            eprintln!("Error details: {}", e);
+        }
+        
+        result?;
 
         Ok(())
     }

@@ -9,6 +9,8 @@ use std::pin::Pin;
 pub enum ContentType {
     Text,
     Pdf,
+    Json,
+    Markdown,
 }
 
 impl Display for ContentType {
@@ -19,6 +21,12 @@ impl Display for ContentType {
             }
             ContentType::Pdf => {
                 write!(f, "application/pdf")
+            }
+            ContentType::Json => {
+                write!(f, "application/json")
+            }
+            ContentType::Markdown => {
+                write!(f, "text/markdown")
             }
         }
     }
