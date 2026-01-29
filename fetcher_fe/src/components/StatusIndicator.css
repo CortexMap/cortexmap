@@ -1,0 +1,120 @@
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 150px;
+}
+
+.status-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  font-weight: bold;
+  position: relative;
+}
+
+.status-icon.pending {
+  background: #ffeaa7;
+  color: #fdcb6e;
+}
+
+.status-icon.fetching,
+.status-icon.retrying {
+  background: #74b9ff;
+  color: white;
+}
+
+.status-icon.success {
+  background: #55efc4;
+  color: #00b894;
+  animation: successPop 0.3s ease;
+}
+
+@keyframes successPop {
+  0% {
+    transform: scale(0.8);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.status-icon.failed {
+  background: #ff7675;
+  color: #d63031;
+  animation: failShake 0.3s ease;
+}
+
+@keyframes failShake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.retry-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #fdcb6e;
+  color: #2d3436;
+  font-size: 0.7rem;
+  font-weight: bold;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid white;
+}
+
+.status-text {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #666;
+}
+
+.status-pending .status-text {
+  color: #fdcb6e;
+}
+
+.status-fetching .status-text,
+.status-retrying .status-text {
+  color: #0984e3;
+}
+
+.status-success .status-text {
+  color: #00b894;
+}
+
+.status-failed .status-text {
+  color: #d63031;
+}
