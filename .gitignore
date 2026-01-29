@@ -2,3 +2,10 @@
 /.env*
 /.idea
 /llm_layer/.venv
+/llm_layer/data_md
+/llm_layer/pubmed_pdfs
+/llm_layer/chroma
+
+plans/
+
+/llm_layer/.env
