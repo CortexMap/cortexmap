@@ -16,7 +16,10 @@ cortexmap-core.workspace = true
 cortexmap-infra.workspace = true
 uuid = { version = "1.18.1", features = ["v4"] }
 tracing = "0.1.41"
+backon = "1.3.0"
 
 [dev-dependencies]
 # it's bad idea to use std-infra for tests..
 std-infra = { path = "../std-infra" }
+diesel = { version = "2.2.9", features = ["postgres"] }
+futures = "0.3"

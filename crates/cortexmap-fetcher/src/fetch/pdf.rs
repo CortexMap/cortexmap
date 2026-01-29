@@ -7,6 +7,16 @@ use std::pin::Pin;
 // NCBI PMC OA Service API to discover PDF URLs
 const OA_API_URL: &str = "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id={PMCID}&format=pdf";
 
+/// Strip "PMC" prefix from PMC ID if present
+/// NCBI API expects "PMC" prefix for OA service
+fn ensure_pmc_prefix(pmc_id: &str) -> String {
+    if pmc_id.starts_with("PMC") {
+        pmc_id.to_string()
+    } else {
+        format!("PMC{}", pmc_id)
+    }
+}
+
 pub struct PdfStream {
     pub stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send + Sync>>,
     pub pmc_id: String,
@@ -16,8 +26,11 @@ pub async fn fetch_pdf<I: HttpInfra + Send + Sync + 'static>(
     pmc_id: String,
     ctx: InfraContext<I>,
 ) -> Result<PdfStream, FetchError> {
+    // Ensure PMC prefix (OA service requires "PMC" prefix)
+    let pmc_id_with_prefix = ensure_pmc_prefix(&pmc_id);
+    
     // Step 1: Query the OA Service API to get the PDF URL
-    let oa_url = OA_API_URL.replace("{PMCID}", &pmc_id);
+    let oa_url = OA_API_URL.replace("{PMCID}", &pmc_id_with_prefix);
     let oa_response = ctx.infra.get(&oa_url).await?;
     
     if !oa_response.status().is_success() {
