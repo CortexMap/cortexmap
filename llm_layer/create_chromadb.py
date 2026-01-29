@@ -7,8 +7,8 @@ import os, shutil
 
 load_dotenv()
 
-CHROMA_PATH = "chroma"
-DATA_PATH = "./papers_md"
+CHROMA_PATH = os.getenv('CHROMA_DB_PATH')
+DATA_PATH = os.getenv('MD_DATA_PATH')
 
 def main():
     generate_data_store()
