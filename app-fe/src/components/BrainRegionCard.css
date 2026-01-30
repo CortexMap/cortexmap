@@ -1,0 +1,86 @@
+.brain-region-card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 1.25rem 1.5rem;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.brain-region-card:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(102, 126, 234, 0.35);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.card-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #fff;
+  margin: 0;
+  line-height: 1.3;
+}
+
+.card-id {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+}
+
+.card-location {
+  margin-bottom: 1rem;
+}
+
+.location-label,
+.section-label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: 0.35rem;
+}
+
+.location-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.location-list li {
+  padding: 0.2rem 0;
+}
+
+.location-list strong {
+  color: rgba(255, 255, 255, 0.7);
+  margin-right: 0.35rem;
+}
+
+.card-section {
+  margin-bottom: 1rem;
+}
+
+.card-section:last-child {
+  margin-bottom: 0;
+}
+
+.card-text {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+}
+
+.card-diseases {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+}
