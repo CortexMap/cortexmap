@@ -761,6 +761,7 @@ name = "cortexmap-be"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "cortexmap-core",
  "cortexmap-fetcher",
  "cortexmap-infra",
