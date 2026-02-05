@@ -1,7 +1,3 @@
-mod proto {
-    tonic::include_proto!("comm");
-}
-
 use anyhow::Result;
 use axum::{
     extract::Query,
@@ -10,12 +6,15 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use proto::brain_region_service_client::BrainRegionServiceClient;
+use prost::Message;
 use serde::Serialize;
 use std::net::SocketAddr;
-use tonic::transport::Channel;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
+
+mod proto {
+    tonic::include_proto!("comm");
+}
 
 /// Frontend BrainRegion format (matches app-fe/src/types.ts)
 #[derive(Debug, Serialize)]
@@ -67,25 +66,59 @@ async fn health() -> impl IntoResponse {
 }
 
 /// GET /api/brain-regions
-/// - No query: returns all brain regions (calls GetAllBrainRegions)
-/// - ?q=term: returns search results (calls SearchBrainRegion)
+/// - No query: returns all brain regions (calls POST /get-all-brain-regions)
+/// - ?q=term: returns search results (calls POST /search-brain-region)
 async fn get_brain_regions(
     Query(params): Query<BrainRegionsQuery>,
-    axum::Extension(client): axum::Extension<BrainRegionServiceClient<Channel>>,
+    axum::Extension(http_client): axum::Extension<reqwest::Client>,
+    axum::Extension(backend_url): axum::Extension<String>,
 ) -> impl IntoResponse {
-    let mut client = client;
-
     let entries = if let Some(ref q) = params.q {
         let q = q.trim();
         if q.is_empty() {
             // Empty search -> get all
-            match client
-                .get_all_brain_regions(proto::GetAllBrainRegionsRequest {})
+            let url = format!("{}/get-all-brain-regions", backend_url);
+            let request = proto::GetAllBrainRegionsRequest {};
+            let body = request.encode_to_vec();
+            
+            match http_client
+                .post(&url)
+                .header("Content-Type", "application/x-protobuf")
+                .body(body)
+                .send()
                 .await
             {
-                Ok(resp) => resp.into_inner().entries,
+                Ok(resp) => match resp.bytes().await {
+                    Ok(bytes) => {
+                        match proto::GetAllBrainRegionsResponse::decode(&bytes[..]) {
+                            Ok(response) => response.entries,
+                            Err(e) => {
+                                warn!("Failed to decode GetAllBrainRegions response: {}", e);
+                                return (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    Json(serde_json::json!({
+                                        "error": "Failed to decode brain regions response",
+                                        "details": e.to_string()
+                                    })),
+                                )
+                                    .into_response();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to read GetAllBrainRegions response: {}", e);
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "error": "Failed to read response",
+                                "details": e.to_string()
+                            })),
+                        )
+                            .into_response();
+                    }
+                },
                 Err(e) => {
-                    warn!("gRPC GetAllBrainRegions failed: {}", e);
+                    warn!("HTTP GetAllBrainRegions failed: {}", e);
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({
@@ -98,15 +131,50 @@ async fn get_brain_regions(
             }
         } else {
             // Search by query
-            match client
-                .search_brain_region(proto::SearchBrainRegionRequest {
-                    query: q.to_string(),
-                })
+            let url = format!("{}/search-brain-region", backend_url);
+            let request = proto::SearchBrainRegionRequest {
+                query: q.to_string(),
+            };
+            let body = request.encode_to_vec();
+            
+            match http_client
+                .post(&url)
+                .header("Content-Type", "application/x-protobuf")
+                .body(body)
+                .send()
                 .await
             {
-                Ok(resp) => resp.into_inner().entries,
+                Ok(resp) => match resp.bytes().await {
+                    Ok(bytes) => {
+                        match proto::SearchBrainRegionResponse::decode(&bytes[..]) {
+                            Ok(response) => response.entries,
+                            Err(e) => {
+                                warn!("Failed to decode SearchBrainRegion response: {}", e);
+                                return (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    Json(serde_json::json!({
+                                        "error": "Failed to decode search response",
+                                        "details": e.to_string()
+                                    })),
+                                )
+                                    .into_response();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to read SearchBrainRegion response: {}", e);
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "error": "Failed to read response",
+                                "details": e.to_string()
+                            })),
+                        )
+                            .into_response();
+                    }
+                },
                 Err(e) => {
-                    warn!("gRPC SearchBrainRegion failed: {}", e);
+                    warn!("HTTP SearchBrainRegion failed: {}", e);
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({
@@ -120,13 +188,48 @@ async fn get_brain_regions(
         }
     } else {
         // No q param -> get all
-        match client
-            .get_all_brain_regions(proto::GetAllBrainRegionsRequest {})
+        let url = format!("{}/get-all-brain-regions", backend_url);
+        let request = proto::GetAllBrainRegionsRequest {};
+        let body = request.encode_to_vec();
+        
+        match http_client
+            .post(&url)
+            .header("Content-Type", "application/x-protobuf")
+            .body(body)
+            .send()
             .await
         {
-            Ok(resp) => resp.into_inner().entries,
+            Ok(resp) => match resp.bytes().await {
+                Ok(bytes) => {
+                    match proto::GetAllBrainRegionsResponse::decode(&bytes[..]) {
+                        Ok(response) => response.entries,
+                        Err(e) => {
+                            warn!("Failed to decode GetAllBrainRegions response: {}", e);
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({
+                                    "error": "Failed to decode brain regions response",
+                                    "details": e.to_string()
+                                })),
+                            )
+                                .into_response();
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to read GetAllBrainRegions response: {}", e);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "error": "Failed to read response",
+                            "details": e.to_string()
+                        })),
+                    )
+                        .into_response();
+                }
+            },
             Err(e) => {
-                warn!("gRPC GetAllBrainRegions failed: {}", e);
+                warn!("HTTP GetAllBrainRegions failed: {}", e);
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({
@@ -152,20 +255,18 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let grpc_addr = std::env::var("BRAIN_REGION_GRPC_ADDR")
-        .unwrap_or_else(|_| "http://127.0.0.1:5005".to_string());
+    let backend_url = std::env::var("BACKEND_URL")
+        .unwrap_or_else(|_| "https://mold-antarctica-gaming-sentence.trycloudflare.com".to_string());
 
     let http_addr: SocketAddr = std::env::var("BFF_HTTP_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
         .parse()?;
 
-    info!("Connecting to BrainRegionService at {}", grpc_addr);
-    let channel = Channel::from_shared(grpc_addr)?
-        .connect()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to gRPC server: {}", e))?;
+    info!("Connecting to Backend HTTP API at {}", backend_url);
 
-    let client = BrainRegionServiceClient::new(channel);
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -175,10 +276,12 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/brain-regions", get(get_brain_regions))
-        .layer(axum::extract::Extension(client))
+        .layer(axum::extract::Extension(http_client))
+        .layer(axum::extract::Extension(backend_url.clone()))
         .layer(cors);
 
     info!("🚀 CortexMap BFF listening on http://{}", http_addr);
+    info!("   Backend URL: {}", backend_url);
     info!("   GET /api/health       - Health check");
     info!("   GET /api/brain-regions - All brain regions");
     info!("   GET /api/brain-regions?q=<query> - Search brain regions");

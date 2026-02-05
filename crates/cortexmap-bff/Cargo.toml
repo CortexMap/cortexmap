@@ -5,7 +5,10 @@ edition = "2021"
 description = "Backend-for-Frontend: HTTP REST API that proxies to Python BrainRegionService via gRPC"
 
 [dependencies]
-# gRPC client
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+# gRPC protobuf (for message encoding/decoding only)
 tonic = "0.12"
 prost = "0.13"
 tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "sync", "time"] }
