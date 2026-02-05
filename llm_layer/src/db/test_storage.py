@@ -36,8 +36,6 @@ def test_database_storage():
     record_id = store_brain_region_response(
         query="Tell me about the hippocampus",
         brain_region=mock_region,
-        model_name='mock-test',
-        include_context=False
     )
     
     if record_id:

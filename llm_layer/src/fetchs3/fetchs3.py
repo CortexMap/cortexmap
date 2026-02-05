@@ -5,6 +5,7 @@ Provides modular functionality for downloading markdown files from S3-compatible
 """
 
 import os
+from pathlib import Path
 from typing import Optional, List, Tuple
 import boto3
 from botocore.exceptions import ClientError

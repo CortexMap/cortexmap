@@ -41,10 +41,6 @@ CREATE TABLE IF NOT EXISTS brain_region_responses (
     function_description TEXT NOT NULL,
     disease_description TEXT NOT NULL,
     
-    -- Response metadata
-    model_name VARCHAR(100),
-    include_context BOOLEAN DEFAULT FALSE,
-    
     -- Timestamps
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP

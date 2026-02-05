@@ -9,12 +9,12 @@ from dotenv import load_dotenv
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from query.queryllm import brain_region_query
+from query.llm import brain_region_query
 from db.repository import store_brain_region_response
 from db.schema import init_database
 
 
-def query_and_store(query: str, include_context: bool = False, model_name: str = 'deepseek-r1:8b'):
+def query_and_store(query: str):
     """
     Query the LLM about a brain region and store the response in the database.
     
@@ -27,12 +27,10 @@ def query_and_store(query: str, include_context: bool = False, model_name: str =
         Tuple of (BrainRegion object, database record ID)
     """
     print(f"\nQuerying LLM: {query}")
-    print(f"Include context: {include_context}")
-    print(f"Model: {model_name}")
     print("-" * 80)
     
     # Query the LLM
-    brain_region = brain_region_query(query, include_context=include_context)
+    brain_region = brain_region_query(query)
     
     # Display the response
     print(f"\nLLM Response:")
@@ -47,9 +45,7 @@ def query_and_store(query: str, include_context: bool = False, model_name: str =
     print("\nStoring response in database...")
     record_id = store_brain_region_response(
         query=query,
-        brain_region=brain_region,
-        model_name=model_name,
-        include_context=include_context
+        brain_region=brain_region
     )
     
     if record_id:
@@ -72,9 +68,9 @@ if __name__ == "__main__":
     
     # Example queries
     queries = [
-        "Tell me about the hippocampus.",
-        "What is the prefrontal cortex?",
-        "Explain the amygdala.",
+        "hippocampus.",
+        "prefrontal cortex",
+        "amygdala.",
     ]
     
     # Process each query
@@ -82,8 +78,6 @@ if __name__ == "__main__":
         try:
             brain_region, record_id = query_and_store(
                 query=query,
-                include_context=True,
-                model_name='deepseek-r1:8b'
             )
         except Exception as e:
             print(f"Error processing query '{query}': {e}")

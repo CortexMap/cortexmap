@@ -12,15 +12,13 @@ from pathlib import Path
 # Add parent directory to path to import queryllm
 sys.path.append(str(Path(__file__).parent.parent))
 
-from query.queryllm import BrainRegion
+from query.llm import BrainRegion
 from db.schema import get_connection
 
 
 def store_brain_region_response(
     query: str,
-    brain_region: BrainRegion,
-    model_name: str = 'deepseek-r1:8b',
-    include_context: bool = False
+    brain_region: BrainRegion
 ) -> Optional[int]:
     """
     Store a BrainRegion response in the database.
@@ -47,10 +45,8 @@ def store_brain_region_response(
             lobe,
             anatomical_region,
             function_description,
-            disease_description,
-            model_name,
-            include_context
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            disease_description
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
         RETURNING id;
         """
         
@@ -61,9 +57,7 @@ def store_brain_region_response(
             brain_region.location.lobe,
             brain_region.location.anatomical_region,
             brain_region.function_diseases.function_description,
-            brain_region.function_diseases.disease_description,
-            model_name,
-            include_context
+            brain_region.function_diseases.disease_description
         ))
         
         record_id = cursor.fetchone()[0]
@@ -221,6 +215,35 @@ def search_by_query(search_term: str) -> List[Dict[str, Any]]:
         print(f"Error searching by query: {e}")
         return []
         
+    finally:
+        if conn:
+            cursor.close()
+            conn.close()
+
+
+def get_all_responses() -> List[Dict[str, Any]]:
+    """
+    Retrieve all responses available.
+
+    Returns:
+        List of dictionaries containing matching records
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        select_sql = """SELECT * FROM brain_region_responses ORDER BY query_timestamp DESC;"""
+
+        cursor.execute(select_sql)
+        results = cursor.fetchall()
+
+        return [dict(row) for row in results]
+
+    except psycopg2.Error as e:
+        print(f"Error retrieving responses: {e}")
+        return []
+
     finally:
         if conn:
             cursor.close()
