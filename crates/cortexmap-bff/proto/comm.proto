@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package comm;
+
+// Request message for searching a specific brain region entry
+message SearchBrainRegionRequest {
+    string query = 1;  // The query/search term (region_name)
+}
+
+// Request message for retrieving all brain region entries
+message GetAllBrainRegionsRequest {
+    // Empty message - no parameters needed
+}
+
+// Single brain region response containing all database fields
+message BrainRegionEntry {
+    int32 id = 1;
+    string query = 2;
+    int64 query_timestamp = 3;  // Unix timestamp in milliseconds
+    string region_name = 4;
+    string hemisphere = 5;  // Enum: "Left", "Right", "Bilateral"
+    string lobe = 6;
+    string anatomical_region = 7;
+    string function_description = 8;
+    string disease_description = 9;
+    int64 created_at = 10;  // Unix timestamp in milliseconds
+    int64 updated_at = 11;  // Unix timestamp in milliseconds
+}
+
+// Response message for search operation
+message SearchBrainRegionResponse {
+    repeated BrainRegionEntry entries = 1;
+    string status = 2;  // "success" or "not_found"
+    string error_message = 3;  // Empty if successful
+}
+
+// Response message for get all operation
+message GetAllBrainRegionsResponse {
+    repeated BrainRegionEntry entries = 1;
+    int32 total_count = 2;
+    string status = 3;  // "success" or "error"
+    string error_message = 4;  // Empty if successful
+}
+
+// gRPC service definition
+service BrainRegionService {
+    // Search for a specific brain region entry by query
+    rpc SearchBrainRegion(SearchBrainRegionRequest) returns (SearchBrainRegionResponse);
+
+    // Retrieve all available brain region entries
+    rpc GetAllBrainRegions(GetAllBrainRegionsRequest) returns (GetAllBrainRegionsResponse);
+}
