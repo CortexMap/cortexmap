@@ -32,5 +32,10 @@ langchain-core>=0.3.45
 langchain-ollama>=0.3.1
 langchain-text-splitters>=0.3.11
 
+# HTTP API Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.9
+
 # Note: The original requirements.txt has been backed up to requirements.txt.backup
 # If you need other packages for specific use cases, install them separately

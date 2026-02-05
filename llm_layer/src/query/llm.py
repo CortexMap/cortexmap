@@ -5,6 +5,10 @@ from typing import Literal
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from pydantic_ai import Agent
+from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.providers.openrouter import OpenRouterProvider
+
 
 class Hemisphere(str, Enum):
     LEFT = "Left"
@@ -83,31 +87,163 @@ def load_data_from_folder(folder_path: str = os.getenv('MD_DATA_PATH')) -> str:
 
     return combined_data
 
-def brain_region_query(region_name: str, include_context: bool = False) -> BrainRegion:
-    """Get structured brain region information from LLM"""
+# def brain_region_query(region_name: str, include_context: bool = False) -> BrainRegion:
+#     """Get structured brain region information from LLM"""
+#     context = ""
+#     if include_context:
+#         context = load_data_from_folder()
+#         if context:
+#             context = f"\nHere is reference data about brain regions:\n{context}\n\n"
+#
+#     # Combine context with the query
+#     prompt = f"You are an expert neuroscience knowledge base generator. Your task is to generate accurate, clinically relevant information about {region_name}"
+#     full_query = f"User query: {prompt}, Context: {context}"
+#
+#     response = ollama.chat(
+#         model='deepseek-r1:8b',
+#         messages=[{
+#             'role': 'user',
+#             'content': prompt
+#         }],
+#         format=BrainRegion.model_json_schema()  # Use Pydantic schema
+#     )
+#
+#     # Parse response into Pydantic model (validates automatically)
+#     brain_region = BrainRegion.model_validate_json(response.message.content)
+#
+#     return brain_region
+
+
+def brain_region_query(
+        region_name: str,
+        include_context: bool = False,
+        model_name: str = "gpt-oss-120b:free",
+        use_native_output: bool = True
+) -> BrainRegion:
+    """
+    Get structured brain region information from OpenRouter via Pydantic AI
+
+    Args:
+        region_name: The brain region to query
+        include_context: Whether to include reference data from markdown files
+        model_name: The OpenRouter model to use
+        use_native_output: Whether to use native structured output (if supported by model)
+
+    Returns:
+        BrainRegion: Structured brain region information
+    """
+
+    # Load optional context
     context = ""
     if include_context:
         context = load_data_from_folder()
         if context:
-            context = f"\nHere is reference data about brain regions:\n{context}\n\n"
+            context = f"\n\nReference brain region data:\n{context}"
 
-    # Combine context with the query
-    prompt = f"You are an expert neuroscience knowledge base generator. Your task is to generate accurate, clinically relevant information about {region_name}"
-    full_query = f"User query: {prompt}, Context: {context}"
+    # Build the system prompt
+    system_prompt = """You are an expert neuroscience knowledge base. 
+Your task is to provide accurate, clinically relevant information about brain regions.
+Return structured data with precise anatomical information and comprehensive descriptions."""
 
-    response = ollama.chat(
-        model='deepseek-r1:8b',
-        messages=[{
-            'role': 'user',
-            'content': prompt
-        }],
-        format=BrainRegion.model_json_schema()  # Use Pydantic schema
+    # Build the user prompt
+    user_prompt = f"""Please provide comprehensive information about the {region_name} brain region.
+
+Include:
+1. The hemisphere location (Left, Right, or Bilateral)
+2. The lobe or major region it belongs to
+3. The specific anatomical location
+4. A 150-250 word description of its functions
+5. A 150-250 word description of associated diseases and dysfunctions
+{context}"""
+
+    # Initialize the OpenRouter model
+    api_key = os.getenv('OPENROUTER_API_KEY')
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY environment variable not set")
+
+    provider = OpenRouterProvider(api_key=os.getenv('OPENROUTER_API_KEY'))
+
+    model = OpenRouterModel(
+        model_name,
+        provider=provider
     )
 
-    # Parse response into Pydantic model (validates automatically)
-    brain_region = BrainRegion.model_validate_json(response.message.content)
+    # Create an agent with BrainRegion as the output type
+    agent = Agent(
+        model,
+        result_type=BrainRegion,
+        system_prompt=system_prompt
+    )
 
-    return brain_region
+    # Run the agent synchronously
+    result = agent.run_sync(user_prompt)
+
+    return result.data
+
+
+def brain_region_query_async(
+        region_name: str,
+        include_context: bool = False,
+        model_name: str = "meta-llama/llama-3.3-70b-instruct"
+):
+    """
+    Async version of brain_region_query for use in async contexts
+
+    Args:
+        region_name: The brain region to query
+        include_context: Whether to include reference data from markdown files
+        model_name: The OpenRouter model to use
+
+    Returns:
+        Coroutine that yields BrainRegion
+    """
+    import asyncio
+
+    # Load optional context
+    context = ""
+    if include_context:
+        context = load_data_from_folder()
+        if context:
+            context = f"\n\nReference brain region data:\n{context}"
+
+    # Build the system prompt
+    system_prompt = """You are an expert neuroscience knowledge base. 
+Your task is to provide accurate, clinically relevant information about brain regions.
+Return structured data with precise anatomical information and comprehensive descriptions."""
+
+    # Build the user prompt
+    user_prompt = f"""Please provide comprehensive information about the {region_name} brain region.
+
+Include:
+1. The hemisphere location (Left, Right, or Bilateral)
+2. The lobe or major region it belongs to
+3. The specific anatomical location
+4. A 150-250 word description of its functions
+5. A 150-250 word description of associated diseases and dysfunctions
+{context}"""
+
+    # Initialize the OpenRouter model
+    api_key = os.getenv('OPENROUTER_API_KEY')
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY environment variable not set")
+
+    provider = OpenRouterProvider(api_key=api_key)
+
+    model = OpenRouterModel(
+        model_name,
+        provider=provider
+    )
+
+    # Create an agent with BrainRegion as the output type
+    agent = Agent(
+        model,
+        result_type=BrainRegion,
+        system_prompt=system_prompt
+    )
+
+    # Return the async coroutine
+    return agent.run(user_prompt)
+
 
 # Example usage
 if __name__ == "__main__":

@@ -90,7 +90,7 @@ def serve():
         BrainRegionServicer(), server
     )
     server.add_insecure_port('0.0.0.0:5005')
-    print("gRPC server listening on port 50051...")
+    print("gRPC server listening on port 5005...")
     server.start()
     server.wait_for_termination()
 
