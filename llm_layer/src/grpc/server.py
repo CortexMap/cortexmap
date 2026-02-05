@@ -3,7 +3,11 @@ from concurrent import futures
 import grpc
 import sys
 from pathlib import Path
+# Add the grpc directory to path for protobuf imports
+grpc_dir = Path(__file__).parent
+sys.path.insert(0, str(grpc_dir))
 sys.path.append(str(Path(__file__).parent.parent))
+
 import comm_pb2
 import comm_pb2_grpc
 from db.repository import search_by_query

@@ -8,7 +8,7 @@ description = "Backend-for-Frontend: HTTP REST API that proxies to Python BrainR
 # gRPC client
 tonic = "0.12"
 prost = "0.13"
-tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "sync", "time", "fs"] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 # HTTP server
 axum = { version = "0.7", features = ["json"] }

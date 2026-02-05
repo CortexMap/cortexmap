@@ -18,36 +18,19 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 /**
  * Fetch all brain regions from the BFF API.
- * NOTE: Using demo endpoint for now (no database required).
- * Change 'brain-regions/demo' to 'brain-regions' when database is available.
  */
 export async function fetchAllBrainRegions(): Promise<BrainRegion[]> {
-  const res = await fetch(apiUrl('brain-regions/demo'));
+  const res = await fetch(apiUrl('brain-regions'));
   return handleResponse<BrainRegion[]>(res);
 }
 
 /**
  * Search brain regions by query term.
- * NOTE: Demo data doesn't support search yet, returns all regions.
- * Update to use 'brain-regions?q=' when database is available.
  */
 export async function searchBrainRegions(query: string): Promise<BrainRegion[]> {
-  // TODO: For now, demo endpoint doesn't support search
-  // Will filter client-side
-  const res = await fetch(apiUrl('brain-regions/demo'));
-  const all = await handleResponse<BrainRegion[]>(res);
-  
-  // Client-side filtering for demo
-  const q = query.trim().toLowerCase();
-  if (!q) return all;
-  
-  return all.filter(region => 
-    region.name.toLowerCase().includes(q) ||
-    region.location.lobe.toLowerCase().includes(q) ||
-    region.location.anatomical_region.toLowerCase().includes(q) ||
-    region.function_diseases.function_description.toLowerCase().includes(q) ||
-    region.function_diseases.disease_description.toLowerCase().includes(q)
-  );
+  const q = encodeURIComponent(query.trim());
+  const res = await fetch(apiUrl('brain-regions', `?q=${q}`));
+  return handleResponse<BrainRegion[]>(res);
 }
 
 /**
