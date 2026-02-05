@@ -6,6 +6,7 @@
 /llm_layer/pubmed_pdfs
 /llm_layer/chroma
 **/node_modules
+**/node_modules
 
 plans/
 
