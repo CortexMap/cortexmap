@@ -5,6 +5,7 @@
 /llm_layer/data_md
 /llm_layer/pubmed_pdfs
 /llm_layer/chroma
+**/node_modules
 
 plans/
 
