@@ -11,14 +11,14 @@ use axum::{
     Json, Router,
 };
 use proto::brain_region_service_client::BrainRegionServiceClient;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use tonic::transport::Channel;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
 /// Frontend BrainRegion format (matches app-fe/src/types.ts)
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BrainRegion {
     id: String,
     name: String,
@@ -26,14 +26,14 @@ struct BrainRegion {
     function_diseases: FunctionDiseases,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct BrainRegionLocation {
     hemisphere: String,
     lobe: String,
     anatomical_region: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct FunctionDiseases {
     function_description: String,
     disease_description: String,
@@ -64,6 +64,29 @@ struct BrainRegionsQuery {
 /// Health check
 async fn health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok" }))
+}
+
+/// GET /api/brain-regions/demo - Serve demo data from JSON file
+async fn get_demo_brain_regions() -> impl IntoResponse {
+    let demo_file = "demo_brain_regions.json";
+    match tokio::fs::read_to_string(demo_file).await {
+        Ok(content) => match serde_json::from_str::<Vec<BrainRegion>>(&content) {
+            Ok(regions) => (StatusCode::OK, Json(regions)).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to parse demo data",
+                    "details": e.to_string()
+                })),
+            )
+                .into_response(),
+        },
+        Err(_) => (
+            StatusCode::OK,
+            Json(Vec::<BrainRegion>::new()),
+        )
+            .into_response(),
+    }
 }
 
 /// GET /api/brain-regions
@@ -174,12 +197,14 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/brain-regions/demo", get(get_demo_brain_regions))
         .route("/api/brain-regions", get(get_brain_regions))
         .layer(axum::extract::Extension(client))
         .layer(cors);
 
     info!("🚀 CortexMap BFF listening on http://{}", http_addr);
     info!("   GET /api/health       - Health check");
+    info!("   GET /api/brain-regions/demo - Demo data (no DB required)");
     info!("   GET /api/brain-regions - All brain regions");
     info!("   GET /api/brain-regions?q=<query> - Search brain regions");
 
