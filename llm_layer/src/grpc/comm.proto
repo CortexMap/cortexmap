@@ -1,1 +1,6 @@
-// Deprecated, use cortexmap/llm_layer/rpc/proto/brain.proto
+// Deprecated: This file has been moved to /proto/llm/brain.proto
+// Please use the new location and generate Python code using:
+//   ./scripts/generate_proto.sh
+// 
+// The generated files will be brain_pb2.py and brain_pb2_grpc.py
+// instead of comm_pb2.py and comm_pb2_grpc.py
