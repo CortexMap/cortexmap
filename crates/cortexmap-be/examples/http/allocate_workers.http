@@ -1,4 +1,4 @@
-POST http://ec2-3-88-176-142.compute-1.amazonaws.com/api/queue/workers/allocate
+POST https://capstone.ssdd.dev/fetcher-be/api/queue/workers/allocate
 Content-Type: application/json
 
 {

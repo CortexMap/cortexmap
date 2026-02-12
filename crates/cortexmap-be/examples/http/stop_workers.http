@@ -1,5 +1,5 @@
 ### Stop all workers
-POST http://ec2-3-88-176-142.compute-1.amazonaws.com/api/queue/workers/stop
+POST https://capstone.ssdd.dev/fetcher-be/api/queue/workers/stop
 Content-Type: application/json
 
 {
@@ -7,7 +7,7 @@ Content-Type: application/json
 }
 
 ### Stop specific workers by ID
-POST http://localhost:8080/api/queue/workers/stop
+POST http://localhost:8080/fetcher-be/api/queue/workers/stop
 Content-Type: application/json
 
 {
