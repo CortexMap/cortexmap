@@ -1,0 +1,41 @@
+# Brain Region LLM Layer - Core Dependencies
+# This is a minimal requirements file with only necessary packages
+
+# Database
+psycopg2-binary==2.9.11
+
+# LLM Integration  
+ollama==0.6.1
+pydantic==2.11.9
+pydantic_core==2.33.2
+
+# gRPC Service (all versions must match)
+grpcio==1.76.0
+grpcio-health-checking==1.76.0
+grpcio-reflection==1.76.0
+grpcio-status==1.76.0
+grpcio-tools==1.76.0
+protobuf==6.33.5
+
+# Configuration
+python-dotenv==1.1.0
+
+# Utilities
+typing_extensions==4.13.2
+
+# Vector Database (ChromaDB)
+chromadb>=0.6.3
+langchain>=0.3.21
+langchain-chroma>=0.2.1
+langchain-community>=0.3.20
+langchain-core>=0.3.45
+langchain-ollama>=0.3.1
+langchain-text-splitters>=0.3.11
+
+# HTTP API Server
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.9
+
+# Note: The original requirements.txt has been backed up to requirements.txt.backup
+# If you need other packages for specific use cases, install them separately

@@ -185,6 +185,10 @@ pub trait TaskQueueInfra {
     /// Used for graceful shutdown
     async fn release_worker_tasks(&self, worker_id: String) -> Result<usize, InfraError>;
     
+    /// Release a single task back to pending (used when processing fails/incomplete)
+    /// Clears worker_id, heartbeat_at, started_at and sets status to 'pending'
+    async fn release_task(&self, task_id: i64) -> Result<(), InfraError>;
+    
     /// Release tasks with stale heartbeats (worker likely crashed)
     /// Tasks with heartbeat older than timeout_secs are reset to 'pending'
     async fn release_stale_tasks_by_heartbeat(&self, timeout_secs: u64) -> Result<usize, InfraError>;
