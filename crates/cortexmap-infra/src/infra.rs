@@ -53,6 +53,9 @@ pub trait S3Infra {
         content_type: ContentType,
         content: Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
     ) -> Result<(), InfraError>;
+    
+    /// Download content from S3 by key
+    async fn get_s3(&self, key: &str) -> Result<String, InfraError>;
 }
 
 /// Component types that can be fetched for a paper
@@ -252,4 +255,6 @@ pub struct RecentTaskInfo {
     pub worker_id: Option<String>,
     pub components_completed: i32,
     pub total_components: i32,
+    pub summary_s3_key: Option<String>,
+    pub abstract_s3_key: Option<String>,
 }

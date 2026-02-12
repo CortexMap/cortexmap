@@ -133,6 +133,8 @@ message RecentTask {
   string worker_id = 5;
   int32 components_completed = 6;
   int32 total_components = 7;
+  string summary_content = 8; // Markdown content if completed
+  string abstract_content = 9; // Plain text content if completed
 }
 
 // Request for specific task details
