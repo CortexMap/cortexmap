@@ -1,29 +1,62 @@
 syntax = "proto3";
 
+import "google/api/annotations.proto";
+
 package queue;
 
 // Queue management service for CortexMap paper fetching
 service QueueService {
   // Submit a query to enqueue papers for fetching
-  rpc EnqueueQuery(EnqueueRequest) returns (EnqueueResponse);
+  rpc EnqueueQuery(EnqueueRequest) returns (EnqueueResponse) {
+    option (google.api.http) = {
+      post: "/api/queue/enqueue"
+      body: "*"
+    };
+  }
 
   // Get current queue statistics
-  rpc GetQueueStatus(StatusRequest) returns (StatusResponse);
+  rpc GetQueueStatus(StatusRequest) returns (StatusResponse) {
+    option (google.api.http) = {
+      get: "/api/queue/status"
+    };
+  }
 
   // Get detailed status for a specific task
-  rpc GetTaskDetails(TaskDetailsRequest) returns (TaskDetailsResponse);
+  rpc GetTaskDetails(TaskDetailsRequest) returns (TaskDetailsResponse) {
+    option (google.api.http) = {
+      get: "/api/queue/task/{pmc_id}"
+    };
+  }
 
   // Allocate workers (start worker processes)
-  rpc AllocateWorkers(AllocateWorkersRequest) returns (AllocateWorkersResponse);
+  rpc AllocateWorkers(AllocateWorkersRequest) returns (AllocateWorkersResponse) {
+    option (google.api.http) = {
+      post: "/api/queue/workers/allocate"
+      body: "*"
+    };
+  }
 
   // Stop workers
-  rpc StopWorkers(StopWorkersRequest) returns (StopWorkersResponse);
+  rpc StopWorkers(StopWorkersRequest) returns (StopWorkersResponse) {
+    option (google.api.http) = {
+      post: "/api/queue/workers/stop"
+      body: "*"
+    };
+  }
 
   // Get worker status
-  rpc GetWorkerStatus(WorkerStatusRequest) returns (WorkerStatusResponse);
+  rpc GetWorkerStatus(WorkerStatusRequest) returns (WorkerStatusResponse) {
+    option (google.api.http) = {
+      get: "/api/queue/workers/status"
+    };
+  }
 
   // Stream queue status updates (for real-time monitoring)
-  rpc StreamQueueStatus(StreamStatusRequest) returns (stream StatusResponse);
+  rpc StreamQueueStatus(StreamStatusRequest) returns (stream StatusResponse) {
+    option (google.api.http) = {
+      get: "/api/queue/stream"
+    };
+  }
 }
 
 // Request to enqueue papers for a query

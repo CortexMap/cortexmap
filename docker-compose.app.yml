@@ -3,6 +3,8 @@ services:
     image: 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest
     container_name: cortexmap-be
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "8080:8080"
     environment:
@@ -12,9 +14,15 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET}
       HTTP_ADDR: ${HTTP_ADDR:-0.0.0.0:8080}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
-      - cortexmap-network
+      - infra-net
 
 networks:
-  cortexmap-network:
+  infra-net:
     external: true

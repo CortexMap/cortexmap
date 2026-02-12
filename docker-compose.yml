@@ -1,94 +1,103 @@
 services:
   postgres:
-    image: postgres:16-alpine
-    container_name: cortexmap-postgres
+    image: ankane/pgvector:latest
+    container_name: infra-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: cortexmap
-      POSTGRES_PASSWORD: cortexmap_dev
-      POSTGRES_DB: cortexmap
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d
+    networks:
+      - infra-net
+    ports:
+      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cortexmap"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - cortexmap-network
 
   minio:
     image: minio/minio:latest
-    container_name: cortexmap-minio
+    container_name: infra-minio
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"  # MinIO API
-      - "9001:9001"  # MinIO Console
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - minio_data:/data
+    networks:
+      - infra-net
+    ports:
+      - "9000:9000"  # S3 API
+#      - "9001:9001"  # Web console
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
-    networks:
-      - cortexmap-network
 
-  # Optional: Create default bucket on startup
+  # Creates the default bucket on first startup
   minio-setup:
     image: minio/mc:latest
-    container_name: cortexmap-minio-setup
+    container_name: infra-minio-setup
+    restart: on-failure
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      /usr/bin/mc mb myminio/cortexmap --ignore-existing;
-      /usr/bin/mc anonymous set download myminio/cortexmap;
+      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+      /usr/bin/mc mb myminio/${MINIO_BUCKET:-cortexmap} --ignore-existing;
+      /usr/bin/mc anonymous set download myminio/${MINIO_BUCKET:-cortexmap};
       exit 0;
       "
     networks:
-      - cortexmap-network
+      - infra-net
 
-  # PostgreSQL visualization tools
   adminer:
     image: adminer:latest
-    container_name: cortexmap-adminer
+    container_name: infra-adminer
+    restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8081:8080"
     environment:
-      ADMINER_DEFAULT_SERVER: 10.2.0.251:5432
+      ADMINER_DEFAULT_SERVER: postgres:5432
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
-      - cortexmap-network
+      - infra-net
 
   pgadmin:
     image: dpage/pgadmin4:latest
-    container_name: cortexmap-pgadmin
+    container_name: infra-pgadmin
+    restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@cortexmap.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@cortexmap.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
     ports:
       - "5050:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
-      - cortexmap-network
+      - infra-net
 
 volumes:
   postgres_data:
-    driver: local
   minio_data:
-    driver: local
   pgadmin_data:
-    driver: local
 
 networks:
-  cortexmap-network:
+  infra-net:
+    name: infra-net
     driver: bridge

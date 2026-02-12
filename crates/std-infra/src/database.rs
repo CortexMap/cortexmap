@@ -3,6 +3,7 @@ use cortexmap_infra::{DatabaseInfra, InfraError, NewPaper, Paper};
 use diesel::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
+use std::time::Duration;
 
 pub type DbPool = Pool<ConnectionManager<PgConnection>>;
 
@@ -14,7 +15,10 @@ impl StdDatabaseInfra {
     pub fn new(database_url: &str) -> Result<Self, InfraError> {
         let manager = ConnectionManager::<PgConnection>::new(database_url);
         let pool = Pool::builder()
-            .max_size(10)
+            .max_size(20)
+            .min_idle(Some(2))
+            .connection_timeout(Duration::from_secs(10))
+            .idle_timeout(Some(Duration::from_secs(600)))
             .build(manager)?;
 
         Ok(Self { pool })

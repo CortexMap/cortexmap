@@ -10,29 +10,25 @@
 #     | docker login --username AWS --password-stdin \
 #         285560394698.dkr.ecr.us-east-1.amazonaws.com
 #
-# 2a. Build (read args from host environment):
+# 2. Build (non-secret config only — secrets are never baked into the image):
 #   docker build \
 #     --build-arg DATABASE_URL \
 #     --build-arg S3_ENDPOINT \
-#     --build-arg S3_ACCESS_KEY \
-#     --build-arg S3_SECRET_KEY \
-#     --build-arg S3_BUCKET \
-#     -t 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest .
-#
-# 2b. Build (read args from a .env file):
-#   export $(grep -v '^#' .env | xargs) && docker build \
-#     --build-arg DATABASE_URL \
-#     --build-arg S3_ENDPOINT \
-#     --build-arg S3_ACCESS_KEY \
-#     --build-arg S3_SECRET_KEY \
 #     --build-arg S3_BUCKET \
 #     -t 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest .
 #
 # 3. Push to ECR:
 #   docker push 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest
 #
-# Run (supply secrets at container start instead of baking them into the image):
+# 4. Run (inject secrets at runtime via --env-file or -e):
 #   docker run --env-file .env -p 8080:8080 \
+#     285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest
+#
+#   Or individually:
+#   docker run \
+#     -e S3_ACCESS_KEY=... \
+#     -e S3_SECRET_KEY=... \
+#     -p 8080:8080 \
 #     285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest
 #
 # ────────────────────────────────────────────────────────────────────────────
@@ -59,7 +55,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build the actual binary
 COPY . .
-RUN cargo build --release -p cortexmap-be
+RUN cargo build --release
 
 # ── Stage 4: minimal runtime image ───────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
@@ -69,21 +65,16 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Declare build args — when passed via --build-arg, they are baked into the
-# image as environment variables. Omit --build-arg at build time and supply
-# them at `docker run` with --env-file instead if you prefer not to bake
-# secrets into the image layers.
+# Non-secret config can be baked in at build time via --build-arg.
+# Secrets (S3_ACCESS_KEY, S3_SECRET_KEY) must never appear in ARG/ENV —
+# supply them exclusively at `docker run` time via --env-file or -e.
 ARG DATABASE_URL
 ARG S3_ENDPOINT
-ARG S3_ACCESS_KEY
-ARG S3_SECRET_KEY
 ARG S3_BUCKET
 ARG HTTP_ADDR=0.0.0.0:8080
 
 ENV DATABASE_URL=${DATABASE_URL}
 ENV S3_ENDPOINT=${S3_ENDPOINT}
-ENV S3_ACCESS_KEY=${S3_ACCESS_KEY}
-ENV S3_SECRET_KEY=${S3_SECRET_KEY}
 ENV S3_BUCKET=${S3_BUCKET}
 ENV HTTP_ADDR=${HTTP_ADDR}
 
