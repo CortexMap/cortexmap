@@ -78,7 +78,7 @@ impl QueueServer {
 
     /// Build the axum `Router` for all queue endpoints.
     pub fn into_router(self) -> Router {
-        Router::new()
+        let api_routes = Router::new()
             .route("/health", get(health_handler))
             .route("/api/queue/enqueue", post(enqueue_query_handler))
             .route("/api/queue/status", get(get_queue_status_handler))
@@ -91,7 +91,9 @@ impl QueueServer {
                     .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
                     .on_response(DefaultOnResponse::new().level(Level::INFO)),
             )
-            .with_state(self)
+            .with_state(self);
+
+        Router::new().nest("/fetcher-be", api_routes)
     }
 }
 
