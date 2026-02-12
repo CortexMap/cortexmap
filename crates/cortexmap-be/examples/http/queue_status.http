@@ -1,0 +1,2 @@
+### Get current queue statistics
+GET http://ec2-3-88-176-142.compute-1.amazonaws.com/api/queue/status

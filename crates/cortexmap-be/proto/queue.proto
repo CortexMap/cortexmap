@@ -1,1 +1,164 @@
-// Deprecated, use cortexmap/llm_layer/rpc/proto/brain.proto
+syntax = "proto3";
+
+import "google/api/annotations.proto";
+
+package queue;
+
+// Queue management service for CortexMap paper fetching
+service QueueService {
+  // Submit a query to enqueue papers for fetching
+  rpc EnqueueQuery(EnqueueRequest) returns (EnqueueResponse) {
+    option (google.api.http) = {
+      post: "/api/queue/enqueue"
+      body: "*"
+    };
+  }
+
+  // Get current queue statistics
+  rpc GetQueueStatus(StatusRequest) returns (StatusResponse) {
+    option (google.api.http) = {
+      get: "/api/queue/status"
+    };
+  }
+
+  // Get detailed status for a specific task
+  rpc GetTaskDetails(TaskDetailsRequest) returns (TaskDetailsResponse) {
+    option (google.api.http) = {
+      get: "/api/queue/task/{pmc_id}"
+    };
+  }
+
+  // Allocate workers (start worker processes)
+  rpc AllocateWorkers(AllocateWorkersRequest) returns (AllocateWorkersResponse) {
+    option (google.api.http) = {
+      post: "/api/queue/workers/allocate"
+      body: "*"
+    };
+  }
+
+  // Stop workers
+  rpc StopWorkers(StopWorkersRequest) returns (StopWorkersResponse) {
+    option (google.api.http) = {
+      post: "/api/queue/workers/stop"
+      body: "*"
+    };
+  }
+
+  // Get worker status
+  rpc GetWorkerStatus(WorkerStatusRequest) returns (WorkerStatusResponse) {
+    option (google.api.http) = {
+      get: "/api/queue/workers/status"
+    };
+  }
+
+  // Stream queue status updates (for real-time monitoring)
+  rpc StreamQueueStatus(StreamStatusRequest) returns (stream StatusResponse) {
+    option (google.api.http) = {
+      get: "/api/queue/stream"
+    };
+  }
+}
+
+// Request to enqueue papers for a query
+message EnqueueRequest {
+  string query = 1;
+  uint32 page_size = 2;
+  uint32 max_retry_attempts = 3;
+}
+
+// Response after enqueueing
+message EnqueueResponse {
+  bool success = 1;
+  uint32 tasks_enqueued = 2;
+  repeated string pmc_ids = 3;
+  string error_message = 4;
+}
+
+// Request for queue status
+message StatusRequest {
+  // Empty for now, could add filters later
+}
+
+// Queue statistics response
+message StatusResponse {
+  int64 total_tasks = 1;
+  int64 pending_tasks = 2;
+  int64 in_progress_tasks = 3;
+  int64 completed_tasks = 4;
+  int64 failed_tasks = 5;
+  int32 active_workers = 6;
+}
+
+// Request for specific task details
+message TaskDetailsRequest {
+  string pmc_id = 1;
+}
+
+// Detailed task information
+message TaskDetailsResponse {
+  bool found = 1;
+  string pmc_id = 2;
+  string status = 3;
+  repeated ComponentStatus components = 4;
+  string error_message = 5;
+}
+
+// Component status information
+message ComponentStatus {
+  string component_type = 1; // "summary", "abstract", "pdf"
+  string status = 2; // "pending", "in_progress", "completed", "failed"
+  int32 attempt_count = 3;
+  int32 max_attempts = 4;
+  string s3_key = 5;
+  string error_message = 6;
+}
+
+// Request to allocate workers
+message AllocateWorkersRequest {
+  uint32 worker_count = 1;
+  uint64 task_timeout_secs = 2;
+  uint32 max_retry_attempts = 3;
+}
+
+// Response after allocating workers
+message AllocateWorkersResponse {
+  bool success = 1;
+  repeated string worker_ids = 2;
+  string error_message = 3;
+}
+
+// Request to stop workers
+message StopWorkersRequest {
+  repeated string worker_ids = 1; // Empty means stop all
+}
+
+// Response after stopping workers
+message StopWorkersResponse {
+  bool success = 1;
+  uint32 workers_stopped = 2;
+  string error_message = 3;
+}
+
+// Request for worker status
+message WorkerStatusRequest {
+  // Empty for now
+}
+
+// Worker status information
+message WorkerStatusResponse {
+  repeated WorkerInfo workers = 1;
+}
+
+// Individual worker information
+message WorkerInfo {
+  string worker_id = 1;
+  string status = 2; // "running", "idle", "stopped"
+  string current_task = 3; // PMC ID or empty
+  int64 tasks_processed = 4;
+  int64 started_at = 5; // Unix timestamp
+}
+
+// Request for streaming status
+message StreamStatusRequest {
+  uint32 interval_seconds = 1; // Update interval (default: 5 seconds)
+}

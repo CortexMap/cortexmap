@@ -1,20 +1,17 @@
 use anyhow::Result;
 use cortexmap_be::server::QueueServer;
 use std::net::SocketAddr;
-use tonic::transport::Server;
 use tracing::{info, Level};
 use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_max_level(Level::INFO)
         .init();
 
-    // Parse configuration from environment or args
-    let addr: SocketAddr = std::env::var("GRPC_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:50051".to_string())
+    let addr: SocketAddr = std::env::var("HTTP_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
         .parse()?;
 
     let database_url = std::env::var("DATABASE_URL")
@@ -32,11 +29,10 @@ async fn main() -> Result<()> {
     let s3_bucket = std::env::var("S3_BUCKET")
         .expect("S3_BUCKET must be set");
 
-    info!("🚀 Starting CortexMap gRPC server on {}", addr);
-    info!("📊 Database: {}", database_url.split('@').last().unwrap_or("unknown"));
-    info!("📦 S3 Bucket: {}", s3_bucket);
+    info!("Starting CortexMap HTTP server on {}", addr);
+    info!("Database: {}", database_url.split('@').last().unwrap_or("unknown"));
+    info!("S3 Bucket: {}", s3_bucket);
 
-    // Create the server
     let queue_server = QueueServer::new(
         database_url,
         s3_endpoint,
@@ -45,11 +41,10 @@ async fn main() -> Result<()> {
         s3_bucket,
     ).await?;
 
-    // Start the gRPC server
-    Server::builder()
-        .add_service(queue_server.into_service())
-        .serve(addr)
-        .await?;
+    let router = queue_server.into_router();
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, router).await?;
 
     Ok(())
 }

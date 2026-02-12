@@ -202,10 +202,23 @@ where
             .await
             .ok();
     } else {
-        tracing::info!("Task {} has incomplete components, will retry later", task_id);
-        // Reset task to pending for retry
+        tracing::info!("Task {} has incomplete components, releasing back to pending for retry", task_id);
+        
+        // Release task back to pending so it can be picked up again for retry
+        // This clears worker_id, heartbeat_at, started_at and sets status='pending'
         ctx.infra
-            .update_component_status(task_id, ComponentType::Summary, TaskStatus::Pending, None, None)
+            .release_task(task_id)
+            .await?;
+        
+        // Log that task needs retry
+        ctx.infra
+            .log_task_event(NewFetchTaskLog {
+                task_id,
+                component_type: None,
+                log_level: "warn".to_string(),
+                message: format!("Task has incomplete components, released for retry"),
+                metadata: None,
+            })
             .await
             .ok();
     }
@@ -309,10 +322,12 @@ where
 ///
 /// This function:
 /// 1. Claims the next pending task (respecting timeout)
-/// 2. Processes the task
-/// 3. Sleeps for the configured timeout
-/// 4. Repeats until cancelled
+/// 2. Assigns it to this worker with heartbeat tracking
+/// 3. Processes the task
+/// 4. Sleeps for the configured timeout
+/// 5. Repeats until cancelled
 pub async fn worker_loop<I>(
+    worker_id: String,
     ctx: InfraContext<I>,
     blueprint: Blueprint,
 ) -> Result<(), FetchError>
@@ -323,7 +338,8 @@ where
     let empty_queue_sleep_secs = blueprint.fetcher.retry_config.empty_queue_sleep_secs;
 
     tracing::info!(
-        "Starting worker loop (timeout: {}s, max retries: {}, backoff: {:?})",
+        "Starting worker {} (timeout: {}s, max retries: {}, backoff: {:?})",
+        worker_id,
         timeout_secs,
         blueprint.fetcher.max_retry_attempts,
         blueprint.fetcher.retry_config.backoff_strategy
@@ -333,11 +349,21 @@ where
         // Try to claim next pending task
         match ctx.infra.get_next_pending_task(timeout_secs).await {
             Ok(Some(task)) => {
-                tracing::info!("Claimed task {} for PMC {}", task.id, task.pmc_id);
+                tracing::info!("Worker {} claimed task {} for PMC {}", worker_id, task.id, task.pmc_id);
+
+                // Claim the task for this worker (sets worker_id, heartbeat, status)
+                if let Err(e) = ctx.infra.claim_task_for_worker(
+                    task.id,
+                    worker_id.clone(),
+                    Some(env!("CARGO_PKG_VERSION").to_string()),
+                ).await {
+                    tracing::error!("Failed to claim task {} for worker {}: {}", task.id, worker_id, e);
+                    continue;
+                }
 
                 // Process the task
                 if let Err(e) = process_task(task.clone(), ctx.clone(), &blueprint).await {
-                    tracing::error!("Error processing task {}: {}", task.id, e);
+                    tracing::error!("Worker {} error processing task {}: {}", worker_id, task.id, e);
 
                     // Mark task as failed
                     ctx.infra
@@ -347,7 +373,7 @@ where
                 }
 
                 // Sleep for configured timeout before processing next task
-                tracing::debug!("Sleeping for {}s before next task", timeout_secs);
+                tracing::debug!("Worker {} sleeping for {}s before next task", worker_id, timeout_secs);
                 tokio::time::sleep(Duration::from_secs(timeout_secs)).await;
             }
             Ok(None) => {
