@@ -770,6 +770,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "clap",
  "cortexmap-core",
  "cortexmap-fetcher",
  "cortexmap-infra",
