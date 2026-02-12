@@ -155,6 +155,26 @@ impl TaskQueueInfra for StdInfra {
         self.task_queue.get_task_stats().await
     }
     
+    async fn get_detailed_task_stats(&self) -> Result<cortexmap_infra::DetailedTaskStats, InfraError> {
+        self.task_queue.get_detailed_task_stats().await
+    }
+    
+    async fn get_component_stats(&self) -> Result<cortexmap_infra::ComponentStats, InfraError> {
+        self.task_queue.get_component_stats().await
+    }
+    
+    async fn get_recent_tasks(&self, limit: i64) -> Result<Vec<cortexmap_infra::RecentTaskInfo>, InfraError> {
+        self.task_queue.get_recent_tasks(limit).await
+    }
+    
+    async fn get_task_by_pmc_id(&self, pmc_id: &str) -> Result<Option<FetchTask>, InfraError> {
+        self.task_queue.get_task_by_pmc_id(pmc_id).await
+    }
+    
+    async fn get_task_components(&self, task_id: i64) -> Result<Vec<FetchTaskComponent>, InfraError> {
+        self.task_queue.get_task_components(task_id).await
+    }
+    
     // Worker heartbeat management
     async fn claim_task_for_worker(
         &self,

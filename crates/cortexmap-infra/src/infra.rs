@@ -165,6 +165,21 @@ pub trait TaskQueueInfra {
     /// Get task statistics (pending, in_progress, completed, failed counts)
     async fn get_task_stats(&self) -> Result<TaskStats, InfraError>;
     
+    /// Get detailed task statistics with breakdowns
+    async fn get_detailed_task_stats(&self) -> Result<DetailedTaskStats, InfraError>;
+    
+    /// Get component-level statistics
+    async fn get_component_stats(&self) -> Result<ComponentStats, InfraError>;
+    
+    /// Get recent tasks (limit: most recent N tasks)
+    async fn get_recent_tasks(&self, limit: i64) -> Result<Vec<RecentTaskInfo>, InfraError>;
+    
+    /// Get task details by PMC ID
+    async fn get_task_by_pmc_id(&self, pmc_id: &str) -> Result<Option<FetchTask>, InfraError>;
+    
+    /// Get components for a specific task
+    async fn get_task_components(&self, task_id: i64) -> Result<Vec<FetchTaskComponent>, InfraError>;
+    
     // ==================== Worker Heartbeat Management ====================
     
     /// Claim a task and assign it to a worker
@@ -202,4 +217,39 @@ pub struct TaskStats {
     pub completed: i64,
     pub failed: i64,
     pub total: i64,
+}
+
+/// Detailed statistics about tasks
+#[derive(Debug, Clone)]
+pub struct DetailedTaskStats {
+    pub basic: TaskStats,
+    pub tasks_with_errors: i64,
+    pub tasks_pending_retry: i64,
+    pub tasks_in_progress_over_5min: i64,
+    pub average_completion_time_secs: f64,
+    pub oldest_pending_task_age_secs: Option<i64>,
+}
+
+/// Component-level statistics
+#[derive(Debug, Clone)]
+pub struct ComponentStats {
+    pub summary_completed: i64,
+    pub abstract_completed: i64,
+    pub pdf_completed: i64,
+    pub summary_failed: i64,
+    pub abstract_failed: i64,
+    pub pdf_failed: i64,
+    pub total_pending: i64,
+}
+
+/// Recent task information
+#[derive(Debug, Clone)]
+pub struct RecentTaskInfo {
+    pub pmc_id: String,
+    pub status: String,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub worker_id: Option<String>,
+    pub components_completed: i32,
+    pub total_components: i32,
 }

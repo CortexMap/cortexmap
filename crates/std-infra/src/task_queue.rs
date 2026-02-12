@@ -395,6 +395,236 @@ impl TaskQueueInfra for StdTaskQueue {
         .await
     }
     
+    async fn get_detailed_task_stats(&self) -> Result<cortexmap_infra::DetailedTaskStats, InfraError> {
+        use cortexmap_infra::schema::fetch_tasks;
+        use diesel::sql_types::{BigInt, Double, Nullable};
+        
+        let basic_stats = self.get_task_stats().await?;
+        
+        self.run_blocking(move |conn| {
+            // Count tasks with at least one failed component
+            #[derive(QueryableByName)]
+            struct TaskErrorCount {
+                #[diesel(sql_type = BigInt)]
+                count: i64,
+            }
+            
+            let tasks_with_errors: i64 = diesel::sql_query(
+                "SELECT COUNT(DISTINCT task_id) as count FROM fetch_task_components WHERE error_message IS NOT NULL"
+            )
+            .get_result::<TaskErrorCount>(conn)
+            .map(|r| r.count)
+            .unwrap_or(0);
+            
+            // Count pending tasks with previous attempts
+            let tasks_pending_retry: i64 = fetch_tasks::table
+                .filter(fetch_tasks::status.eq(TaskStatus::Pending.as_str()))
+                .filter(fetch_tasks::last_processed_at.is_not_null())
+                .count()
+                .get_result(conn)?;
+            
+            // Count in-progress tasks over 5 minutes old
+            #[derive(QueryableByName)]
+            struct TaskCount {
+                #[diesel(sql_type = BigInt)]
+                count: i64,
+            }
+            
+            let tasks_in_progress_over_5min: i64 = diesel::sql_query(
+                "SELECT COUNT(*) as count FROM fetch_tasks 
+                 WHERE status = 'in_progress' 
+                 AND started_at < NOW() - INTERVAL '5 minutes'"
+            )
+            .get_result::<TaskCount>(conn)
+            .map(|r| r.count)
+            .unwrap_or(0);
+            
+            // Calculate average completion time
+            #[derive(QueryableByName)]
+            #[diesel(check_for_backend(diesel::pg::Pg))]
+            struct AvgTime {
+                #[diesel(sql_type = Nullable<Double>)]
+                avg_secs: Option<f64>,
+            }
+            
+            let avg_completion: Option<f64> = diesel::sql_query(
+                "SELECT AVG(EXTRACT(EPOCH FROM (completed_at - created_at))) as avg_secs 
+                 FROM fetch_tasks 
+                 WHERE status = 'completed' AND completed_at IS NOT NULL"
+            )
+            .get_result::<AvgTime>(conn)
+            .ok()
+            .and_then(|r| r.avg_secs);
+            
+            // Get oldest pending task age
+            #[derive(QueryableByName)]
+            #[diesel(check_for_backend(diesel::pg::Pg))]
+            struct OldestAge {
+                #[diesel(sql_type = Nullable<BigInt>)]
+                age_secs: Option<i64>,
+            }
+            
+            let oldest_pending_task_age: Option<i64> = diesel::sql_query(
+                "SELECT EXTRACT(EPOCH FROM (NOW() - created_at))::BIGINT as age_secs 
+                 FROM fetch_tasks 
+                 WHERE status = 'pending' 
+                 ORDER BY created_at ASC 
+                 LIMIT 1"
+            )
+            .get_result::<OldestAge>(conn)
+            .ok()
+            .and_then(|r| r.age_secs);
+            
+            Ok(cortexmap_infra::DetailedTaskStats {
+                basic: basic_stats,
+                tasks_with_errors,
+                tasks_pending_retry,
+                tasks_in_progress_over_5min,
+                average_completion_time_secs: avg_completion.unwrap_or(0.0),
+                oldest_pending_task_age_secs: oldest_pending_task_age,
+            })
+        })
+        .await
+    }
+    
+    async fn get_component_stats(&self) -> Result<cortexmap_infra::ComponentStats, InfraError> {
+        use cortexmap_infra::schema::fetch_task_components;
+        
+        self.run_blocking(move |conn| {
+            let summary_completed: i64 = fetch_task_components::table
+                .filter(fetch_task_components::component_type.eq("summary"))
+                .filter(fetch_task_components::status.eq(TaskStatus::Completed.as_str()))
+                .count()
+                .get_result(conn)?;
+            
+            let abstract_completed: i64 = fetch_task_components::table
+                .filter(fetch_task_components::component_type.eq("abstract"))
+                .filter(fetch_task_components::status.eq(TaskStatus::Completed.as_str()))
+                .count()
+                .get_result(conn)?;
+            
+            let pdf_completed: i64 = fetch_task_components::table
+                .filter(fetch_task_components::component_type.eq("pdf"))
+                .filter(fetch_task_components::status.eq(TaskStatus::Completed.as_str()))
+                .count()
+                .get_result(conn)?;
+            
+            let summary_failed: i64 = fetch_task_components::table
+                .filter(fetch_task_components::component_type.eq("summary"))
+                .filter(fetch_task_components::status.eq(TaskStatus::Failed.as_str()))
+                .count()
+                .get_result(conn)?;
+            
+            let abstract_failed: i64 = fetch_task_components::table
+                .filter(fetch_task_components::component_type.eq("abstract"))
+                .filter(fetch_task_components::status.eq(TaskStatus::Failed.as_str()))
+                .count()
+                .get_result(conn)?;
+            
+            let pdf_failed: i64 = fetch_task_components::table
+                .filter(fetch_task_components::component_type.eq("pdf"))
+                .filter(fetch_task_components::status.eq(TaskStatus::Failed.as_str()))
+                .count()
+                .get_result(conn)?;
+            
+            let total_pending: i64 = fetch_task_components::table
+                .filter(fetch_task_components::status.eq(TaskStatus::Pending.as_str()))
+                .count()
+                .get_result(conn)?;
+            
+            Ok(cortexmap_infra::ComponentStats {
+                summary_completed,
+                abstract_completed,
+                pdf_completed,
+                summary_failed,
+                abstract_failed,
+                pdf_failed,
+                total_pending,
+            })
+        })
+        .await
+    }
+    
+    async fn get_recent_tasks(&self, limit: i64) -> Result<Vec<cortexmap_infra::RecentTaskInfo>, InfraError> {
+        use diesel::sql_types::{Text, BigInt, Timestamp, Integer, Nullable};
+        
+        self.run_blocking(move |conn| {
+            #[derive(QueryableByName)]
+            #[diesel(check_for_backend(diesel::pg::Pg))]
+            struct RecentTaskRow {
+                #[diesel(sql_type = Text)]
+                pmc_id: String,
+                #[diesel(sql_type = Text)]
+                status: String,
+                #[diesel(sql_type = Timestamp)]
+                created_at: chrono::NaiveDateTime,
+                #[diesel(sql_type = Timestamp)]
+                updated_at: chrono::NaiveDateTime,
+                #[diesel(sql_type = Nullable<Text>)]
+                worker_id: Option<String>,
+                #[diesel(sql_type = Integer)]
+                components_completed: i32,
+                #[diesel(sql_type = Integer)]
+                total_components: i32,
+            }
+            
+            let results: Vec<RecentTaskRow> = diesel::sql_query(
+                "SELECT 
+                    t.pmc_id,
+                    t.status,
+                    t.created_at,
+                    t.updated_at,
+                    t.worker_id,
+                    COALESCE((SELECT COUNT(*) FROM fetch_task_components c 
+                              WHERE c.task_id = t.id AND c.status = 'completed'), 0)::INTEGER as components_completed,
+                    COALESCE((SELECT COUNT(*) FROM fetch_task_components c 
+                              WHERE c.task_id = t.id), 0)::INTEGER as total_components
+                 FROM fetch_tasks t
+                 ORDER BY t.updated_at DESC
+                 LIMIT $1"
+            )
+            .bind::<BigInt, _>(limit)
+            .load(conn)?;
+            
+            Ok(results.into_iter().map(|r| cortexmap_infra::RecentTaskInfo {
+                pmc_id: r.pmc_id,
+                status: r.status,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+                worker_id: r.worker_id,
+                components_completed: r.components_completed,
+                total_components: r.total_components,
+            }).collect())
+        })
+        .await
+    }
+    
+    async fn get_task_by_pmc_id(&self, pmc_id: &str) -> Result<Option<FetchTask>, InfraError> {
+        use cortexmap_infra::schema::fetch_tasks;
+        
+        let pmc_id = pmc_id.to_string();
+        self.run_blocking(move |conn| {
+            fetch_tasks::table
+                .filter(fetch_tasks::pmc_id.eq(&pmc_id))
+                .first::<FetchTask>(conn)
+                .optional()
+                .map_err(Into::into)
+        })
+        .await
+    }
+    
+    async fn get_task_components(&self, task_id: i64) -> Result<Vec<FetchTaskComponent>, InfraError> {
+        use cortexmap_infra::schema::fetch_task_components;
+        
+        self.run_blocking(move |conn| {
+            fetch_task_components::table
+                .filter(fetch_task_components::task_id.eq(task_id))
+                .load::<FetchTaskComponent>(conn)
+                .map_err(Into::into)
+        })
+        .await
+    }
+    
     // ==================== Worker Heartbeat Management ====================
     
     async fn claim_task_for_worker(
