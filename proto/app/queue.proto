@@ -87,6 +87,52 @@ message StatusResponse {
   int64 completed_tasks = 4;
   int64 failed_tasks = 5;
   int32 active_workers = 6;
+  
+  // Additional detailed statistics
+  TaskBreakdown task_breakdown = 7;
+  ComponentStatistics component_stats = 8;
+  WorkerStatistics worker_stats = 9;
+  repeated RecentTask recent_tasks = 10;
+}
+
+// Detailed task breakdown
+message TaskBreakdown {
+  int64 tasks_with_errors = 1;
+  int64 tasks_pending_retry = 2;
+  int64 tasks_in_progress_over_5min = 3;
+  double average_completion_time_secs = 4;
+  string oldest_pending_task_age = 5;
+}
+
+// Component-level statistics
+message ComponentStatistics {
+  int64 total_summary_completed = 1;
+  int64 total_abstract_completed = 2;
+  int64 total_pdf_completed = 3;
+  int64 total_summary_failed = 4;
+  int64 total_abstract_failed = 5;
+  int64 total_pdf_failed = 6;
+  int64 total_components_pending = 7;
+}
+
+// Worker-level statistics
+message WorkerStatistics {
+  int64 total_workers_active = 1;
+  int64 total_workers_idle = 2;
+  double average_tasks_per_worker = 3;
+  string most_productive_worker_id = 4;
+  int64 most_productive_worker_task_count = 5;
+}
+
+// Recent task summary
+message RecentTask {
+  string pmc_id = 1;
+  string status = 2;
+  int64 created_at = 3; // Unix timestamp
+  int64 updated_at = 4; // Unix timestamp
+  string worker_id = 5;
+  int32 components_completed = 6;
+  int32 total_components = 7;
 }
 
 // Request for specific task details
@@ -101,6 +147,17 @@ message TaskDetailsResponse {
   string status = 3;
   repeated ComponentStatus components = 4;
   string error_message = 5;
+  
+  // Additional task metadata
+  string query = 6;
+  int32 priority = 7;
+  int64 created_at = 8; // Unix timestamp
+  int64 updated_at = 9; // Unix timestamp
+  int64 started_at = 10; // Unix timestamp (nullable)
+  int64 completed_at = 11; // Unix timestamp (nullable)
+  string worker_id = 12;
+  int64 heartbeat_at = 13; // Unix timestamp (nullable)
+  string worker_version = 14;
 }
 
 // Component status information
@@ -111,6 +168,8 @@ message ComponentStatus {
   int32 max_attempts = 4;
   string s3_key = 5;
   string error_message = 6;
+  int64 last_attempted_at = 7; // Unix timestamp (nullable)
+  int64 completed_at = 8; // Unix timestamp (nullable)
 }
 
 // Request to allocate workers
@@ -156,6 +215,11 @@ message WorkerInfo {
   string current_task = 3; // PMC ID or empty
   int64 tasks_processed = 4;
   int64 started_at = 5; // Unix timestamp
+  string worker_version = 6;
+  int64 last_heartbeat_at = 7; // Unix timestamp (nullable)
+  double uptime_seconds = 8;
+  int64 tasks_failed = 9;
+  double success_rate = 10; // 0.0 to 1.0
 }
 
 // Request for streaming status

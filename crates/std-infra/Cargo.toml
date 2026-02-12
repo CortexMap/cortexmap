@@ -17,5 +17,6 @@ aws-smithy-types.workspace = true
 http-body-util.workspace = true
 http-body.workspace = true
 uuid.workspace = true
+chrono.workspace = true
 
 cortexmap-infra.workspace = true
