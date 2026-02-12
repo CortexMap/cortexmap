@@ -43,12 +43,14 @@ impl WorkerManager {
             let (cancel_tx, mut cancel_rx) = tokio::sync::mpsc::channel::<()>(1);
 
             // Spawn worker task
+            let worker_id_clone = worker_id.clone();
+            let worker_id_for_shutdown = worker_id.clone();
             let handle = tokio::spawn(async move {
                 tokio::select! {
                     _ = cancel_rx.recv() => {
-                        tracing::info!("Worker shutting down gracefully");
+                        tracing::info!("Worker {} shutting down gracefully", worker_id_for_shutdown);
                     }
-                    result = worker_loop(ctx_clone, blueprint_clone) => {
+                    result = worker_loop(worker_id_clone, ctx_clone, blueprint_clone) => {
                         if let Err(e) = result {
                             tracing::error!("Worker error: {}", e);
                         }

@@ -1,4 +1,4 @@
-POST http://3.88.176.142/api/queue/workers/allocate
+POST http://ec2-3-88-176-142.compute-1.amazonaws.com/api/queue/workers/allocate
 Content-Type: application/json
 
 {

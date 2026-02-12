@@ -1,2 +1,2 @@
 ### Get task details for a specific PMC ID
-GET http://3.88.176.142/api/queue/task/PMC12345678
+GET http://ec2-3-88-176-142.compute-1.amazonaws.com/api/queue/task/PMC12345678

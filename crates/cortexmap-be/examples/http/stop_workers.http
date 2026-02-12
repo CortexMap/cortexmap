@@ -1,5 +1,5 @@
 ### Stop all workers
-POST http://3.88.176.142/api/queue/workers/stop
+POST http://ec2-3-88-176-142.compute-1.amazonaws.com/api/queue/workers/stop
 Content-Type: application/json
 
 {

@@ -26,8 +26,14 @@ impl StdTaskQueue {
         let pool = self.pool.clone();
         let result = tokio::task::spawn_blocking(move || -> Result<T, InfraError> {
             let mut conn = pool.get()?;
-            let result = f(&mut conn)?;
-            Ok(result)
+            let result = f(&mut conn);
+            
+            // Explicitly rollback if there was an error to reset connection state
+            if result.is_err() {
+                let _ = diesel::sql_query("ROLLBACK").execute(&mut conn);
+            }
+            
+            Ok(result?)
         })
         .await??;
         
@@ -47,7 +53,7 @@ impl TaskQueueInfra for StdTaskQueue {
 
         self.run_blocking(move |conn| {
             conn.transaction(|conn| {
-                // Insert the task (ON CONFLICT DO NOTHING for idempotency)
+                // Insert the task or update if exists (using ON CONFLICT DO UPDATE to always return a row)
                 let task: FetchTask = diesel::insert_into(fetch_tasks::table)
                     .values(NewFetchTask {
                         pmc_id: pmc_id.clone(),
@@ -56,15 +62,9 @@ impl TaskQueueInfra for StdTaskQueue {
                         priority: 0,
                     })
                     .on_conflict((fetch_tasks::pmc_id, fetch_tasks::query))
-                    .do_nothing()
-                    .get_result(conn)
-                    .or_else(|_| {
-                        // If conflict occurred, fetch the existing task
-                        fetch_tasks::table
-                            .filter(fetch_tasks::pmc_id.eq(&pmc_id))
-                            .filter(fetch_tasks::query.eq(&query))
-                            .first(conn)
-                    })?;
+                    .do_update()
+                    .set(fetch_tasks::updated_at.eq(diesel::dsl::now))
+                    .get_result(conn)?;
 
                 // Create component records for this task if they don't exist
                 let components = vec![

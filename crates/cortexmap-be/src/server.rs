@@ -51,7 +51,7 @@ impl QueueServer {
                 upload_path_prefix: "papers".to_string(),
                 task_timeout_secs: 2,
                 max_retry_attempts: 3,
-                esearch_url: "https://www.ebi.ac.uk/europepmc/webservices/rest/search".to_string(),
+                esearch_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pmc&term={query}&retmode=json&retmax={pageSize}".to_string(),
                 retry_config: RetryConfig::default(),
             },
             connections: Connections {

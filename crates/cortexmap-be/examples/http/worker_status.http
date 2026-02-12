@@ -1,2 +1,2 @@
 ### Get status of all workers
-GET http://3.88.176.142/api/queue/workers/status
+GET http://ec2-3-88-176-142.compute-1.amazonaws.com/api/queue/workers/status

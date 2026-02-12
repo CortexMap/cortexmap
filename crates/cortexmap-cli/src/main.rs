@@ -239,15 +239,18 @@ async fn main() -> Result<()> {
         }
         Mode::Worker => {
             // Run worker loop
-            println!("🔄 Starting worker (timeout: {}s, max retries: {})", 
-                     blueprint.fetcher.task_timeout_secs,
-                     blueprint.fetcher.max_retry_attempts);
-            println!("Press Ctrl+C to stop");
+            let worker_id = uuid::Uuid::new_v4().to_string();
+            tracing::info!(
+                "Starting worker {} (timeout: {}s, max retries: {})", 
+                worker_id,
+                blueprint.fetcher.task_timeout_secs,
+                blueprint.fetcher.max_retry_attempts
+            );
             
-            match cortexmap_fetcher::worker_loop(ctx, blueprint).await {
+            match cortexmap_fetcher::worker_loop(worker_id, ctx, blueprint).await {
                 Ok(()) => Ok(()),
                 Err(e) => {
-                    eprintln!("✗ Worker error: {}", e);
+                    tracing::error!("Worker error: {}", e);
                     Err(e.into())
                 }
             }

@@ -309,10 +309,12 @@ where
 ///
 /// This function:
 /// 1. Claims the next pending task (respecting timeout)
-/// 2. Processes the task
-/// 3. Sleeps for the configured timeout
-/// 4. Repeats until cancelled
+/// 2. Assigns it to this worker with heartbeat tracking
+/// 3. Processes the task
+/// 4. Sleeps for the configured timeout
+/// 5. Repeats until cancelled
 pub async fn worker_loop<I>(
+    worker_id: String,
     ctx: InfraContext<I>,
     blueprint: Blueprint,
 ) -> Result<(), FetchError>
@@ -323,7 +325,8 @@ where
     let empty_queue_sleep_secs = blueprint.fetcher.retry_config.empty_queue_sleep_secs;
 
     tracing::info!(
-        "Starting worker loop (timeout: {}s, max retries: {}, backoff: {:?})",
+        "Starting worker {} (timeout: {}s, max retries: {}, backoff: {:?})",
+        worker_id,
         timeout_secs,
         blueprint.fetcher.max_retry_attempts,
         blueprint.fetcher.retry_config.backoff_strategy
@@ -333,11 +336,21 @@ where
         // Try to claim next pending task
         match ctx.infra.get_next_pending_task(timeout_secs).await {
             Ok(Some(task)) => {
-                tracing::info!("Claimed task {} for PMC {}", task.id, task.pmc_id);
+                tracing::info!("Worker {} claimed task {} for PMC {}", worker_id, task.id, task.pmc_id);
+
+                // Claim the task for this worker (sets worker_id, heartbeat, status)
+                if let Err(e) = ctx.infra.claim_task_for_worker(
+                    task.id,
+                    worker_id.clone(),
+                    Some(env!("CARGO_PKG_VERSION").to_string()),
+                ).await {
+                    tracing::error!("Failed to claim task {} for worker {}: {}", task.id, worker_id, e);
+                    continue;
+                }
 
                 // Process the task
                 if let Err(e) = process_task(task.clone(), ctx.clone(), &blueprint).await {
-                    tracing::error!("Error processing task {}: {}", task.id, e);
+                    tracing::error!("Worker {} error processing task {}: {}", worker_id, task.id, e);
 
                     // Mark task as failed
                     ctx.infra
@@ -347,7 +360,7 @@ where
                 }
 
                 // Sleep for configured timeout before processing next task
-                tracing::debug!("Sleeping for {}s before next task", timeout_secs);
+                tracing::debug!("Worker {} sleeping for {}s before next task", worker_id, timeout_secs);
                 tokio::time::sleep(Duration::from_secs(timeout_secs)).await;
             }
             Ok(None) => {
