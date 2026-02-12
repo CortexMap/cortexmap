@@ -4,69 +4,68 @@ Uses psycopg2 for PostgreSQL operations.
 """
 
 import psycopg2
-from psycopg2.extras import RealDictCursor
-from typing import Optional
 import os
+from psycopg2.extras import execute_values
+import csv
+import uuid
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # Database connection parameters
+# DB_CONFIG = {
+#     'host': os.getenv('DB_HOST', 'localhost'),
+#     'port': os.getenv('DB_PORT', '5433'),
+#     'database': os.getenv('DB_NAME', 'llmlayer'),
+#     'user': os.getenv('DB_USER', 'llmlayer'),
+#     'password': os.getenv('DB_PASSWORD', 'llmlayer_dev')
+# }
+
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'port': os.getenv('DB_PORT', '5433'),
-    'database': os.getenv('DB_NAME', 'llmlayer'),
-    'user': os.getenv('DB_USER', 'llmlayer'),
-    'password': os.getenv('DB_PASSWORD', 'llmlayer_dev')
+    'host': os.getenv('DB_HOST'),
+    'port': os.getenv('DB_PORT'),
+    'database': os.getenv('DB_NAME'),
+    'user': os.getenv('DB_USER'),
+    'password': os.getenv('DB_PASSWORD')
 }
+
+CSV_FILE = "region_mapping.csv"
 
 # SQL Schema for brain_region_responses table
 CREATE_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS brain_region_responses (
-    id SERIAL PRIMARY KEY,
-    
-    -- Query metadata
-    query TEXT NOT NULL,
-    query_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Brain region basic info
-    region_name VARCHAR(255) NOT NULL,
-    
-    -- Location information
-    hemisphere VARCHAR(20) NOT NULL CHECK (hemisphere IN ('Left', 'Right', 'Bilateral')),
-    lobe VARCHAR(255) NOT NULL,
-    anatomical_region TEXT NOT NULL,
-    
-    -- Function and disease descriptions
-    function_description TEXT NOT NULL,
-    disease_description TEXT NOT NULL,
-    
-    -- Timestamps
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+DO $$ 
+BEGIN
+    CREATE DOMAIN brain_namespace AS UUID;
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+
+CREATE TABLE brain_regions (
+    id UUID PRIMARY KEY,  -- UUID v5 based on region name (deterministic)
+    region_id INTEGER NOT NULL UNIQUE,  -- Original id from CSV
+    name VARCHAR(255) NOT NULL UNIQUE,
+    acronym VARCHAR(50),
+    red INTEGER,
+    green INTEGER,
+    blue INTEGER,
+    structure_order INTEGER,
+    parent_region_id INTEGER REFERENCES brain_regions(region_id),  -- References CSV parent_id
+    parent_acronym VARCHAR(50) REFERENCES brain_regions(acronym),  -- Reference to parent acronym
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create index on region_name for faster lookups
-CREATE INDEX IF NOT EXISTS idx_region_name ON brain_region_responses(region_name);
+-- Optional: Add an index on parent_region_id for faster hierarchical queries
+CREATE INDEX idx_parent_region_id ON brain_regions(parent_region_id);
 
--- Create index on query_timestamp for time-based queries
-CREATE INDEX IF NOT EXISTS idx_query_timestamp ON brain_region_responses(query_timestamp);
+-- Optional: Add a check constraint to ensure RGB values are within valid range
+ALTER TABLE brain_regions 
+ADD CONSTRAINT check_rgb_values 
+CHECK (red >= 0 AND red <= 255 AND green >= 0 AND green <= 255 AND blue >= 0 AND blue <= 255);
 
--- Create trigger to automatically update updated_at timestamp
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
-
-DROP TRIGGER IF EXISTS update_brain_region_responses_updated_at ON brain_region_responses;
-
-CREATE TRIGGER update_brain_region_responses_updated_at
-    BEFORE UPDATE ON brain_region_responses
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+set BRAIN_NAMESPACE '550e8400-e29b-41d4-a716-446655440000'
 """
 
 
@@ -123,7 +122,7 @@ def drop_table():
         conn = get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("DROP TABLE IF EXISTS brain_region_responses CASCADE;")
+        cursor.execute("DROP TABLE IF EXISTS brain_regions CASCADE;")
         conn.commit()
         
         print("Table dropped successfully.")
@@ -141,6 +140,84 @@ def drop_table():
             conn.close()
 
 
+BRAIN_NAMESPACE = uuid.UUID('550e8400-e29b-41d4-a716-446655440000')
+
+def generate_uuid_v5(region_name):
+    """Generate a deterministic UUID v5 based on region name."""
+    return uuid.uuid5(BRAIN_NAMESPACE, region_name)
+
+def read_csv(filepath):
+    """Read CSV file and return rows as list of dicts."""
+    rows = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(row)
+    return rows
+
+def insert_data(csv_rows):
+    """Insert CSV data into PostgreSQL database."""
+    try:
+        # Connect to database
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Prepare data for insertion
+        insert_data = []
+        for row in csv_rows:
+            region_id = int(row['id'])
+            name = row['name']
+            acronym = row.get('acronym', None)
+            red = int(row.get('red', 0)) if row.get('red') else None
+            green = int(row.get('green', 0)) if row.get('green') else None
+            blue = int(row.get('blue', 0)) if row.get('blue') else None
+            structure_order = int(row.get('structure_order', 0)) if row.get('structure_order') else None
+            parent_region_id = int(row.get('parent_id')) if row.get('parent_id') and row.get('parent_id').strip() else None
+            parent_acronym = row.get('parent_acronym', None)
+
+            # Generate UUID v5 from region name
+            uuid_v5 = generate_uuid_v5(name)
+
+            insert_data.append((
+                uuid_v5,
+                region_id,
+                name,
+                acronym,
+                red,
+                green,
+                blue,
+                structure_order,
+                parent_region_id,
+                parent_acronym
+            ))
+
+        # Bulk insert
+        sql = """
+            INSERT INTO brain_regions 
+            (id, region_id, name, acronym, red, green, blue, structure_order, parent_region_id, parent_acronym)
+            VALUES %s
+            ON CONFLICT (region_id) DO NOTHING
+        """
+
+        execute_values(cursor, sql, insert_data)
+        conn.commit()
+
+        print(f"Successfully inserted {cursor.rowcount} rows into brain_regions table.")
+        cursor.close()
+        conn.close()
+
+    except psycopg2.Error as e:
+        print(f"Database error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    # Initialize database when run directly
-    init_database()
+    print(f"Reading CSV file: {CSV_FILE}")
+    csv_rows = read_csv(CSV_FILE)
+    print(f"Found {len(csv_rows)} rows in CSV")
+    print("Inserting data into PostgreSQL...")
+    insert_data(csv_rows)
+    print("Import complete!")
