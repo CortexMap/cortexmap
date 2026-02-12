@@ -1,4 +1,5 @@
 use crate::StdDatabaseInfra;
+use crate::database::DbPool;
 use crate::http::StdHttpInfra;
 use crate::s3::StdS3Infra;
 use crate::task_queue::StdTaskQueue;
@@ -40,6 +41,11 @@ impl StdInfra {
             s3_infra,
             task_queue,
         })
+    }
+    
+    /// Get the database connection pool for direct queries
+    pub fn db_pool(&self) -> &DbPool {
+        &self.db_infra.pool
     }
 }
 
@@ -165,6 +171,10 @@ impl TaskQueueInfra for StdInfra {
     
     async fn release_worker_tasks(&self, worker_id: String) -> Result<usize, InfraError> {
         self.task_queue.release_worker_tasks(worker_id).await
+    }
+    
+    async fn release_task(&self, task_id: i64) -> Result<(), InfraError> {
+        self.task_queue.release_task(task_id).await
     }
     
     async fn release_stale_tasks_by_heartbeat(&self, timeout_secs: u64) -> Result<usize, InfraError> {
