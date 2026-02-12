@@ -1,0 +1,45 @@
+# Rust build artifacts
+target/
+**/target/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# IDE and editor
+.idea/
+.vscode/
+*.iml
+
+# Git
+.git/
+.gitignore
+
+# Python (llm_layer)
+llm_layer/.venv/
+llm_layer/data_md/
+llm_layer/pubmed_pdfs/
+llm_layer/chroma/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Frontend
+**/node_modules/
+fetcher_fe/
+
+# Plans and docs
+plans/
+README.md
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Misc
+*.backup
+*.bin
+*.pb
