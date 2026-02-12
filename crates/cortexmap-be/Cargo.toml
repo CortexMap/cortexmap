@@ -20,6 +20,9 @@ cortexmap-infra.workspace = true
 cortexmap-fetcher.workspace = true
 std-infra = { path = "../std-infra" }
 
+# Database
+diesel = { version = "2", features = ["postgres"] }
+
 # Logging and tracing
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

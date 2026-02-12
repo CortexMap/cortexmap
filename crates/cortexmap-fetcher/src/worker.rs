@@ -202,10 +202,23 @@ where
             .await
             .ok();
     } else {
-        tracing::info!("Task {} has incomplete components, will retry later", task_id);
-        // Reset task to pending for retry
+        tracing::info!("Task {} has incomplete components, releasing back to pending for retry", task_id);
+        
+        // Release task back to pending so it can be picked up again for retry
+        // This clears worker_id, heartbeat_at, started_at and sets status='pending'
         ctx.infra
-            .update_component_status(task_id, ComponentType::Summary, TaskStatus::Pending, None, None)
+            .release_task(task_id)
+            .await?;
+        
+        // Log that task needs retry
+        ctx.infra
+            .log_task_event(NewFetchTaskLog {
+                task_id,
+                component_type: None,
+                log_level: "warn".to_string(),
+                message: format!("Task has incomplete components, released for retry"),
+                metadata: None,
+            })
             .await
             .ok();
     }

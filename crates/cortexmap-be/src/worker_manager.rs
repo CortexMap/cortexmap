@@ -17,12 +17,14 @@ pub struct WorkerHandle {
 
 pub struct WorkerManager {
     workers: HashMap<String, WorkerHandle>,
+    ctx: Option<InfraContext<StdInfra>>,
 }
 
 impl WorkerManager {
     pub fn new() -> Self {
         Self {
             workers: HashMap::new(),
+            ctx: None,
         }
     }
 
@@ -32,6 +34,11 @@ impl WorkerManager {
         ctx: InfraContext<StdInfra>,
         blueprint: Blueprint,
     ) -> Result<Vec<String>, anyhow::Error> {
+        // Store ctx for later queries
+        if self.ctx.is_none() {
+            self.ctx = Some(ctx.clone());
+        }
+        
         let mut worker_ids = Vec::new();
 
         for _ in 0..count {
@@ -117,11 +124,66 @@ impl WorkerManager {
                 } else {
                     "running".to_string()
                 },
-                current_task: String::new(), // TODO: Track current task
-                tasks_processed: 0,          // TODO: Track tasks processed
+                current_task: String::new(), // Will be populated by async query
+                tasks_processed: 0,          // Will be populated by async query
                 started_at: worker.started_at,
             })
             .collect()
+    }
+    
+    /// Get detailed worker info with task counts from database
+    pub async fn get_worker_info_with_stats(&self) -> Vec<WorkerInfo> {
+        let mut infos = self.get_worker_info();
+        
+        if let Some(ref ctx) = self.ctx {
+            // Query database for each worker's stats in parallel
+            let worker_ids: Vec<String> = infos.iter().map(|i| i.worker_id.clone()).collect();
+            
+            for (info, worker_id) in infos.iter_mut().zip(worker_ids.iter()) {
+                // Get stats from database using a raw SQL query via task queue infrastructure
+                if let Ok(stats) = self.query_worker_stats(worker_id, ctx).await {
+                    info.tasks_processed = stats.0;
+                    info.current_task = stats.1;
+                }
+            }
+        }
+        
+        infos
+    }
+    
+    async fn query_worker_stats(&self, worker_id: &str, ctx: &InfraContext<StdInfra>) -> Result<(i64, String), anyhow::Error> {
+        use diesel::prelude::*;
+        use diesel::sql_types::{Text, BigInt};
+        
+        #[derive(QueryableByName)]
+        struct WorkerStats {
+            #[diesel(sql_type = BigInt)]
+            completed_count: i64,
+            #[diesel(sql_type = Text)]
+            current_pmc: String,
+        }
+        
+        let worker_id = worker_id.to_string();
+        let pool = ctx.infra.db_pool().clone();
+        
+        let stats = tokio::task::spawn_blocking(move || -> Result<WorkerStats, anyhow::Error> {
+            let mut conn = pool.get()?;
+            
+            let query = diesel::sql_query(
+                "SELECT 
+                    COUNT(*) FILTER (WHERE status = 'completed') as completed_count,
+                    COALESCE(MAX(pmc_id) FILTER (WHERE status = 'in_progress'), '') as current_pmc
+                 FROM fetch_tasks 
+                 WHERE worker_id = $1"
+            )
+            .bind::<Text, _>(&worker_id);
+            
+            let result = query.get_result::<WorkerStats>(&mut conn)?;
+            Ok(result)
+        })
+        .await??;
+        
+        Ok((stats.completed_count, stats.current_pmc))
     }
 }
 

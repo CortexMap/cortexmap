@@ -258,6 +258,6 @@ async fn get_worker_status_handler(
 ) -> Json<WorkerStatusResponse> {
     let worker_manager = server.worker_manager.read().await;
     Json(WorkerStatusResponse {
-        workers: worker_manager.get_worker_info(),
+        workers: worker_manager.get_worker_info_with_stats().await,
     })
 }

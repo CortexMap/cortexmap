@@ -447,6 +447,24 @@ impl TaskQueueInfra for StdTaskQueue {
         .await
     }
     
+    async fn release_task(&self, task_id: i64) -> Result<(), InfraError> {
+        self.run_blocking(move |conn| {
+            // Use raw SQL to set NULL values since Diesel's type system makes this awkward
+            diesel::sql_query(
+                "UPDATE fetch_tasks 
+                 SET status = 'pending',
+                     worker_id = NULL,
+                     heartbeat_at = NULL,
+                     started_at = NULL
+                 WHERE id = $1"
+            )
+            .bind::<diesel::sql_types::BigInt, _>(task_id)
+            .execute(conn)?;
+            Ok(())
+        })
+        .await
+    }
+    
     async fn release_stale_tasks_by_heartbeat(&self, timeout_secs: u64) -> Result<usize, InfraError> {
         let timeout = timeout_secs as i32;
         

@@ -773,6 +773,7 @@ dependencies = [
  "cortexmap-core",
  "cortexmap-fetcher",
  "cortexmap-infra",
+ "diesel",
  "prost",
  "serde",
  "serde_json",
