@@ -1,10 +1,10 @@
 ### Enqueue a query (minimal)
-POST https://capstone.ssdd.dev/api/queue/enqueue
+POST https://capstone.ssdd.dev/fetcher-be/api/queue/enqueue
 Content-Type: application/json
 
 {
   "query": "pvh",
-  "page_size": 10,
+  "page_size": 20,
   "max_retry_attempts": 3
 }
 

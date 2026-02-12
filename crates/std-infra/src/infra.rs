@@ -77,6 +77,10 @@ impl S3Infra for StdInfra {
     ) -> Result<(), InfraError> {
         self.s3_infra.put_s3(key, content_type, content).await
     }
+    
+    async fn get_s3(&self, key: &str) -> Result<String, InfraError> {
+        self.s3_infra.get_s3(key).await
+    }
 }
 
 #[async_trait::async_trait]

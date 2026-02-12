@@ -774,6 +774,7 @@ dependencies = [
  "cortexmap-fetcher",
  "cortexmap-infra",
  "diesel",
+ "futures",
  "prost",
  "serde",
  "serde_json",

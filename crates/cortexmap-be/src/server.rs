@@ -8,7 +8,7 @@ use axum::{Json, Router};
 use cortexmap_core::blueprint::connections::{Connections, Database, Fetcher, Postgresql, RetryConfig, S3Info};
 use cortexmap_core::blueprint::Blueprint;
 use cortexmap_fetcher::enqueue_query;
-use cortexmap_infra::{InfraContext, TaskQueueInfra};
+use cortexmap_infra::{InfraContext, S3Infra, TaskQueueInfra};
 use std_infra::{StdInfra, StdInfraContext};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -180,6 +180,49 @@ async fn get_queue_status_handler(
         AppError(e.into())
     })?;
     
+    // Concurrently fetch completed summary/abstract content from S3
+    let recent_tasks_with_content: Vec<RecentTask> = {
+        let infra = &server.ctx.infra;
+        let futures = recent_tasks.into_iter().map(|t| async move {
+            let summary_content = if let Some(ref key) = t.summary_s3_key {
+                match infra.get_s3(key).await {
+                    Ok(text) => text,
+                    Err(e) => {
+                        error!("Failed to fetch summary from S3 (key: {}): {}", key, e);
+                        String::new()
+                    }
+                }
+            } else {
+                String::new()
+            };
+
+            let abstract_content = if let Some(ref key) = t.abstract_s3_key {
+                match infra.get_s3(key).await {
+                    Ok(text) => text,
+                    Err(e) => {
+                        error!("Failed to fetch abstract from S3 (key: {}): {}", key, e);
+                        String::new()
+                    }
+                }
+            } else {
+                String::new()
+            };
+
+            RecentTask {
+                pmc_id: t.pmc_id,
+                status: t.status,
+                created_at: t.created_at.and_utc().timestamp(),
+                updated_at: t.updated_at.and_utc().timestamp(),
+                worker_id: t.worker_id.unwrap_or_default(),
+                components_completed: t.components_completed,
+                total_components: t.total_components,
+                summary_content,
+                abstract_content,
+            }
+        });
+        futures::future::join_all(futures).await
+    };
+    
     let worker_manager = server.worker_manager.read().await;
     let active_workers = worker_manager.active_worker_count() as i32;
     let worker_infos = worker_manager.get_worker_info_with_stats().await;
@@ -241,15 +284,7 @@ async fn get_queue_status_handler(
             most_productive_worker_id,
             most_productive_worker_task_count: most_productive_count,
         }),
-        recent_tasks: recent_tasks.into_iter().map(|t| RecentTask {
-            pmc_id: t.pmc_id,
-            status: t.status,
-            created_at: t.created_at.and_utc().timestamp(),
-            updated_at: t.updated_at.and_utc().timestamp(),
-            worker_id: t.worker_id.unwrap_or_default(),
-            components_completed: t.components_completed,
-            total_components: t.total_components,
-        }).collect(),
+        recent_tasks: recent_tasks_with_content,
     }))
 }
 
