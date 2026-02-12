@@ -1,4 +1,4 @@
-POST https://capstone.ssdd.dev/api/queue/workers/allocate
+POST https://capstone.ssdd.dev/fetcher-be/api/queue/workers/allocate
 Content-Type: application/json
 
 {
