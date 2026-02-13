@@ -72,57 +72,6 @@
   font-weight: 600;
 }
 
-.paper-status {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.status-label {
-  font-size: 0.9rem;
-  color: #666;
-  font-weight: 500;
-}
-
-.status-value {
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 0.25rem 0.75rem;
-  border-radius: 12px;
-  text-transform: capitalize;
-}
-
-.paper-status.status-pending .status-value {
-  background: #ffeaa7;
-  color: #f39c12;
-}
-
-.paper-status.status-in_progress .status-value {
-  background: #74b9ff;
-  color: #0984e3;
-}
-
-.paper-status.status-completed .status-value {
-  background: #55efc4;
-  color: #00b894;
-}
-
-.paper-status.status-failed .status-value {
-  background: #ff7675;
-  color: #d63031;
-}
-
-.s3-key {
-  font-size: 0.85rem;
-  color: #555;
-  font-family: 'Courier New', monospace;
-  background: #f0f0f0;
-  padding: 0.35rem 0.75rem;
-  border-radius: 4px;
-  display: inline-block;
-  word-break: break-all;
-}
-
 .components-status {
   display: flex;
   flex-direction: column;

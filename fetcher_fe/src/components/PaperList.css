@@ -32,48 +32,6 @@
   font-weight: 500;
 }
 
-.queue-stats {
-  display: flex;
-  gap: 1.5rem;
-  background: rgba(255, 255, 255, 0.2);
-  padding: 0.75rem 1.5rem;
-  border-radius: 12px;
-  backdrop-filter: blur(10px);
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-.stat-label {
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 0.75rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.stat-value {
-  color: white;
-  font-size: 1.25rem;
-  font-weight: 700;
-}
-
-.stat-value.success {
-  color: #55efc4;
-}
-
-.stat-value.failed {
-  color: #ff7675;
-}
-
-.stat-value.workers {
-  color: #74b9ff;
-}
-
 .retry-icon {
   font-size: 1.2rem;
   animation: rotate 2s linear infinite;

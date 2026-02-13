@@ -1,26 +1,29 @@
 import React from 'react';
-import { TaskStatus } from '../types';
+import { FetchStatus } from '../types';
 import './StatusIndicator.css';
 
 interface StatusIndicatorProps {
-  status: TaskStatus;
-  attemptCount: number;
-  maxAttempts: number;
+  status: FetchStatus;
+  retryCount: number;
 }
 
-const StatusIndicator: React.FC<StatusIndicatorProps> = ({ status, attemptCount, maxAttempts }) => {
+const StatusIndicator: React.FC<StatusIndicatorProps> = ({ status, retryCount }) => {
   const getStatusIcon = () => {
     switch (status) {
-      case 'pending':
+      case FetchStatus.PENDING:
         return <div className="status-icon pending">⏳</div>;
-      case 'in_progress':
+      case FetchStatus.FETCHING:
         return <div className="status-icon fetching">
           <div className="spinner"></div>
-          {attemptCount > 0 && <span className="retry-badge">{attemptCount}</span>}
         </div>;
-      case 'completed':
+      case FetchStatus.RETRYING:
+        return <div className="status-icon retrying">
+          <div className="spinner"></div>
+          <span className="retry-badge">{retryCount}</span>
+        </div>;
+      case FetchStatus.SUCCESS:
         return <div className="status-icon success">✓</div>;
-      case 'failed':
+      case FetchStatus.FAILED:
         return <div className="status-icon failed">✗</div>;
       default:
         return null;
@@ -29,15 +32,15 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({ status, attemptCount,
 
   const getStatusText = () => {
     switch (status) {
-      case 'pending':
+      case FetchStatus.PENDING:
         return 'Pending';
-      case 'in_progress':
-        return attemptCount > 0 
-          ? `Retrying (${attemptCount}/${maxAttempts})` 
-          : 'Fetching...';
-      case 'completed':
+      case FetchStatus.FETCHING:
+        return 'Fetching...';
+      case FetchStatus.RETRYING:
+        return `Retrying (${retryCount}/${3})`;
+      case FetchStatus.SUCCESS:
         return 'Success';
-      case 'failed':
+      case FetchStatus.FAILED:
         return 'Failed';
       default:
         return '';
