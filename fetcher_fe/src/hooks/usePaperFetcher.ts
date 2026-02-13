@@ -1,166 +1,193 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { PaperState, QueueStats, ComponentType, TaskStatus } from '../types';
-import { api } from '../api/backendApi';
+import { PaperFetchState, FetchStatus, RetryQueueItem } from '../types';
+import { fetchMetadata, fetchAbstract, fetchPDF } from '../api/mockApi';
 
-const POLL_INTERVAL = 200; // Poll every 200ms as requested
+const MAX_RETRIES = 3;
+const POLL_INTERVAL = 200;
 
 export const usePaperFetcher = () => {
-  const [papers, setPapers] = useState<Map<string, PaperState>>(new Map());
+  const [papers, setPapers] = useState<Map<string, PaperFetchState>>(new Map());
   const [isSearching, setIsSearching] = useState(false);
-  const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
-  const [pmcIds, setPmcIds] = useState<string[]>([]);
+  const [retryQueue, setRetryQueue] = useState<RetryQueueItem[]>([]);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Update paper state from task details
-  const updatePaperState = useCallback((pmcId: string, taskDetails: any) => {
+  // Initialize paper state
+  const initializePaper = useCallback((paperId: string): PaperFetchState => {
+    return {
+      paper: { id: paperId },
+      components: {
+        metadata: { name: 'metadata', status: FetchStatus.PENDING, retryCount: 0 },
+        abstract: { name: 'abstract', status: FetchStatus.PENDING, retryCount: 0 },
+        pdf: { name: 'pdf', status: FetchStatus.PENDING, retryCount: 0 }
+      },
+      overallStatus: FetchStatus.PENDING
+    };
+  }, []);
+
+  // Update component status
+  const updateComponentStatus = useCallback((
+    paperId: string,
+    componentName: 'metadata' | 'abstract' | 'pdf',
+    status: FetchStatus,
+    data?: any,
+    error?: string
+  ) => {
     setPapers(prev => {
       const newPapers = new Map(prev);
+      const paperState = newPapers.get(paperId);
       
-      const componentsMap = new Map<ComponentType, any>();
-      if (taskDetails.components) {
-        taskDetails.components.forEach((comp: any) => {
-          componentsMap.set(comp.componentType as ComponentType, {
-            componentType: comp.componentType,
-            status: comp.status,
-            attemptCount: comp.attemptCount,
-            maxAttempts: comp.maxAttempts,
-            s3Key: comp.s3Key,
-            errorMessage: comp.errorMessage,
-          });
-        });
+      if (!paperState) return prev;
+
+      const updatedPaper = { ...paperState };
+      updatedPaper.components[componentName] = {
+        ...updatedPaper.components[componentName],
+        status,
+        error
+      };
+
+      // Update paper data if provided
+      if (data) {
+        if (componentName === 'metadata') {
+          updatedPaper.paper = { ...updatedPaper.paper, metadata: data, pmid: data.pmid };
+        } else if (componentName === 'abstract') {
+          updatedPaper.paper = { ...updatedPaper.paper, abstract: data };
+        } else if (componentName === 'pdf') {
+          updatedPaper.paper = { ...updatedPaper.paper, pdfUrl: data };
+        }
       }
 
-      newPapers.set(pmcId, {
-        pmcId,
-        status: taskDetails.status as TaskStatus,
-        components: componentsMap,
-        lastUpdated: Date.now(),
-      });
+      // Update overall status
+      const statuses = Object.values(updatedPaper.components).map(c => c.status);
+      if (statuses.every(s => s === FetchStatus.SUCCESS)) {
+        updatedPaper.overallStatus = FetchStatus.SUCCESS;
+      } else if (statuses.some(s => s === FetchStatus.FAILED)) {
+        updatedPaper.overallStatus = FetchStatus.FAILED;
+      } else if (statuses.some(s => s === FetchStatus.FETCHING || s === FetchStatus.RETRYING)) {
+        updatedPaper.overallStatus = FetchStatus.FETCHING;
+      }
 
+      newPapers.set(paperId, updatedPaper);
       return newPapers;
     });
   }, []);
 
-  // Poll for updates on all tracked PMC IDs
-  const pollForUpdates = useCallback(async () => {
-    if (pmcIds.length === 0) return;
+  // Fetch a single component
+  const fetchComponent = useCallback(async (
+    paperId: string,
+    componentName: 'metadata' | 'abstract' | 'pdf',
+    retryCount: number = 0
+  ) => {
+    const status = retryCount > 0 ? FetchStatus.RETRYING : FetchStatus.FETCHING;
+    updateComponentStatus(paperId, componentName, status);
 
     try {
-      // Fetch task details for all PMC IDs
-      const detailsMap = await api.getMultipleTaskDetails(pmcIds);
-      
-      detailsMap.forEach((details, pmcId) => {
-        if (details.found) {
-          updatePaperState(pmcId, details);
-        }
-      });
+      let data;
+      if (componentName === 'metadata') {
+        data = await fetchMetadata(paperId, retryCount);
+      } else if (componentName === 'abstract') {
+        data = await fetchAbstract(paperId, retryCount);
+      } else {
+        data = await fetchPDF(paperId, retryCount);
+      }
 
-      // Also update queue stats
-      const stats = await api.getQueueStatus();
-      setQueueStats(stats);
+      updateComponentStatus(paperId, componentName, FetchStatus.SUCCESS, data);
+      return true;
     } catch (error) {
-      console.error('Failed to poll for updates:', error);
+      console.error(`Failed to fetch ${componentName} for ${paperId}:`, error);
+      
+      if (retryCount < MAX_RETRIES) {
+        // Add to retry queue
+        setRetryQueue(prev => [...prev, { paperId, componentName, retryCount: retryCount + 1 }]);
+        updateComponentStatus(paperId, componentName, FetchStatus.RETRYING, undefined, (error as Error).message);
+      } else {
+        updateComponentStatus(paperId, componentName, FetchStatus.FAILED, undefined, (error as Error).message);
+      }
+      return false;
     }
-  }, [pmcIds, updatePaperState]);
+  }, [updateComponentStatus]);
 
-  // Start polling when we have PMC IDs
+  // Process retry queue
+  const processRetryQueue = useCallback(async () => {
+    if (retryQueue.length === 0) return;
+
+    const item = retryQueue[0];
+    setRetryQueue(prev => prev.slice(1));
+
+    console.log(`Retrying ${item.componentName} for ${item.paperId} (attempt ${item.retryCount + 1}/${MAX_RETRIES})`);
+    
+    await fetchComponent(item.paperId, item.componentName, item.retryCount);
+  }, [retryQueue, fetchComponent]);
+
+  // Poll and process retry queue
   useEffect(() => {
-    if (pmcIds.length > 0 && !pollIntervalRef.current) {
-      // Initial fetch
-      pollForUpdates();
-
-      // Set up polling
-      pollIntervalRef.current = setInterval(pollForUpdates, POLL_INTERVAL);
+    if (retryQueue.length > 0 && !retryTimeoutRef.current) {
+      retryTimeoutRef.current = setTimeout(() => {
+        processRetryQueue();
+        retryTimeoutRef.current = null;
+      }, POLL_INTERVAL);
     }
 
     return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
       }
     };
-  }, [pmcIds, pollForUpdates]);
+  }, [retryQueue, processRetryQueue]);
+
+  // Start fetching papers
+  const startFetchingPapers = useCallback(async (paperIds: string[]) => {
+    // Initialize all papers
+    const initialPapers = new Map<string, PaperFetchState>();
+    paperIds.forEach(id => {
+      initialPapers.set(id, initializePaper(id));
+    });
+    setPapers(initialPapers);
+
+    // Start fetching all components for all papers
+    for (const paperId of paperIds) {
+      fetchComponent(paperId, 'metadata', 0);
+      fetchComponent(paperId, 'abstract', 0);
+      fetchComponent(paperId, 'pdf', 0);
+    }
+  }, [initializePaper, fetchComponent]);
 
   // Main search function
-  const search = useCallback(async (query: string, pageSize: number = 10) => {
+  const search = useCallback(async (query: string) => {
     setIsSearching(true);
     setPapers(new Map());
-    setPmcIds([]);
-    setQueueStats(null);
+    setRetryQueue([]);
 
     try {
-      console.log(`🔍 Enqueueing query: "${query}"`);
+      // Import search function dynamically to avoid circular dependency
+      const { searchPapers } = await import('../api/mockApi');
+      const paperIds = await searchPapers(query);
       
-      // Enqueue the query
-      const response = await api.enqueueQuery(query, pageSize, 3);
-      
-      if (!response.success) {
-        throw new Error(response.errorMessage || 'Failed to enqueue query');
-      }
-
-      console.log(`✅ Enqueued ${response.tasksEnqueued} tasks`);
-      console.log(`📋 PMC IDs:`, response.pmcIds);
-
-      // Store PMC IDs to start polling
-      setPmcIds(response.pmcIds);
-
-      // Initialize paper states
-      const initialPapers = new Map<string, PaperState>();
-      response.pmcIds.forEach((pmcId) => {
-        initialPapers.set(pmcId, {
-          pmcId,
-          status: 'pending',
-          components: new Map(),
-          lastUpdated: Date.now(),
-        });
-      });
-      setPapers(initialPapers);
-
+      await startFetchingPapers(paperIds);
     } catch (error) {
-      console.error('❌ Search failed:', error);
-      throw error;
+      console.error('Search failed:', error);
     } finally {
       setIsSearching(false);
     }
-  }, []);
+  }, [startFetchingPapers]);
 
-  // Allocate workers
-  const allocateWorkers = useCallback(async (count: number) => {
-    try {
-      console.log(`🔧 Allocating ${count} workers...`);
-      const response = await api.allocateWorkers(count);
-      
-      if (!response.success) {
-        throw new Error(response.errorMessage || 'Failed to allocate workers');
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
       }
-
-      console.log(`✅ Allocated workers:`, response.workerIds);
-      return response.workerIds;
-    } catch (error) {
-      console.error('❌ Failed to allocate workers:', error);
-      throw error;
-    }
-  }, []);
-
-  // Stop all workers
-  const stopWorkers = useCallback(async () => {
-    try {
-      console.log(`🛑 Stopping workers...`);
-      const response = await api.stopWorkers();
-      console.log(`✅ Stopped ${response.workersStopped} workers`);
-      return response.workersStopped;
-    } catch (error) {
-      console.error('❌ Failed to stop workers:', error);
-      throw error;
-    }
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+    };
   }, []);
 
   return {
     papers: Array.from(papers.values()),
     isSearching,
     search,
-    queueStats,
-    allocateWorkers,
-    stopWorkers,
+    retryQueueLength: retryQueue.length
   };
 };
