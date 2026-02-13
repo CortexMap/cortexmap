@@ -1,47 +1,49 @@
-export interface PaperMetadata {
-  pmid: string;
-  title: string;
-  authors: string[];
-  journal: string;
-  publicationDate: string;
-  doi?: string;
+// Status types matching the proto definition
+export type ComponentType = 'summary' | 'abstract' | 'pdf';
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+// Component status from backend
+export interface ComponentStatus {
+  componentType: ComponentType;
+  status: TaskStatus;
+  attemptCount: number;
+  maxAttempts: number;
+  s3Key?: string;
+  errorMessage?: string;
 }
 
-export interface Paper {
-  id: string;
-  pmid: string;
-  metadata: PaperMetadata;
-  abstract: string;
-  pdfUrl: string;
+// Task details from backend
+export interface TaskDetails {
+  found: boolean;
+  pmcId: string;
+  status: TaskStatus;
+  components: ComponentStatus[];
+  errorMessage?: string;
 }
 
-export enum FetchStatus {
-  PENDING = 'pending',
-  FETCHING = 'fetching',
-  SUCCESS = 'success',
-  FAILED = 'failed',
-  RETRYING = 'retrying'
+// Queue statistics
+export interface QueueStats {
+  totalTasks: number;
+  pendingTasks: number;
+  inProgressTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  activeWorkers: number;
 }
 
-export interface PaperComponent {
-  name: 'metadata' | 'abstract' | 'pdf';
-  status: FetchStatus;
-  retryCount: number;
-  error?: string;
+// Worker information
+export interface WorkerInfo {
+  workerId: string;
+  status: 'running' | 'idle' | 'stopped';
+  currentTask?: string;
+  tasksProcessed: number;
+  startedAt: number;
 }
 
-export interface PaperFetchState {
-  paper: Partial<Paper>;
-  components: {
-    metadata: PaperComponent;
-    abstract: PaperComponent;
-    pdf: PaperComponent;
-  };
-  overallStatus: FetchStatus;
-}
-
-export interface RetryQueueItem {
-  paperId: string;
-  componentName: 'metadata' | 'abstract' | 'pdf';
-  retryCount: number;
+// Local UI state for tracking papers
+export interface PaperState {
+  pmcId: string;
+  status: TaskStatus;
+  components: Map<ComponentType, ComponentStatus>;
+  lastUpdated: number;
 }

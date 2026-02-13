@@ -25,3 +25,4 @@ plans/
 # Binary and protobuf test files
 *.bin
 *.pb
+/fetcher_fe/.vite
