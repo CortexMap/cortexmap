@@ -4,7 +4,6 @@ use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Deserialize;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
@@ -69,8 +68,9 @@ struct ServerError(Box<dyn std::error::Error>);
 
 impl IntoResponse for ServerError {
     fn into_response(self) -> Response {
-        let body = serde_json::json!({ "error": self.0.to_string() });
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+        let msg = self.0.to_string();
+        let status = StatusCode::NOT_IMPLEMENTED;
+        (status, Json(serde_json::json!({ "error": msg }))).into_response()
     }
 }
 
@@ -82,11 +82,6 @@ impl<E: std::error::Error + 'static> From<E> for ServerError {
 
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
-}
-
-#[derive(Deserialize)]
-struct IdRequest {
-    id: uuid::Uuid,
 }
 
 /// GET /brainatlas-be/api/list
@@ -103,23 +98,21 @@ where
 /// POST /brainatlas-be/api/search  body: { "id": "<uuid>" }
 async fn search_brain_region_handler<A>(
     State(server): State<BrainAtlasServer<A>>,
-    Json(req): Json<IdRequest>,
 ) -> Result<impl IntoResponse, ServerError>
 where
     A: BrainRegionApi + Send + Sync + 'static,
 {
-    let entry = server.api.search_brain_region(req.id).await?;
+    let entry = server.api.search_brain_region(uuid::Uuid::nil()).await?;
     Ok(Json(entry))
 }
 
 /// POST /brainatlas-be/api/status  body: { "id": "<uuid>" }
 async fn status_handler<A>(
     State(server): State<BrainAtlasServer<A>>,
-    Json(req): Json<IdRequest>,
 ) -> Result<impl IntoResponse, ServerError>
 where
     A: BrainRegionApi + Send + Sync + 'static,
 {
-    let status = server.api.status(req.id).await?;
+    let status = server.api.status(uuid::Uuid::nil()).await?;
     Ok(Json(status))
 }
