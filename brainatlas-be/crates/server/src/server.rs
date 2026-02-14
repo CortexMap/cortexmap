@@ -1,9 +1,10 @@
 use api::BrainRegionApi;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::Deserialize;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
@@ -32,8 +33,8 @@ impl<A: BrainRegionApi + Send + Sync + 'static> BrainAtlasServer<A> {
         let api_routes = Router::new()
             .route("/health", get(health_handler))
             .route("/api/list", get(list_brain_regions_handler::<A>))
-            .route("/api/search/{id}", get(search_brain_region_handler::<A>))
-            .route("/api/status/{id}", get(status_handler::<A>))
+            .route("/api/search", post(search_brain_region_handler::<A>))
+            .route("/api/status", post(status_handler::<A>))
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
@@ -83,6 +84,11 @@ async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
 }
 
+#[derive(Deserialize)]
+struct IdRequest {
+    id: uuid::Uuid,
+}
+
 /// GET /brainatlas-be/api/list
 async fn list_brain_regions_handler<A>(
     State(server): State<BrainAtlasServer<A>>,
@@ -94,26 +100,26 @@ where
     Ok(Json(regions))
 }
 
-/// GET /brainatlas-be/api/search/:id
+/// POST /brainatlas-be/api/search  body: { "id": "<uuid>" }
 async fn search_brain_region_handler<A>(
     State(server): State<BrainAtlasServer<A>>,
-    Path(id): Path<uuid::Uuid>,
+    Json(req): Json<IdRequest>,
 ) -> Result<impl IntoResponse, ServerError>
 where
     A: BrainRegionApi + Send + Sync + 'static,
 {
-    let entry = server.api.search_brain_region(id).await?;
+    let entry = server.api.search_brain_region(req.id).await?;
     Ok(Json(entry))
 }
 
-/// GET /brainatlas-be/api/status/:id
+/// POST /brainatlas-be/api/status  body: { "id": "<uuid>" }
 async fn status_handler<A>(
     State(server): State<BrainAtlasServer<A>>,
-    Path(id): Path<uuid::Uuid>,
+    Json(req): Json<IdRequest>,
 ) -> Result<impl IntoResponse, ServerError>
 where
     A: BrainRegionApi + Send + Sync + 'static,
 {
-    let status = server.api.status(id).await?;
+    let status = server.api.status(req.id).await?;
     Ok(Json(status))
 }
