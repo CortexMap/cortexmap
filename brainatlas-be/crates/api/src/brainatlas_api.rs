@@ -29,7 +29,7 @@ where
     type Error = ApiError<AppError<E>>;
 
     async fn search_brain_region(&self, _id: Uuid) -> Result<BrainRegionEntry, Self::Error> {
-        todo!()
+        Err(ApiError::NotImplemented)
     }
 
     async fn list_brain_regions(&self) -> Result<Vec<RegionMapping>, Self::Error> {
@@ -37,6 +37,6 @@ where
     }
 
     async fn status(&self, _id: Uuid) -> Result<Status, Self::Error> {
-        todo!()
+        Err(ApiError::NotImplemented)
     }
 }
