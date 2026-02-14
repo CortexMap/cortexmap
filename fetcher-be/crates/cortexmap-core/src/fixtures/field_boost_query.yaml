@@ -1,0 +1,4 @@
+query: !field
+  name: "title"
+  value: "Rust Programming"
+  boost: 1.5

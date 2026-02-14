@@ -1,0 +1,19 @@
+### Enqueue a query (minimal)
+POST https://capstone.ssdd.dev/fetcher-be/api/queue/enqueue
+Content-Type: application/json
+
+{
+  "query": "pvh",
+  "page_size": 20,
+  "max_retry_attempts": 3
+}
+
+#### Enqueue a query (custom page size)
+#POST http://localhost:8080/api/queue/enqueue
+#Content-Type: application/json
+#
+#{
+#  "query": "alzheimer disease",
+#  "page_size": 25,
+#  "max_retry_attempts": 5
+#}

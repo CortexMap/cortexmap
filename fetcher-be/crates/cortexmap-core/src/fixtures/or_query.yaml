@@ -1,0 +1,3 @@
+query: !or
+  - !term "AI"
+  - !term "artificial intelligence"
