@@ -1,0 +1,24 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.dependencies]
+domain = { path = "crates/domain" }
+api = { path = "crates/api" }
+rpc-types = { path = "crates/rpc-types" }
+services = { path = "crates/services" }
+app = { path = "crates/app" }
+
+prost = "0.14.3"
+prost-types = "0.14.3"
+tonic = "0.14.4"
+tonic-prost = "0.14.4"
+tonic-prost-build = "0.14.4"
+serde = { version = "1.0", features = ["derive"] }
+uuid = { version = "1.11", features = ["serde", "v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+thiserror = "2.0"
+diesel = { version = "2.3.2", features = ["postgres", "r2d2", "chrono", "uuid"] }
+deadpool-diesel = { version = "0.6", features = ["postgres"] }
+tokio = { version = "1", features = ["full"] }
