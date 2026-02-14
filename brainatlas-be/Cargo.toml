@@ -8,6 +8,7 @@ api = { path = "crates/api" }
 rpc-types = { path = "crates/rpc-types" }
 services = { path = "crates/services" }
 app = { path = "crates/app" }
+infra = { path = "crates/infra" }
 
 prost = "0.14.3"
 prost-types = "0.14.3"

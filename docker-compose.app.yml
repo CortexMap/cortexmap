@@ -23,6 +23,27 @@ services:
     networks:
       - infra-net
 
+  brainatlas-be:
+    image: 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/brainatlas-be:latest
+    container_name: brainatlas-be
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8081:8081"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      HTTP_ADDR: ${HTTP_ADDR_BRAINATLAS:-0.0.0.0:8081}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/brainatlas-be/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - infra-net
+
 networks:
   infra-net:
     external: true

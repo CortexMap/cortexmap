@@ -1,87 +1,119 @@
 use api::BrainRegionApi;
-use rpc_types::{
-    BrainRegionListResponse, BrainRegionService, SearchBrainRegionRequest,
-    SearchBrainRegionResponse, StatusRequest, StatusResponse,
-};
+use axum::extract::{Path, State};
+use axum::http::{HeaderValue, Method, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use axum::{Json, Router};
 use std::sync::Arc;
-use tonic::{Request, Response, Status};
+use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 pub struct BrainAtlasServer<A> {
     api: Arc<A>,
 }
 
-impl<A> BrainAtlasServer<A> {
-    pub fn new(api: Arc<A>) -> Self {
-        Self { api }
+impl<A> Clone for BrainAtlasServer<A> {
+    fn clone(&self) -> Self {
+        Self {
+            api: self.api.clone(),
+        }
     }
 }
 
-#[tonic::async_trait]
-impl<A> BrainRegionService for BrainAtlasServer<A>
+impl<A: BrainRegionApi + Send + Sync + 'static> BrainAtlasServer<A> {
+    pub fn new(api: Arc<A>) -> Self {
+        Self { api }
+    }
+
+    pub fn into_router(self) -> Router {
+        let cors = cors_layer();
+
+        let api_routes = Router::new()
+            .route("/health", get(health_handler))
+            .route("/api/list", get(list_brain_regions_handler::<A>))
+            .route("/api/search/:id", get(search_brain_region_handler::<A>))
+            .route("/api/status/:id", get(status_handler::<A>))
+            .layer(cors)
+            .layer(
+                TraceLayer::new_for_http()
+                    .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                    .on_response(DefaultOnResponse::new().level(Level::INFO)),
+            )
+            .with_state(self);
+
+        Router::new().nest("/brainatlas-be", api_routes)
+    }
+}
+
+/// Builds a `CorsLayer` from the `CORS_ORIGIN` environment variable.
+fn cors_layer() -> CorsLayer {
+    let layer = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers(tower_http::cors::Any);
+
+    match std::env::var("CORS_ORIGIN") {
+        Ok(origins) if origins != "*" => {
+            let allowed: Vec<HeaderValue> = origins
+                .split(',')
+                .filter_map(|o| o.trim().parse::<HeaderValue>().ok())
+                .collect();
+            layer.allow_origin(AllowOrigin::list(allowed))
+        }
+        _ => layer.allow_origin(tower_http::cors::Any),
+    }
+}
+
+struct ServerError(Box<dyn std::error::Error>);
+
+impl IntoResponse for ServerError {
+    fn into_response(self) -> Response {
+        let body = serde_json::json!({ "error": self.0.to_string() });
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+    }
+}
+
+impl<E: std::error::Error + 'static> From<E> for ServerError {
+    fn from(e: E) -> Self {
+        ServerError(Box::new(e))
+    }
+}
+
+async fn health_handler() -> impl IntoResponse {
+    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
+}
+
+/// GET /brainatlas-be/api/list
+async fn list_brain_regions_handler<A>(
+    State(server): State<BrainAtlasServer<A>>,
+) -> Result<impl IntoResponse, ServerError>
 where
-    A: BrainRegionApi + 'static,
+    A: BrainRegionApi + Send + Sync + 'static,
 {
-    async fn search_brain_region(
-        &self,
-        request: Request<SearchBrainRegionRequest>,
-    ) -> Result<Response<SearchBrainRegionResponse>, Status> {
-        let id_str = request
-            .into_inner()
-            .id
-            .ok_or_else(|| Status::invalid_argument("missing id"))?
-            .value;
+    let regions = server.api.list_brain_regions().await?;
+    Ok(Json(regions))
+}
 
-        let id = uuid::Uuid::parse_str(&id_str)
-            .map_err(|e| Status::invalid_argument(format!("invalid uuid: {e}")))?;
+/// GET /brainatlas-be/api/search/:id
+async fn search_brain_region_handler<A>(
+    State(server): State<BrainAtlasServer<A>>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError>
+where
+    A: BrainRegionApi + Send + Sync + 'static,
+{
+    let entry = server.api.search_brain_region(id).await?;
+    Ok(Json(entry))
+}
 
-        let entry = self
-            .api
-            .search_brain_region(id)
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
-
-        Ok(Response::new(SearchBrainRegionResponse {
-            entry: Some(entry.into()),
-        }))
-    }
-
-    async fn list_brain_regions(
-        &self,
-        _request: Request<()>,
-    ) -> Result<Response<BrainRegionListResponse>, Status> {
-        let regions = self
-            .api
-            .list_brain_regions()
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
-
-        Ok(Response::new(BrainRegionListResponse {
-            regions: regions.into_iter().map(Into::into).collect(),
-        }))
-    }
-
-    async fn status(
-        &self,
-        request: Request<StatusRequest>,
-    ) -> Result<Response<StatusResponse>, Status> {
-        let id_str = request
-            .into_inner()
-            .id
-            .ok_or_else(|| Status::invalid_argument("missing id"))?
-            .value;
-
-        let id = uuid::Uuid::parse_str(&id_str)
-            .map_err(|e| Status::invalid_argument(format!("invalid uuid: {e}")))?;
-
-        let status = self
-            .api
-            .status(id)
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
-
-        let proto_status: rpc_types::Status = status.into();
-        Ok(Response::new(StatusResponse {
-            status: proto_status as i32,
-        }))
-    }
+/// GET /brainatlas-be/api/status/:id
+async fn status_handler<A>(
+    State(server): State<BrainAtlasServer<A>>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError>
+where
+    A: BrainRegionApi + Send + Sync + 'static,
+{
+    let status = server.api.status(id).await?;
+    Ok(Json(status))
 }
