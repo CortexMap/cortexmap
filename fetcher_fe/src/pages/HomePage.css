@@ -1,0 +1,48 @@
+.home-page {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.page-header {
+  text-align: center;
+  margin-bottom: 2rem;
+  position: relative;
+}
+
+.page-header h1 {
+  font-size: 2.5rem;
+  color: #e0e0e0;
+  margin: 0 0 0.5rem 0;
+}
+
+.page-header p {
+  color: #999;
+  font-size: 1.1rem;
+}
+
+.history-link {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: #667eea;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.history-link:hover {
+  background: #5568d3;
+}
+
+.error-banner {
+  background: #4d1f1f;
+  color: #ef5350;
+  padding: 1rem;
+  border-radius: 4px;
+  margin: 1rem 0;
+  border: 1px solid #6d2f2f;
+}

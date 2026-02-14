@@ -2,17 +2,18 @@ import React, { useState } from 'react';
 import './SearchBar.css';
 
 interface SearchBarProps {
-  onSearch: (query: string) => void;
+  onSearch: (query: string, pageSize: number) => void;
   isSearching: boolean;
 }
 
 const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isSearching }) => {
   const [query, setQuery] = useState('');
+  const [pageSize, setPageSize] = useState(3);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (query.trim() && !isSearching) {
-      onSearch(query.trim());
+      onSearch(query.trim(), pageSize);
     }
   };
 
@@ -26,6 +27,20 @@ const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isSearching }) => {
         className="search-input"
         disabled={isSearching}
       />
+      <div className="page-size-wrapper">
+        <label htmlFor="page-size" className="page-size-label">Papers:</label>
+        <input
+          id="page-size"
+          type="number"
+          value={pageSize}
+          onChange={(e) => setPageSize(Math.max(1, Math.min(20, parseInt(e.target.value) || 3)))}
+          min="1"
+          max="20"
+          className="page-size-input"
+          disabled={isSearching}
+          title="Total papers to fetch (1-20)"
+        />
+      </div>
       <button 
         type="submit" 
         className="search-button"

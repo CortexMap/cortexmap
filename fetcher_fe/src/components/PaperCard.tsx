@@ -1,6 +1,6 @@
-import React from 'react';
-import { PaperState, ComponentType } from '../types';
-import StatusIndicator from './StatusIndicator';
+import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { PaperState } from '../types';
 import './PaperCard.css';
 
 interface PaperCardProps {
@@ -8,20 +8,23 @@ interface PaperCardProps {
 }
 
 const PaperCard: React.FC<PaperCardProps> = ({ paperState }) => {
-  const { pmcId, status, components } = paperState;
+  const { pmcId, status, summary, abstract } = paperState;
+  const [expandedSummary, setExpandedSummary] = useState(false);
+  const [expandedAbstract, setExpandedAbstract] = useState(false);
 
-  const getComponent = (type: ComponentType) => {
-    return components.get(type) || {
-      componentType: type,
-      status: 'pending' as const,
-      attemptCount: 0,
-      maxAttempts: 3,
-    };
-  };
-
-  const summary = getComponent('summary');
-  const abstract = getComponent('abstract');
-  const pdf = getComponent('pdf');
+  const renderSection = (title: string, icon: string, content: string, expanded: boolean, setExpanded: (val: boolean) => void) => (
+    <div className="content-section">
+      <div className="content-header" onClick={() => setExpanded(!expanded)}>
+        <strong>{icon} {title}</strong>
+        <span className="expand-icon">{expanded ? '▼' : '▶'}</span>
+      </div>
+      {expanded && (
+        <div className="content-text markdown-content">
+          <ReactMarkdown>{content}</ReactMarkdown>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="paper-card">
@@ -31,63 +34,16 @@ const PaperCard: React.FC<PaperCardProps> = ({ paperState }) => {
           <span className="paper-id-value">{pmcId}</span>
         </div>
         <div className={`paper-status status-${status}`}>
-          <span className="status-label">Status:</span>
           <span className="status-value">{status.replace('_', ' ').toUpperCase()}</span>
         </div>
       </div>
 
-      <div className="components-status">
-        <div className="component-row">
-          <StatusIndicator 
-            status={summary.status} 
-            attemptCount={summary.attemptCount} 
-            maxAttempts={summary.maxAttempts}
-          />
-          <span className="component-label">Summary</span>
-          {summary.status === 'completed' && summary.s3Key && (
-            <div className="component-details">
-              <span className="s3-key">{summary.s3Key}</span>
-            </div>
-          )}
-          {summary.errorMessage && (
-            <span className="error-message">{summary.errorMessage}</span>
-          )}
+      {(summary || abstract) && (
+        <div className="paper-content">
+          {summary && renderSection('Summary', '📄', summary, expandedSummary, setExpandedSummary)}
+          {abstract && renderSection('Abstract', '📝', abstract, expandedAbstract, setExpandedAbstract)}
         </div>
-
-        <div className="component-row">
-          <StatusIndicator 
-            status={abstract.status} 
-            attemptCount={abstract.attemptCount} 
-            maxAttempts={abstract.maxAttempts}
-          />
-          <span className="component-label">Abstract</span>
-          {abstract.status === 'completed' && abstract.s3Key && (
-            <div className="component-details">
-              <span className="s3-key">{abstract.s3Key}</span>
-            </div>
-          )}
-          {abstract.errorMessage && (
-            <span className="error-message">{abstract.errorMessage}</span>
-          )}
-        </div>
-
-        <div className="component-row">
-          <StatusIndicator 
-            status={pdf.status} 
-            attemptCount={pdf.attemptCount} 
-            maxAttempts={pdf.maxAttempts}
-          />
-          <span className="component-label">PDF</span>
-          {pdf.status === 'completed' && pdf.s3Key && (
-            <div className="component-details">
-              <span className="s3-key">{pdf.s3Key}</span>
-            </div>
-          )}
-          {pdf.errorMessage && (
-            <span className="error-message">{pdf.errorMessage}</span>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 };

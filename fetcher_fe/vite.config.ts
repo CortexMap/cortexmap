@@ -3,16 +3,22 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  base: '/fetcher-fe/',
   server: {
     port: 3000,
     open: true,
+    host: true,
     proxy: {
-      // Proxy API requests to the backend REST API
-      '/api': {
-        target: 'http://localhost:8080',
+      '/fetcher-be': {
+        target: process.env.VITE_BACKEND_URL || 'https://capstone.ssdd.dev',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+        secure: false
       }
     }
+  },
+  preview: {
+    port: 3000,
+    host: true,
+    allowedHosts: ['capstone.ssdd.dev', 'localhost']
   }
 })

@@ -19,6 +19,8 @@ export interface TaskDetails {
   status: TaskStatus;
   components: ComponentStatus[];
   errorMessage?: string;
+  summaryContent?: string;
+  abstractContent?: string;
 }
 
 // Queue statistics
@@ -29,6 +31,19 @@ export interface QueueStats {
   completedTasks: number;
   failedTasks: number;
   activeWorkers: number;
+  recentTasks?: RecentTask[];
+}
+
+export interface RecentTask {
+  pmcId: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  workerId: string;
+  componentsCompleted: number;
+  totalComponents: number;
+  summaryContent?: string;
+  abstractContent?: string;
 }
 
 // Worker information
@@ -46,4 +61,6 @@ export interface PaperState {
   status: TaskStatus;
   components: Map<ComponentType, ComponentStatus>;
   lastUpdated: number;
+  summary?: string;
+  abstract?: string;
 }

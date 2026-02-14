@@ -1,6 +1,6 @@
 /target
 /target
-/.env*
+**/.env*
 /.idea
 /llm_layer/.venv
 /llm_layer/data_md

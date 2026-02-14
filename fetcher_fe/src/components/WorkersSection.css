@@ -1,0 +1,201 @@
+.workers-section {
+  margin: 2rem 0;
+}
+
+.section-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+
+.queue-stats-card, .workers-card {
+  background: #2d2d2d;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  border: 1px solid #404040;
+}
+
+.queue-stats-card h3, .workers-card h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+  color: #e0e0e0;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1rem;
+}
+
+.stat-item {
+  text-align: center;
+  padding: 1rem;
+  background: #252525;
+  border-radius: 6px;
+  border: 1px solid #404040;
+}
+
+.stat-value {
+  display: block;
+  font-size: 2rem;
+  font-weight: bold;
+  color: #e0e0e0;
+  margin-bottom: 0.25rem;
+}
+
+.stat-label {
+  display: block;
+  font-size: 0.85rem;
+  color: #999;
+  margin-top: 0.25rem;
+}
+
+.stat-item.pending .stat-value { color: #ffa500; }
+.stat-item.progress .stat-value { color: #4fc3f7; }
+.stat-item.completed .stat-value { color: #66bb6a; }
+.stat-item.failed .stat-value { color: #ef5350; }
+
+.workers-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.add-worker-btn {
+  background: #4caf50;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.add-worker-btn:hover {
+  background: #45a049;
+}
+
+.workers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.worker-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: #252525;
+  border-radius: 6px;
+  border-left: 4px solid #404040;
+}
+
+.worker-item.running { border-left-color: #66bb6a; }
+.worker-item.idle { border-left-color: #ffa500; }
+.worker-item.stopped { border-left-color: #ef5350; }
+
+.worker-info {
+  flex: 1;
+}
+
+.worker-id {
+  font-family: monospace;
+  font-size: 0.9rem;
+  color: #999;
+  margin-bottom: 0.5rem;
+}
+
+.worker-details {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.status-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.running {
+  background: #1b3d1b;
+  color: #66bb6a;
+}
+
+.status-badge.idle {
+  background: #3d2f00;
+  color: #ffa500;
+}
+
+.status-badge.stopped {
+  background: #4d1f1f;
+  color: #ef5350;
+}
+
+.tasks-count, .start-time, .current-task {
+  font-size: 0.85rem;
+  color: #999;
+}
+
+.current-task {
+  font-weight: 500;
+  color: #4fc3f7;
+}
+
+.stop-btn {
+  background: #f44336;
+  color: white;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1.5rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stop-btn:hover {
+  background: #d32f2f;
+}
+
+.empty-workers {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+}
+
+.error-message {
+  background: #4d1f1f;
+  color: #ef5350;
+  padding: 0.75rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  border: 1px solid #6d2f2f;
+}
+
+.loading {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+}
+
+@media (max-width: 1024px) {
+  .section-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

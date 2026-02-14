@@ -2,6 +2,20 @@
 
 A Rust-based brain atlas data management and query system designed for neuroscience research. CortexMap provides a powerful query engine for searching and retrieving neuroscientific data from various sources.
 
+## 🚀 Quick Start - Frontend
+
+```bash
+cd fetcher_fe
+npm install
+npm start
+```
+
+Access the frontend at http://localhost:3000/fetcher-fe
+
+**Backend**: https://capstone.ssdd.dev/fetcher-be
+
+See `fetcher_fe/README.md` for complete frontend documentation.
+
 ## Features
 
 - **Advanced Query System**: Comprehensive boolean query support with nested logic
