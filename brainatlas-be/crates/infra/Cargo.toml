@@ -1,0 +1,15 @@
+[package]
+name = "infra"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+diesel.workspace = true
+deadpool-diesel.workspace = true
+services.workspace = true
+domain.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
