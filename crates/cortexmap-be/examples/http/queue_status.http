@@ -1,2 +1,0 @@
-### Get current queue statistics
-GET https://capstone.ssdd.dev/fetcher-be/api/queue/status

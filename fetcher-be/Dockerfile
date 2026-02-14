@@ -11,10 +11,12 @@
 #         285560394698.dkr.ecr.us-east-1.amazonaws.com
 #
 # 2. Build (non-secret config only — secrets are never baked into the image):
+#    NOTE: Must be run from repo root to access both fetcher-be/ and proto/
 #   docker build \
 #     --build-arg DATABASE_URL \
 #     --build-arg S3_ENDPOINT \
 #     --build-arg S3_BUCKET \
+#     -f fetcher-be/Dockerfile \
 #     -t 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest .
 #
 # 3. Push to ECR:
@@ -40,7 +42,7 @@ WORKDIR /app
 
 # ── Stage 2: generate dependency recipe ──────────────────────────────────────
 FROM chef AS planner
-COPY . .
+COPY fetcher-be/ .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ── Stage 3: build dependencies (cached layer) ───────────────────────────────
@@ -54,7 +56,8 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build the actual binary
-COPY . .
+COPY fetcher-be/ .
+COPY proto/ ../proto/
 RUN cargo build --release
 
 # ── Stage 4: minimal runtime image ───────────────────────────────────────────

@@ -1,2 +1,0 @@
-### Get status of all workers
-GET https://capstone.ssdd.dev/fetcher-be/api/queue/workers/status

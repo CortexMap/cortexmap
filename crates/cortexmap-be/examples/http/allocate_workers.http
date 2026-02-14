@@ -1,8 +1,0 @@
-POST https://capstone.ssdd.dev/fetcher-be/api/queue/workers/allocate
-Content-Type: application/json
-
-{
-  "worker_count": 3,
-  "task_timeout_secs": 15,
-  "max_retry_attempts": 1
-}

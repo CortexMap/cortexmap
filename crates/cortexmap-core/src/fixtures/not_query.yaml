@@ -1,2 +1,0 @@
-query: !not
-  query: !term "deprecated"

@@ -1,4 +1,0 @@
-query: !range
-  field: "date"
-  gte: "2024-01-01"
-  lte: "2024-12-31"

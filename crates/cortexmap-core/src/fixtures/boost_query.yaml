@@ -1,3 +1,0 @@
-query: !boost
-  query: !term "important"
-  factor: 2.0
