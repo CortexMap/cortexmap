@@ -1,12 +1,12 @@
 /target
-/target
+**/target
 **/.env*
+!**/.env.example
 /.idea
 /llm_layer/.venv
 /llm_layer/data_md
 /llm_layer/pubmed_pdfs
 /llm_layer/chroma
-:**/node_modules
 :**/node_modules
 
 plans/
@@ -25,4 +25,3 @@ plans/
 # Binary and protobuf test files
 *.bin
 *.pb
-/fetcher_fe/.vite
