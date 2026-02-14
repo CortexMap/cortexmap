@@ -1,0 +1,194 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "google/api/annotations.proto";
+
+package com.cortexmap.orch;
+
+// ─────────────────────────────────────────────
+// Shared types
+// ─────────────────────────────────────────────
+
+// Named priority levels. Stored as integer in DB (higher = more urgent).
+enum Priority {
+  BACKGROUND     = 0; // Routine scheduled scan
+  NORMAL         = 5; // Standard enqueue
+  USER_REQUESTED = 8; // Triggered by a search miss
+  INVALIDATION   = 10; // Force refresh requested by user
+}
+
+// End-to-end pipeline state for a brain region, derived by orch
+// from fetch_tasks + llm_enqueued_at + region_summary.
+enum RegionPipelineStatus {
+  NOT_STARTED   = 0; // No fetch task exists
+  FETCH_QUEUED  = 1; // Fetch task exists, status = pending
+  FETCHING      = 2; // Fetch task status = in_progress
+  FETCH_FAILED  = 3; // Fetch task status = failed
+  LLM_QUEUED    = 4; // Fetch complete, handed off to brainatlas, not done yet
+  PROCESSING    = 5; // Brainatlas is chunking / embedding / summarizing
+  DONE          = 6; // At least one region_summary entry exists
+  INVALIDATED   = 7; // New cycle queued on top of existing summaries
+}
+
+message RegionId {
+  // UUID of the row in region_mapping
+  string value = 1;
+}
+
+// ─────────────────────────────────────────────
+// Config
+// ─────────────────────────────────────────────
+
+message ConfigEntry {
+  string key         = 1;
+  string value       = 2;
+  string description = 3;
+  google.protobuf.Timestamp updated_at = 4;
+}
+
+message GetConfigRequest {}
+
+message GetConfigResponse {
+  repeated ConfigEntry entries = 1;
+}
+
+message UpdateConfigRequest {
+  // Only the entries provided are updated; others are left unchanged.
+  repeated ConfigEntry entries = 1;
+}
+
+message UpdateConfigResponse {
+  repeated ConfigEntry updated = 1;
+}
+
+// ─────────────────────────────────────────────
+// Region search (Option C — orch is the public API)
+// ─────────────────────────────────────────────
+
+message SearchRegionRequest {
+  RegionId region_id = 1;
+}
+
+// Returns all summaries for the region ordered by created_at DESC.
+// If none exist and the pipeline is not yet running, orch enqueues
+// at USER_REQUESTED priority and returns status = FETCH_QUEUED.
+message SearchRegionResponse {
+  RegionPipelineStatus    status    = 1;
+  repeated RegionSummary  summaries = 2; // empty while pipeline is in-flight
+}
+
+message RegionSummary {
+  string                   summary    = 1;
+  google.protobuf.Timestamp created_at = 2;
+}
+
+// ─────────────────────────────────────────────
+// Region status
+// ─────────────────────────────────────────────
+
+message GetRegionStatusRequest {
+  RegionId region_id = 1;
+}
+
+message GetRegionStatusResponse {
+  RegionId             region_id = 1;
+  RegionPipelineStatus status    = 2;
+  // ISO-8601 string for when the latest fetch task was created.
+  google.protobuf.Timestamp last_fetch_at    = 3;
+  // ISO-8601 string for when the latest summary was generated.
+  google.protobuf.Timestamp last_summary_at  = 4;
+  int32                     summary_count    = 5;
+  Priority                  current_priority = 6;
+}
+
+// ─────────────────────────────────────────────
+// Invalidation
+// ─────────────────────────────────────────────
+
+message InvalidateRegionRequest {
+  RegionId region_id = 1;
+  // Optional: override priority for the re-processing cycle.
+  // Defaults to INVALIDATION if not set.
+  Priority priority  = 2;
+}
+
+message InvalidateRegionResponse {
+  RegionId             region_id  = 1;
+  RegionPipelineStatus new_status = 2;
+  // Human-readable description of what orch did
+  // (e.g. "re-queued existing fetch task" vs "created new fetch task").
+  string               detail     = 3;
+}
+
+// ─────────────────────────────────────────────
+// Pipeline overview (admin / dashboard)
+// ─────────────────────────────────────────────
+
+message GetPipelineStatsRequest {}
+
+message GetPipelineStatsResponse {
+  int32 total_regions    = 1;
+  int32 not_started      = 2;
+  int32 fetch_queued     = 3;
+  int32 fetching         = 4;
+  int32 fetch_failed     = 5;
+  int32 llm_queued       = 6;
+  int32 processing       = 7;
+  int32 done             = 8;
+  int32 invalidated      = 9;
+}
+
+// ─────────────────────────────────────────────
+// Service definition
+// ─────────────────────────────────────────────
+
+service OrchService {
+
+  // Search for region summaries. If no summary exists, orch triggers
+  // the pipeline at USER_REQUESTED priority and returns the current status.
+  rpc SearchRegion(SearchRegionRequest) returns (SearchRegionResponse) {
+    option (google.api.http) = {
+      post: "/api/regions/search"
+      body: "*"
+    };
+  }
+
+  // Get the end-to-end pipeline status for a single region.
+  rpc GetRegionStatus(GetRegionStatusRequest) returns (GetRegionStatusResponse) {
+    option (google.api.http) = {
+      get: "/api/regions/{region_id.value}/status"
+    };
+  }
+
+  // Queue a fresh fetch + process cycle for a region without deleting
+  // existing summaries. Previous summaries remain readable while the
+  // new cycle runs.
+  rpc InvalidateRegion(InvalidateRegionRequest) returns (InvalidateRegionResponse) {
+    option (google.api.http) = {
+      post: "/api/regions/{region_id.value}/invalidate"
+      body: "*"
+    };
+  }
+
+  // Get a high-level count breakdown across all regions.
+  rpc GetPipelineStats(GetPipelineStatsRequest) returns (GetPipelineStatsResponse) {
+    option (google.api.http) = {
+      get: "/api/pipeline/stats"
+    };
+  }
+
+  // Read current orch config.
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse) {
+    option (google.api.http) = {
+      get: "/api/config"
+    };
+  }
+
+  // Update one or more config entries at runtime without restart.
+  rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse) {
+    option (google.api.http) = {
+      patch: "/api/config"
+      body:  "*"
+    };
+  }
+}
