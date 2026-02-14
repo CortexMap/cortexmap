@@ -11,11 +11,11 @@
 #         285560394698.dkr.ecr.us-east-1.amazonaws.com
 #
 # 2. Build (non-secret config only — secrets are never baked into the image):
-#    NOTE: Must be run from repo root to access both brainatlas-be-be/ and proto/
+#    NOTE: Must be run from repo root to access both brainatlas-be/ and proto/
 #   docker build \
 #     --build-arg DATABASE_URL \
 #     --build-arg CORS_ORIGIN \
-#     -f brainatlas-be-be/Dockerfile \
+#     -f brainatlas-be/Dockerfile \
 #     -t 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/brainatlas-be:latest .
 #
 # 3. Push to ECR:
@@ -41,7 +41,7 @@ WORKDIR /app
 
 # ── Stage 2: generate dependency recipe ──────────────────────────────────────
 FROM chef AS planner
-COPY brainatlas-be-be/ .
+COPY brainatlas-be/ .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ── Stage 3: build dependencies (cached layer) ───────────────────────────────
@@ -77,8 +77,8 @@ ENV DATABASE_URL=${DATABASE_URL}
 ENV CORS_ORIGIN=${CORS_ORIGIN}
 ENV HTTP_ADDR=${HTTP_ADDR}
 
-COPY --from=builder /app/target/release/server /usr/local/bin/brainatlas-be-be
+COPY --from=builder /app/target/release/server /usr/local/bin/brainatlas-be
 
 EXPOSE 8081
 
-ENTRYPOINT ["/usr/local/bin/brainatlas-be-be"]
+ENTRYPOINT ["/usr/local/bin/brainatlas-be"]
