@@ -32,8 +32,8 @@ impl<A: BrainRegionApi + Send + Sync + 'static> BrainAtlasServer<A> {
         let api_routes = Router::new()
             .route("/health", get(health_handler))
             .route("/api/list", get(list_brain_regions_handler::<A>))
-            .route("/api/search/:id", get(search_brain_region_handler::<A>))
-            .route("/api/status/:id", get(status_handler::<A>))
+            .route("/api/search/{id}", get(search_brain_region_handler::<A>))
+            .route("/api/status/{id}", get(status_handler::<A>))
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
