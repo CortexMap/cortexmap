@@ -10,10 +10,9 @@
 #     | docker login --username AWS --password-stdin \
 #         285560394698.dkr.ecr.us-east-1.amazonaws.com
 #
-# 2. Build (non-secret config only — secrets are never baked into the image):
+# 2. Build (no secrets needed — DATABASE_URL is supplied at runtime only):
 #    NOTE: Must be run from repo root to access both brainatlas-be/ and proto/
 #   docker build \
-#     --build-arg DATABASE_URL \
 #     --build-arg CORS_ORIGIN \
 #     -f brainatlas-be/Dockerfile \
 #     -t 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/brainatlas-be:latest .
@@ -67,13 +66,12 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-secret config can be baked in at build time via --build-arg.
-# Secrets (DATABASE_URL contains credentials) must be supplied at
-# `docker run` time via --env-file or -e if they contain passwords.
+# All runtime vars (DATABASE_URL, CORS_ORIGIN, HTTP_ADDR) are supplied via
+# --env-file or -e at `docker run` time. Only CORS_ORIGIN and HTTP_ADDR
+# have build-time defaults as a convenience.
 ARG CORS_ORIGIN=*
 ARG HTTP_ADDR=0.0.0.0:8081
 
-ENV DATABASE_URL=${DATABASE_URL}
 ENV CORS_ORIGIN=${CORS_ORIGIN}
 ENV HTTP_ADDR=${HTTP_ADDR}
 
