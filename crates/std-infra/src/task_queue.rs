@@ -566,6 +566,10 @@ impl TaskQueueInfra for StdTaskQueue {
                 components_completed: i32,
                 #[diesel(sql_type = Integer)]
                 total_components: i32,
+                #[diesel(sql_type = Nullable<Text>)]
+                summary_s3_key: Option<String>,
+                #[diesel(sql_type = Nullable<Text>)]
+                abstract_s3_key: Option<String>,
             }
             
             let results: Vec<RecentTaskRow> = diesel::sql_query(
@@ -578,7 +582,11 @@ impl TaskQueueInfra for StdTaskQueue {
                     COALESCE((SELECT COUNT(*) FROM fetch_task_components c 
                               WHERE c.task_id = t.id AND c.status = 'completed'), 0)::INTEGER as components_completed,
                     COALESCE((SELECT COUNT(*) FROM fetch_task_components c 
-                              WHERE c.task_id = t.id), 0)::INTEGER as total_components
+                              WHERE c.task_id = t.id), 0)::INTEGER as total_components,
+                    (SELECT s3_key FROM fetch_task_components c 
+                     WHERE c.task_id = t.id AND c.component_type = 'summary' AND c.status = 'completed' LIMIT 1) as summary_s3_key,
+                    (SELECT s3_key FROM fetch_task_components c 
+                     WHERE c.task_id = t.id AND c.component_type = 'abstract' AND c.status = 'completed' LIMIT 1) as abstract_s3_key
                  FROM fetch_tasks t
                  ORDER BY t.updated_at DESC
                  LIMIT $1"
@@ -594,6 +602,8 @@ impl TaskQueueInfra for StdTaskQueue {
                 worker_id: r.worker_id,
                 components_completed: r.components_completed,
                 total_components: r.total_components,
+                summary_s3_key: r.summary_s3_key,
+                abstract_s3_key: r.abstract_s3_key,
             }).collect())
         })
         .await

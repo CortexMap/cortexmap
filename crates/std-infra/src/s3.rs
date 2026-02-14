@@ -65,4 +65,21 @@ impl S3Infra for StdS3Infra {
 
         Ok(())
     }
+    
+    async fn get_s3(&self, key: &str) -> Result<String, InfraError> {
+        let result = self.client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await?;
+        
+        let body = result.body.collect().await
+            .map_err(|e| InfraError::S3Error(e.to_string()))?;
+        
+        let text = String::from_utf8(body.into_bytes().to_vec())
+            .map_err(|e| InfraError::S3Error(e.to_string()))?;
+        
+        Ok(text)
+    }
 }

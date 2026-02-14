@@ -1,5 +1,6 @@
 use aws_sdk_s3::config::http::HttpResponse;
 use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::put_object::PutObjectError;
 use thiserror::Error;
 
@@ -19,4 +20,10 @@ pub enum InfraError {
 
     #[error("Put object error: {0}")]
     PutObjectError(#[from] SdkError<PutObjectError, HttpResponse>),
+
+    #[error("Get object error: {0}")]
+    GetObjectError(#[from] SdkError<GetObjectError, HttpResponse>),
+
+    #[error("S3 error: {0}")]
+    S3Error(String),
 }

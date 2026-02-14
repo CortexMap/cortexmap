@@ -37,6 +37,7 @@ serde_json.workspace = true
 
 # Utilities
 uuid = { version = "1.18.1", features = ["v4"] }
+futures.workspace = true
 
 [build-dependencies]
 tonic-build = "0.12"
