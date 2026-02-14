@@ -153,15 +153,19 @@ impl From<RegionMapping> for rpc_types::RegionMapping {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrainRegionEntry {
     pub region_id: i32,
-    pub description: String,
+    pub name: String,
+    pub acronym: String,
+    pub summary: String,
     pub created_at: DateTime<Utc>,
 }
 
 impl BrainRegionEntry {
-    pub fn new(region_id: i32, description: String) -> Self {
+    pub fn new(region_id: i32, name: String, acronym: String, summary: String) -> Self {
         Self {
             region_id,
-            description,
+            name,
+            acronym,
+            summary,
             created_at: Utc::now(),
         }
     }
@@ -172,11 +176,10 @@ impl From<BrainRegionEntry> for rpc_types::BrainRegionEntry {
         use rpc_types::proto::RegionId;
         Self {
             region_id: Some(RegionId { id: entry.region_id }),
-            description: entry.description,
-            created_at: Some(rpc_types::prost_types::Timestamp {
-                seconds: entry.created_at.timestamp(),
-                nanos: entry.created_at.timestamp_subsec_nanos() as i32,
-            }),
+            name: entry.name,
+            acronym: entry.acronym,
+            summary: entry.summary,
+            created_at: entry.created_at.to_rfc3339(),
         }
     }
 }

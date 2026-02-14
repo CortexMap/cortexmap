@@ -44,6 +44,7 @@ dependencies = [
  "async-trait",
  "domain",
  "thiserror",
+ "uuid",
 ]
 
 [[package]]
@@ -1060,6 +1061,7 @@ version = "0.1.0"
 dependencies = [
  "prost",
  "prost-types",
+ "serde",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
@@ -1182,6 +1184,7 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "api",
+ "app",
  "axum",
  "domain",
  "infra",

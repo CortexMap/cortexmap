@@ -1,7 +1,7 @@
-use crate::schema::region_mapping;
-use chrono::{DateTime, TimeZone, Utc};
+use crate::schema::{region_mapping, region_summary};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use diesel::prelude::*;
-use domain::{RegionMapping, Rgb};
+use domain::{BrainRegionEntry, RegionMapping, Rgb};
 use uuid::Uuid;
 
 /// Diesel row model for `region_mapping`. Private to `infra`.
@@ -45,6 +45,31 @@ impl From<RegionMappingRow> for RegionMapping {
             parent_region_id: row.parent_region_id,
             parent_acronym: row.parent_acronym,
             created_at,
+        }
+    }
+}
+
+/// Diesel row model for `region_summary`. Private to `infra`.
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = region_summary)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct RegionSummaryRow {
+    pub id: Uuid,
+    pub region_id: i32,
+    pub name: String,
+    pub acronym: Option<String>,
+    pub summary: String,
+    pub created_at: NaiveDateTime,
+}
+
+impl From<RegionSummaryRow> for BrainRegionEntry {
+    fn from(row: RegionSummaryRow) -> Self {
+        BrainRegionEntry {
+            region_id: row.region_id,
+            name: row.name,
+            acronym: row.acronym.unwrap_or_default(),
+            summary: row.summary,
+            created_at: Utc.from_utc_datetime(&row.created_at),
         }
     }
 }

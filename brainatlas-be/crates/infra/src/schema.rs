@@ -1,4 +1,4 @@
-// @generated — matches the `region_mapping` table in appdb
+// @generated — matches the `region_mapping` and `region_summary` tables in appdb
 
 diesel::table! {
     region_mapping (id) {
@@ -15,3 +15,16 @@ diesel::table! {
         created_at -> diesel::sql_types::Nullable<diesel::sql_types::Timestamp>,
     }
 }
+
+diesel::table! {
+    region_summary (id) {
+        id -> diesel::sql_types::Uuid,
+        region_id -> diesel::sql_types::Integer,
+        name -> diesel::sql_types::VarChar,
+        acronym -> diesel::sql_types::Nullable<diesel::sql_types::VarChar>,
+        summary -> diesel::sql_types::Text,
+        created_at -> diesel::sql_types::Timestamp,
+    }
+}
+
+diesel::allow_tables_to_appear_in_same_query!(region_summary, region_mapping);

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 api.workspace = true
+app.workspace = true
 services.workspace = true
 infra.workspace = true
 domain.workspace = true

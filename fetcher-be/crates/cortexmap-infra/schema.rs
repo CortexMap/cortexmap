@@ -1,5 +1,11 @@
 // @generated automatically by Diesel CLI.
 
+pub mod sql_types {
+    #[derive(diesel::query_builder::QueryId, Clone, diesel::sql_types::SqlType)]
+    #[diesel(postgres_type(name = "vector"))]
+    pub struct Vector;
+}
+
 diesel::table! {
     fetch_task_components (id) {
         id -> Int8,
@@ -42,6 +48,30 @@ diesel::table! {
         worker_id -> Nullable<Text>,
         heartbeat_at -> Nullable<Timestamp>,
         worker_version -> Nullable<Text>,
+        task_type -> Text,
+        source_fetch_task_id -> Nullable<Int8>,
+    }
+}
+
+diesel::table! {
+    langchain_pg_collection (uuid) {
+        name -> Nullable<Varchar>,
+        cmetadata -> Nullable<Json>,
+        uuid -> Uuid,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use super::sql_types::Vector;
+
+    langchain_pg_embedding (uuid) {
+        collection_id -> Nullable<Uuid>,
+        embedding -> Nullable<Vector>,
+        document -> Nullable<Varchar>,
+        cmetadata -> Nullable<Json>,
+        custom_id -> Nullable<Varchar>,
+        uuid -> Uuid,
     }
 }
 
@@ -56,12 +86,49 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    region_mapping (id) {
+        id -> Uuid,
+        region_id -> Int4,
+        #[max_length = 255]
+        name -> Varchar,
+        #[max_length = 50]
+        acronym -> Nullable<Varchar>,
+        red -> Nullable<Int4>,
+        green -> Nullable<Int4>,
+        blue -> Nullable<Int4>,
+        structure_order -> Nullable<Int4>,
+        parent_region_id -> Nullable<Int4>,
+        #[max_length = 50]
+        parent_acronym -> Nullable<Varchar>,
+        created_at -> Nullable<Timestamp>,
+    }
+}
+
+diesel::table! {
+    region_summary (id) {
+        id -> Uuid,
+        region_id -> Int4,
+        #[max_length = 255]
+        name -> Varchar,
+        #[max_length = 50]
+        acronym -> Nullable<Varchar>,
+        summary -> Nullable<Text>,
+        created_at -> Nullable<Timestamp>,
+    }
+}
+
 diesel::joinable!(fetch_task_components -> fetch_tasks (task_id));
 diesel::joinable!(fetch_task_logs -> fetch_tasks (task_id));
+diesel::joinable!(langchain_pg_embedding -> langchain_pg_collection (collection_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     fetch_task_components,
     fetch_task_logs,
     fetch_tasks,
+    langchain_pg_collection,
+    langchain_pg_embedding,
     papers,
+    region_mapping,
+    region_summary,
 );

@@ -1,4 +1,4 @@
-use domain::RegionMapping;
+use domain::{BrainRegionEntry, RegionMapping};
 use uuid::Uuid;
 
 /// All queries the service layer can issue against Postgres.
@@ -14,7 +14,7 @@ pub enum Query {
 /// Typed results returned by each query variant.
 pub enum QueryResult {
     Regions(Vec<RegionMapping>),
-    Region(Option<RegionMapping>),
+    Region(Vec<BrainRegionEntry>),
     Exists(bool),
 }
 

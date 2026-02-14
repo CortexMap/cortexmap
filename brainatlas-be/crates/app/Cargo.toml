@@ -7,3 +7,4 @@ edition = "2024"
 async-trait.workspace = true
 thiserror.workspace = true
 domain.workspace = true
+uuid.workspace = true

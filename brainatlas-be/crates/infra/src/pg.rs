@@ -1,5 +1,6 @@
-use crate::models::RegionMappingRow;
+use crate::models::{RegionMappingRow, RegionSummaryRow};
 use crate::schema::region_mapping::dsl;
+use crate::schema::region_summary::dsl as summary_dsl;
 use crate::InfraError;
 use deadpool_diesel::postgres::{BuildError, Manager, Pool};
 use deadpool_diesel::Runtime;
@@ -51,15 +52,26 @@ impl Postgres for BrainAtlasPostgresql {
             }
 
             Query::GetRegionById(id) => {
-                let row = conn
+                // `id` is the UUID from `region_mapping`. We look up the integer
+                // `region_id` from that row, then query `region_summary` by that integer.
+                let region_id: i32 = conn
                     .interact(move |c| {
                         dsl::region_mapping
                             .filter(dsl::id.eq(id))
-                            .first::<RegionMappingRow>(c)
-                            .optional()
+                            .select(dsl::region_id)
+                            .first::<i32>(c)
                     })
                     .await??;
-                Ok(QueryResult::Region(row.map(Into::into)))
+
+                let rows = conn
+                    .interact(move |c| {
+                        summary_dsl::region_summary
+                            .filter(summary_dsl::region_id.eq(region_id))
+                            .order(summary_dsl::created_at.desc())
+                            .load::<RegionSummaryRow>(c)
+                    })
+                    .await??;
+                Ok(QueryResult::Region(rows.into_iter().map(Into::into).collect()))
             }
 
             Query::RegionExists(id) => {

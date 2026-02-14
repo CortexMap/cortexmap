@@ -32,12 +32,14 @@ message BrainRegionList {
 
 message BrainRegionEntry {
   RegionID region_id = 1;
-  string description = 2;
-  google.protobuf.Timestamp created_at = 10;  // Unix timestamp in milliseconds
+  string name        = 2;
+  string acronym     = 3;
+  string summary     = 4;
+  string created_at  = 10; // ISO 8601 UTC timestamp, e.g. "2026-02-14T12:00:00Z"
 }
 
 message SearchBrainRegionResponse {
-  BrainRegionEntry entry = 1;
+  repeated BrainRegionEntry entries = 1;
 }
 
 enum Status {
@@ -80,6 +82,22 @@ message StatusResponse {
   Status status = 1;
 }
 
+// Called by orch when a fetch task completes.
+// Brainatlas will chunk, embed, and summarize the files at the given S3 keys,
+// then append a new row to region_summary.
+message ProcessRegionRequest {
+  // UUID from region_mapping — identifies which region these files belong to.
+  Uuid region_id       = 1;
+  // S3 object keys for the files to process (PDF, abstract, etc.).
+  repeated string s3_keys = 2;
+}
+
+message ProcessRegionResponse {
+  Uuid   region_id = 1;
+  // Human-readable summary of what was written (e.g. "stored 1 summary for region 42").
+  string detail    = 2;
+}
+
 service BrainRegionService {
   // Search for a specific brain region entry by query
   rpc SearchBrainRegion(SearchBrainRegionRequest) returns (SearchBrainRegionResponse) {
@@ -101,6 +119,16 @@ service BrainRegionService {
   rpc Status(StatusRequest) returns (StatusResponse) {
     option (google.api.http) = {
       post: "/api/status"
+      body: "*"
+    };
+  }
+
+  // Called by orch once a fetch task completes.
+  // Triggers chunking, embedding, and summary generation for the given S3 files,
+  // then persists the result to region_summary.
+  rpc ProcessRegion(ProcessRegionRequest) returns (ProcessRegionResponse) {
+    option (google.api.http) = {
+      post: "/api/process"
       body: "*"
     };
   }

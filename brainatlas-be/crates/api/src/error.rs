@@ -5,4 +5,7 @@ pub enum ApiError<E> {
 
     #[error("not implemented")]
     NotImplemented,
+
+    #[error("missing or invalid id")]
+    MissingOrInvalidId,
 }

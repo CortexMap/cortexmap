@@ -1,6 +1,7 @@
 use crate::{AppError, Services};
-use domain::RegionMapping;
+use domain::{BrainRegionEntry, RegionMapping};
 use std::sync::Arc;
+use uuid::Uuid;
 
 pub struct BrainAtlasApp<S> {
     services: Arc<S>,
@@ -17,5 +18,9 @@ where
 
     pub async fn list(&self) -> Result<Vec<RegionMapping>, AppError<E>> {
         self.services.list().await.map_err(AppError::ServiceError)
+    }
+
+    pub async fn search(&self, id: Uuid) -> Result<Vec<BrainRegionEntry>, AppError<E>> {
+        self.services.search(id).await.map_err(AppError::ServiceError)
     }
 }
