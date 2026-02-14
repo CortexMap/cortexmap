@@ -55,7 +55,7 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build the actual binary
-COPY brainatlas-be-be/ .
+COPY brainatlas-be/ .
 COPY proto/ ../proto/
 RUN cargo build --release -p server
 
