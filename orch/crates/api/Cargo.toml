@@ -1,0 +1,11 @@
+[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+domain.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+app.workspace = true
