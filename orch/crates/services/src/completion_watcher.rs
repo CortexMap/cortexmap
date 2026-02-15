@@ -1,9 +1,10 @@
 use crate::{
-    EnvInfra, HttpClient, NewProcessedFetchTask, OrchDatabase, ProcessRegionRequest,
+    BatchManagement, EnvInfra, HttpClient, OrchDatabase, ProcessRegionRequest,
     ProcessRegionResponse, ServiceError, TaskComponentsResponse, TaskDetailsResponse,
 };
 use app::CompletionOrchestrator;
-use domain::{ConfigKey, PendingTask, PollResult, ProcessResult, TaskResult, TaskStatus};
+use backon::{ExponentialBuilder, Retryable};
+use domain::{BatchStatus, ConfigKey, PendingTask, PollResult, ProcessResult, TaskResult, TaskStatus};
 use std::error::Error;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -14,7 +15,7 @@ pub struct CompletionWatcher<I> {
 
 impl<I> CompletionWatcher<I>
 where
-    I: OrchDatabase + EnvInfra + HttpClient,
+    I: OrchDatabase + EnvInfra + HttpClient + BatchManagement,
 {
     pub fn new(infra: Arc<I>) -> Self {
         Self { infra }
@@ -25,7 +26,12 @@ where
 impl<E, I> CompletionOrchestrator for CompletionWatcher<I>
 where
     E: Error + Send + Sync + 'static,
-    I: OrchDatabase<Error = E> + EnvInfra<Error = E> + HttpClient<Error = E> + Send + Sync,
+    I: OrchDatabase<Error = E> 
+        + EnvInfra<Error = E> 
+        + HttpClient<Error = E> 
+        + BatchManagement<Error = E>
+        + Send 
+        + Sync,
 {
     type Error = ServiceError<E>;
 
@@ -35,7 +41,6 @@ where
             .get_env_var("DATABASE_URL")
             .map_err(ServiceError::InfraError)?;
 
-        // Try env var first, then fall back to DB config
         let fetcher_url = match self.infra.get_env_var("FETCHER_URL") {
             Ok(url) => url,
             Err(_) => self
@@ -48,63 +53,67 @@ where
                 })?,
         };
 
-        let max_parallel = self
+        // Get batches in 'collecting' status
+        let collecting_batches = self
             .infra
-            .get_config(&database_url, ConfigKey::MaxParallelProcessCalls)
-            .await
-            .map_err(ServiceError::InfraError)?
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(10);
-
-        // Get completed fetch tasks from fetcher API
-        let url = format!(
-            "{}/api/queue/tasks?status=completed&limit={}",
-            fetcher_url, max_parallel
-        );
-        let tasks: Vec<TaskDetailsResponse> = self
-            .infra
-            .get(&url)
+            .get_batches_by_status(&database_url, BatchStatus::Collecting)
             .await
             .map_err(ServiceError::InfraError)?;
 
-        let total_found = tasks.len();
-        let mut already_processed = 0;
-        let mut pending_tasks = Vec::new();
+        let mut already_processed = collecting_batches.len();
 
-        // Filter out already processed and extract needed data
-        for task in tasks {
-            if let Some(task_id) = task.task_id {
-                // Check if already processed
-                if self
-                    .infra
-                    .get_processed_task(&database_url, task_id)
+        // For each batch, check if all its fetch tasks are complete
+        for batch in collecting_batches {
+            let all_complete = self
+                .check_all_tasks_complete(&batch.fetch_task_ids, &fetcher_url)
+                .await?;
+
+            if all_complete {
+                // Mark batch as ready
+                self.infra
+                    .update_batch_status(&database_url, batch.id, BatchStatus::Ready, None)
                     .await
-                    .map_err(ServiceError::InfraError)?
-                    .is_some()
-                {
-                    already_processed += 1;
-                } else {
-                    // FIXME: For now, we don't have region_id in the response
-                    // This needs to be added to the fetcher API or we need a mapping
-                    // For now, use a placeholder UUID - this needs to be fixed
-                    let region_id = Uuid::nil(); // TODO: Get actual region_id
-                    pending_tasks.push(PendingTask {
-                        task_id,
-                        pmc_id: task.pmc_id,
-                        region_id,
-                    });
-                }
+                    .map_err(ServiceError::InfraError)?;
+                
+
+                tracing::info!(
+                    batch_id = %batch.id,
+                    region_id = batch.region_id,
+                    task_count = batch.fetch_task_ids.len(),
+                    "Batch ready for processing"
+                );
             }
         }
 
+        // Get batches that are ready to process
+        let ready_batches = self
+            .infra
+            .get_batches_by_status(&database_url, BatchStatus::Ready)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        // Convert ready batches to PendingTask format for backward compatibility
+        let pending_tasks: Vec<PendingTask> = ready_batches
+            .iter()
+            .flat_map(|batch| {
+                // For each batch, create one PendingTask per fetch task
+                // In practice, we'll process the whole batch together
+                batch.fetch_task_ids.iter().map(move |&task_id| PendingTask {
+                    task_id,
+                    pmc_id: format!("batch_{}", batch.id), // Placeholder
+                    region_id: Uuid::nil(), // Will use batch.region_id instead
+                })
+            })
+            .collect();
+
         Ok(PollResult {
             tasks: pending_tasks,
-            total_found,
+            total_found: ready_batches.len() + already_processed,
             already_processed,
         })
     }
 
-    async fn process(&self, tasks: Vec<PendingTask>) -> Result<ProcessResult, Self::Error> {
+    async fn process(&self, _tasks: Vec<PendingTask>) -> Result<ProcessResult, Self::Error> {
         let database_url = self
             .infra
             .get_env_var("DATABASE_URL")
@@ -134,21 +143,30 @@ where
                 })?,
         };
 
+        // Get ready batches (ignore the tasks parameter since we're batch-based now)
+        let ready_batches = self
+            .infra
+            .get_batches_by_status(&database_url, BatchStatus::Ready)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
         let mut successful = 0;
         let mut failed = 0;
         let mut task_results = Vec::new();
 
-        for task in tasks {
+        // Process one batch at a time (can be parallelized later)
+        for batch in ready_batches.into_iter().take(1) {
+            // Limit to 1 batch per process call
             match self
-                .process_single_task(&task, &fetcher_url, &brainatlas_url, &database_url)
+                .process_batch(&batch, &fetcher_url, &brainatlas_url, &database_url)
                 .await
             {
                 Ok(detail) => {
                     successful += 1;
                     task_results.push(TaskResult {
-                        task_id: task.task_id,
-                        pmc_id: task.pmc_id.clone(),
-                        region_id: task.region_id,
+                        task_id: batch.fetch_task_ids.first().copied().unwrap_or(0),
+                        pmc_id: format!("batch_{}", batch.id),
+                        region_id: Uuid::nil(), // TODO: convert i32 region_id to UUID
                         status: TaskStatus::Success,
                         detail: Some(detail),
                     });
@@ -156,9 +174,9 @@ where
                 Err(e) => {
                     failed += 1;
                     task_results.push(TaskResult {
-                        task_id: task.task_id,
-                        pmc_id: task.pmc_id.clone(),
-                        region_id: task.region_id,
+                        task_id: batch.fetch_task_ids.first().copied().unwrap_or(0),
+                        pmc_id: format!("batch_{}", batch.id),
+                        region_id: Uuid::nil(),
                         status: TaskStatus::Failed,
                         detail: Some(e.to_string()),
                     });
@@ -189,100 +207,169 @@ where
 impl<E, I> CompletionWatcher<I>
 where
     E: Error + Send + Sync + 'static,
-    I: OrchDatabase<Error = E> + EnvInfra<Error = E> + HttpClient<Error = E> + Send + Sync,
+    I: OrchDatabase<Error = E> 
+        + EnvInfra<Error = E> 
+        + HttpClient<Error = E> 
+        + BatchManagement<Error = E>
+        + Send 
+        + Sync,
 {
-    async fn process_single_task(
+    /// Check if all fetch tasks in a batch are complete
+    async fn check_all_tasks_complete(
         &self,
-        task: &PendingTask,
+        task_ids: &[i64],
+        fetcher_url: &str,
+    ) -> Result<bool, ServiceError<E>> {
+        for &task_id in task_ids {
+            let url = format!("{}/api/queue/task/{}/components", fetcher_url, task_id);
+            
+            // Try to get task details
+            match self.infra.get::<TaskComponentsResponse>(&url).await {
+                Ok(response) => {
+                    // Check if task is complete
+                    if response.task_status != "completed" {
+                        return Ok(false);
+                    }
+                }
+                Err(_) => {
+                    // If we can't get task details, assume it's not complete
+                    return Ok(false);
+                }
+            }
+        }
+        
+        Ok(true)
+    }
+
+    /// Process an entire batch: collect all S3 keys and call brainatlas
+    async fn process_batch(
+        &self,
+        batch: &domain::ProcessingBatch,
         fetcher_url: &str,
         brainatlas_url: &str,
         database_url: &str,
     ) -> Result<String, ServiceError<E>> {
-        // Double-check if already processed (race condition guard)
-        if self
-            .infra
-            .get_processed_task(database_url, task.task_id)
+        tracing::info!(
+            batch_id = %batch.id,
+            region_id = batch.region_id,
+            task_count = batch.fetch_task_ids.len(),
+            "Processing batch"
+        );
+
+        // Mark batch as processing
+        self.infra
+            .update_batch_status(database_url, batch.id, BatchStatus::Processing, None)
             .await
-            .map_err(ServiceError::InfraError)?
-            .is_some()
-        {
-            return Err(ServiceError::AlreadyProcessed);
+            .map_err(ServiceError::InfraError)?;
+
+        // Collect all S3 keys from all fetch tasks in the batch
+        let mut all_s3_keys = Vec::new();
+        
+        for &task_id in &batch.fetch_task_ids {
+            let components_url = format!("{}/api/queue/task/{}/components", fetcher_url, task_id);
+            let components: TaskComponentsResponse = self
+                .infra
+                .get(&components_url)
+                .await
+                .map_err(ServiceError::InfraError)?;
+
+            // Extract S3 keys
+            let s3_keys: Vec<String> = components
+                .components
+                .iter()
+                .filter_map(|c| c.s3_key.clone())
+                .collect();
+
+            all_s3_keys.extend(s3_keys);
         }
 
-        // Insert with status='pending'
-        let new_task = NewProcessedFetchTask {
-            fetch_task_id: task.task_id,
-            region_id: task.region_id,
-            brainatlas_status: "pending".to_string(),
-        };
-        self.infra
-            .insert_processed_task(database_url, new_task)
-            .await
-            .map_err(ServiceError::InfraError)?;
-
-        // Get components from fetcher
-        let components_url = format!("{}/api/queue/task/{}/components", fetcher_url, task.task_id);
-        let components: TaskComponentsResponse = self
-            .infra
-            .get(&components_url)
-            .await
-            .map_err(ServiceError::InfraError)?;
-
-        // Extract S3 keys
-        let s3_keys: Vec<String> = components
-            .components
-            .iter()
-            .filter_map(|c| c.s3_key.clone())
-            .collect();
-
-        if s3_keys.is_empty() {
+        if all_s3_keys.is_empty() {
             self.infra
-                .update_brainatlas_status(
+                .update_batch_status(
                     database_url,
-                    task.task_id,
-                    "failed",
-                    Some("No S3 keys found".to_string()),
+                    batch.id,
+                    BatchStatus::Failed,
+                    Some("No S3 keys found in batch".to_string()),
                 )
                 .await
                 .map_err(ServiceError::InfraError)?;
             return Err(ServiceError::NoS3Keys);
         }
 
-        // Update status to in_progress
-        self.infra
-            .update_brainatlas_status(database_url, task.task_id, "in_progress", None)
-            .await
-            .map_err(ServiceError::InfraError)?;
+        tracing::info!(
+            batch_id = %batch.id,
+            s3_key_count = all_s3_keys.len(),
+            "Collected S3 keys from batch"
+        );
 
-        // Call brainatlas /process
+        // Call brainatlas /process with retry logic
         let process_url = format!("{}/api/process", brainatlas_url);
+        
+        // Convert i32 region_id to UUID (lookup from region_mapping)
+        // For now, use a placeholder - this needs proper region_mapping lookup
+        let region_uuid = Uuid::nil(); // TODO: lookup region UUID from region_id
+        
         let request = ProcessRegionRequest {
-            region_id: task.region_id.to_string(),
-            s3_keys,
+            region_id: region_uuid.to_string(),
+            s3_keys: all_s3_keys.clone(),
         };
 
-        match self
-            .infra
-            .post::<ProcessRegionRequest, ProcessRegionResponse>(&process_url, &request)
-            .await
-        {
+        // Retry with exponential backoff (max 3 attempts)
+        let retry_strategy = ExponentialBuilder::default()
+            .with_max_times(3)
+            .with_min_delay(std::time::Duration::from_secs(1))
+            .with_max_delay(std::time::Duration::from_secs(10));
+
+        let infra = Arc::clone(&self.infra);
+        let url_clone = process_url.clone();
+        let req_clone = request.clone();
+
+        let result = (|| async {
+            infra
+                .post::<ProcessRegionRequest, ProcessRegionResponse>(&url_clone, &req_clone)
+                .await
+        })
+        .retry(retry_strategy)
+        .await;
+
+        match result {
             Ok(response) => {
+                // Mark batch as complete
+                // TODO: parse summary_id from response.detail and compute actual hash
                 self.infra
-                    .update_brainatlas_status(database_url, task.task_id, "completed", None)
+                    .complete_batch(
+                        database_url,
+                        batch.id,
+                        Uuid::nil(), // TODO: parse summary_id from response
+                        "hash_placeholder".to_string(), // TODO: actual hash
+                    )
                     .await
                     .map_err(ServiceError::InfraError)?;
+
+                tracing::info!(
+                    batch_id = %batch.id,
+                    "Batch processing completed successfully"
+                );
+
                 Ok(response.detail)
             }
             Err(e) => {
                 self.infra
-                    .update_brainatlas_status(
+                    .update_batch_status(
                         database_url,
-                        task.task_id,
-                        "failed",
+                        batch.id,
+                        BatchStatus::Failed,
                         Some(e.to_string()),
                     )
                     .await
                     .map_err(ServiceError::InfraError)?;
+
+                tracing::error!(
+                    batch_id = %batch.id,
+                    error = %e,
+                    "Batch processing failed"
+                );
+
                 Err(ServiceError::InfraError(e))
             }
         }

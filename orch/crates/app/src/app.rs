@@ -1,7 +1,8 @@
 use crate::Services;
-use domain::ConfigKey;
+use domain::{ConfigEntry, ConfigEntryUpdate, ConfigKey, InvalidateResult, PipelineStatsResult, Priority, RegionPipelineStatus, RegionStatusResult, SearchRegionResult};
 use std::sync::Arc;
 use std::time::Duration;
+use uuid::Uuid;
 
 pub struct OrchApp<S> {
     services: Arc<S>,
@@ -68,5 +69,145 @@ where
         });
 
         Ok(())
+    }
+
+    /// Search for summaries of a brain region
+    /// If summaries exist, return them
+    /// If not, create a batch and return status
+    pub async fn search_region(&self, region_id: Uuid) -> Result<SearchRegionResult, E> {
+        tracing::info!(?region_id, "Searching for region");
+        
+        // For now, we need to convert UUID to region_id (integer)
+        // This requires looking up the region mapping
+        // For MVP implementation, let's document what needs to happen:
+        
+        // STEP 1: Map UUID to region_id (int) - NEEDS brainatlas API call or local region_mapping table
+        // For now, using a placeholder since we don't have this mapping yet
+        let region_id_int = 1; // TODO: Implement proper UUID → region_id mapping
+        
+        // STEP 2: Check for existing summaries
+        let summaries = self.services.get_summaries(region_id_int).await
+            .map_err(|e| e.into())?;
+        
+        if !summaries.is_empty() {
+            tracing::info!(?region_id, count = summaries.len(), "Found existing summaries");
+            return Ok(SearchRegionResult {
+                status: RegionPipelineStatus::Done,
+                summaries,
+            });
+        }
+        
+        tracing::info!(?region_id, "No summaries found, checking for batch");
+        
+        // STEP 3: Check for active batch
+        let active_batch = self.services.get_active_batch(region_id_int).await
+            .map_err(|e| e.into())?;
+        
+        if let Some(batch) = active_batch {
+            tracing::info!(?region_id, ?batch.status, "Found active batch");
+            
+            // Derive status from batch state
+            let status = match batch.status {
+                domain::BatchStatus::Collecting => RegionPipelineStatus::Fetching,
+                domain::BatchStatus::Ready => RegionPipelineStatus::LlmQueued,
+                domain::BatchStatus::Processing => RegionPipelineStatus::Processing,
+                domain::BatchStatus::Completed => RegionPipelineStatus::Done,
+                domain::BatchStatus::Failed => RegionPipelineStatus::FetchFailed,
+            };
+            
+            return Ok(SearchRegionResult {
+                status,
+                summaries: vec![],
+            });
+        }
+        
+        tracing::info!(?region_id, "No batch found, creating new batch");
+        
+        // STEP 4: No batch exists, create one
+        
+        // 4a. Check if queries exist for this region
+        let queries = self.services.get_queries(region_id_int).await
+            .map_err(|e| e.into())?;
+        
+        let query_strings: Vec<String> = if queries.is_empty() {
+            tracing::info!(?region_id, "No queries found, generating new ones");
+            
+            // Generate queries via LLM
+            // TODO: Get region name from region mapping
+            let region_name = "hippocampus"; // Placeholder
+            let count = 3; // TODO: Get from config
+            
+            let generated = self.services.generate_queries(region_name, count).await
+                .map_err(|e| e.into())?;
+            
+            // Store generated queries
+            self.services.store_queries(region_id_int, generated.clone()).await
+                .map_err(|e| e.into())?;
+            
+            tracing::info!(?region_id, count = generated.len(), "Generated and stored queries");
+            generated
+        } else {
+            tracing::info!(?region_id, count = queries.len(), "Using existing queries");
+            queries.into_iter().map(|q| q.query_text).collect()
+        };
+        
+        // 4b. Create batch
+        let batch_id = self.services.create_batch(region_id_int, query_strings.len()).await
+            .map_err(|e| e.into())?;
+        
+        tracing::info!(?region_id, ?batch_id, "Created batch");
+        
+        // 4c. Enqueue fetch tasks for each query
+        let mut task_ids = Vec::new();
+        for query in &query_strings {
+            let task_id = self.services.enqueue_fetch_task(
+                query.clone(),
+                region_id_int,
+                5, // Normal priority
+            ).await.map_err(|e| e.into())?;
+            
+            task_ids.push(task_id);
+        }
+        
+        tracing::info!(?region_id, ?batch_id, task_count = task_ids.len(), "Enqueued fetch tasks");
+        
+        // 4d. Link tasks to batch
+        self.services.add_tasks_to_batch(batch_id, task_ids).await
+            .map_err(|e| e.into())?;
+        
+        Ok(SearchRegionResult {
+            status: RegionPipelineStatus::FetchQueued,
+            summaries: vec![],
+        })
+    }
+
+    /// Get the status of processing for a region
+    pub async fn get_region_status(&self, region_id: Uuid) -> Result<RegionStatusResult, E> {
+        // TODO: Derive status from batch + summary state
+        todo!("Implement get_region_status")
+    }
+
+    /// Invalidate existing summaries and re-process
+    pub async fn invalidate_region(&self, region_id: Uuid, priority: Option<Priority>) -> Result<InvalidateResult, E> {
+        // TODO: Reset batch, bump priority, trigger reprocess
+        todo!("Implement invalidate_region")
+    }
+
+    /// Get pipeline statistics across all regions
+    pub async fn get_pipeline_stats(&self) -> Result<PipelineStatsResult, E> {
+        // TODO: Count regions by status
+        todo!("Implement get_pipeline_stats")
+    }
+
+    /// Get all configuration entries
+    pub async fn get_config(&self) -> Result<Vec<ConfigEntry>, E> {
+        // TODO: Query orch_config table
+        todo!("Implement get_config")
+    }
+
+    /// Update configuration entries
+    pub async fn update_config(&self, entries: Vec<ConfigEntryUpdate>) -> Result<Vec<ConfigEntry>, E> {
+        // TODO: Update orch_config table
+        todo!("Implement update_config")
     }
 }

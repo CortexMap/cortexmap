@@ -38,34 +38,52 @@ where
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
-    async fn search_region(&self, _region_id: Uuid) -> Result<SearchRegionResult, Self::Error> {
-        Err(ApiError::NotImplemented)
+    async fn search_region(&self, region_id: Uuid) -> Result<SearchRegionResult, Self::Error> {
+        self.app()
+            .search_region(region_id)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
-    async fn get_region_status(&self, _region_id: Uuid) -> Result<RegionStatusResult, Self::Error> {
-        Err(ApiError::NotImplemented)
+    async fn get_region_status(&self, region_id: Uuid) -> Result<RegionStatusResult, Self::Error> {
+        self.app()
+            .get_region_status(region_id)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
     async fn invalidate_region(
         &self,
-        _region_id: Uuid,
-        _priority: Option<Priority>,
+        region_id: Uuid,
+        priority: Option<Priority>,
     ) -> Result<InvalidateResult, Self::Error> {
-        Err(ApiError::NotImplemented)
+        self.app()
+            .invalidate_region(region_id, priority)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
     async fn get_pipeline_stats(&self) -> Result<PipelineStatsResult, Self::Error> {
-        Err(ApiError::NotImplemented)
+        self.app()
+            .get_pipeline_stats()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
     async fn get_config(&self) -> Result<Vec<ConfigEntry>, Self::Error> {
-        Err(ApiError::NotImplemented)
+        self.app()
+            .get_config()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
     async fn update_config(
         &self,
-        _entries: Vec<ConfigEntryUpdate>,
+        entries: Vec<ConfigEntryUpdate>,
     ) -> Result<Vec<ConfigEntry>, Self::Error> {
-        Err(ApiError::NotImplemented)
+        self.app()
+            .update_config(entries)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 }
