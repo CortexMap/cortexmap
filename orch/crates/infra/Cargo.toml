@@ -13,3 +13,5 @@ services.workspace = true
 domain.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }

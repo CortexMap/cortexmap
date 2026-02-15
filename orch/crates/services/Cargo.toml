@@ -9,4 +9,9 @@ thiserror.workspace = true
 uuid.workspace = true
 domain.workspace = true
 app.workspace = true
+chrono.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
 

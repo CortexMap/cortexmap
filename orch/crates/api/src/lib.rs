@@ -1,7 +1,7 @@
 mod api;
-mod brainatlas_api;
+mod orch_api;
 pub mod error;
 
 pub use api::*;
-pub use brainatlas_api::*;
+pub use orch_api::*;
 pub use error::*;

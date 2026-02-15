@@ -1,49 +1,38 @@
-use crate::list_brain_regions::BrainAtlasListBrainRegions;
-use crate::region_info::BrainAtlasRegionInfo;
+use crate::completion_watcher::CompletionWatcher;
 use crate::{Infra, ServiceError};
-use app::{BrainRegionInfo, ListBrainRegions};
-use domain::{BrainRegionEntry, RegionMapping};
+use app::CompletionOrchestrator;
+use domain::{ConfigKey, PendingTask, PollResult, ProcessResult};
+use std::error::Error;
 use std::sync::Arc;
-use uuid::Uuid;
 
-pub struct BrainAtlasServices<I> {
-    brain_atlas_list_brain_regions: BrainAtlasListBrainRegions<I>,
-    brain_atlas_region_info: BrainAtlasRegionInfo<I>,
+pub struct OrchServices<I> {
+    completion_watcher: CompletionWatcher<I>,
 }
 
-impl<I: Infra> BrainAtlasServices<I> {
+impl<I: Infra> OrchServices<I> {
     pub fn new(infra: Arc<I>) -> Self {
-        let brain_atlas_list_brain_regions = BrainAtlasListBrainRegions::new(infra.clone());
-        let brain_atlas_region_info = BrainAtlasRegionInfo::new(infra);
-        Self {
-            brain_atlas_list_brain_regions,
-            brain_atlas_region_info,
-        }
+        let completion_watcher = CompletionWatcher::new(infra);
+        Self { completion_watcher }
     }
 }
 
 #[async_trait::async_trait]
-impl<E, I> ListBrainRegions for BrainAtlasServices<I>
+impl<E, I> CompletionOrchestrator for OrchServices<I>
 where
-    E: std::error::Error + Send + Sync + 'static,
+    E: Error + Send + Sync + 'static,
     I: Infra<Error = E>,
 {
     type Error = ServiceError<E>;
 
-    async fn list(&self) -> Result<Vec<RegionMapping>, Self::Error> {
-        self.brain_atlas_list_brain_regions.list().await
+    async fn poll(&self) -> Result<PollResult, Self::Error> {
+        self.completion_watcher.poll().await
     }
-}
 
-#[async_trait::async_trait]
-impl<E, I> BrainRegionInfo for BrainAtlasServices<I>
-where
-    E: std::error::Error + Send + Sync + 'static,
-    I: Infra<Error = E>,
-{
-    type Error = ServiceError<E>;
+    async fn process(&self, tasks: Vec<PendingTask>) -> Result<ProcessResult, Self::Error> {
+        self.completion_watcher.process(tasks).await
+    }
 
-    async fn search(&self, id: Uuid) -> Result<Vec<BrainRegionEntry>, Self::Error> {
-        self.brain_atlas_region_info.search(id).await
+    async fn get_config(&self, key: ConfigKey) -> Result<Option<String>, Self::Error> {
+        self.completion_watcher.get_config(key).await
     }
 }

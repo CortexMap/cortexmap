@@ -28,6 +28,16 @@ pub enum InfraError {
     Interact(#[from] InteractErr),
     #[error("env var not found: {0}")]
     EnvVarNotFound(String),
+    #[error("not implemented")]
+    NotImplemented,
+    #[error("tokio join error: {0}")]
+    TokioJoin(#[from] tokio::task::JoinError),
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("S3 error: {0}")]
+    S3(String),
+    #[error("not found")]
+    NotFound,
 }
 
 impl From<deadpool_diesel::InteractError> for InfraError {

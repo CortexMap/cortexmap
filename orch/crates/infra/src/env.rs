@@ -2,11 +2,11 @@ use crate::InfraError;
 use services::EnvInfra;
 use std::collections::HashMap;
 
-pub struct BrainAtlasEnvInfra {
+pub struct OrchEnvInfra {
     vars: HashMap<String, String>,
 }
 
-impl BrainAtlasEnvInfra {
+impl OrchEnvInfra {
     pub fn new() -> Self {
         Self {
             vars: std::env::vars().collect(),
@@ -14,9 +14,9 @@ impl BrainAtlasEnvInfra {
     }
 }
 
-impl EnvInfra for BrainAtlasEnvInfra {
+impl EnvInfra for OrchEnvInfra {
     type Error = InfraError;
-    fn get(&self, key: &str) -> Result<String, Self::Error> {
+    fn get_env_var(&self, key: &str) -> Result<String, Self::Error> {
         self.vars
             .get(key)
             .cloned()

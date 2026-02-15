@@ -1,14 +1,16 @@
 mod server;
 
-use api::BrainAtlasApi;
-use infra::BrainAtlasInfra;
+use api::Orch;
+use infra::OrchInfra;
 use server::BrainAtlasServer;
-use services::BrainAtlasServices;
+use services::OrchServices;
 use std::sync::Arc;
 use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
+    
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -18,14 +20,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()?;
 
     // Wire infra → services → api → server
-    let infra = Arc::new(BrainAtlasInfra::new());
-    let services = Arc::new(BrainAtlasServices::new(infra));
-    let api = Arc::new(BrainAtlasApi::new(services));
+    let infra = Arc::new(OrchInfra::new());
+    let services = Arc::new(OrchServices::new(infra));
+    let api = Arc::new(Orch::new(services));
     let brain_atlas_server = BrainAtlasServer::new(api);
 
     let router = brain_atlas_server.into_router();
 
-    info!("brainatlas-be listening on {addr}");
+    info!("orch listening on {addr}");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, router).await?;

@@ -21,5 +21,5 @@ pub trait BrainRegionApi: Send + Sync {
 
     /// Chunk, embed, and summarize the S3 files for a region, then persist to region_summary.
     /// POST /api/process — called by orch
-    async fn process_region(&self, region_id: Uuid, s3_keys: Vec<String>) -> Result<ProcessRegionResponse, Self::Error>;
+    async fn process_region(&self, region_id: Option<Uuid>, s3_keys: Vec<String>) -> Result<ProcessRegionResponse, Self::Error>;
 }

@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -25,9 +24,8 @@ pub struct NewRegionSummary {
 /// Existing summary found via content hash (deduplication)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExistingSummary {
-    pub id: Uuid,
+    pub summary_id: Uuid,
     pub summary: String,
-    pub created_at: DateTime<Utc>,
 }
 
 /// Result of processing a region

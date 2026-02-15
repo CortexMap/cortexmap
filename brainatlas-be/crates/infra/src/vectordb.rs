@@ -1,8 +1,8 @@
 use crate::error::InfraError;
 use crate::models::*;
-use crate::schema::*;
+use crate::schema;
 use diesel::prelude::*;
-use domain::processing::*;
+use domain::{ExistingSummary, NewEmbedding, NewRegionSummary};
 use services::infra::VectorDatabase;
 use std::sync::{Arc, Mutex, OnceLock};
 use uuid::Uuid;
@@ -44,8 +44,7 @@ impl BrainAtlasVectorDB {
 
             f(&mut conn)
         })
-        .await
-        .map_err(|e| InfraError::Other(e.to_string()))?
+        .await?
         .map_err(InfraError::from)
     }
 }
@@ -60,7 +59,7 @@ impl VectorDatabase for BrainAtlasVectorDB {
         embeddings: Vec<NewEmbedding>,
     ) -> Result<(), Self::Error> {
         self.run_blocking(database_url, move |conn| {
-            use brain_region_embeddings::dsl::*;
+            use schema::brain_region_embeddings;
 
             // Convert domain NewEmbedding to DB NewEmbeddingRow
             let rows: Vec<NewEmbeddingRow> = embeddings
@@ -70,11 +69,11 @@ impl VectorDatabase for BrainAtlasVectorDB {
                     summary_id: e.summary_id,
                     chunk_index: e.chunk_index,
                     chunk_text: e.chunk_text,
-                    embedding: e.embedding,
+                    embedding: pgvector::Vector::from(e.embedding),
                 })
                 .collect();
 
-            diesel::insert_into(brain_region_embeddings)
+            diesel::insert_into(brain_region_embeddings::table)
                 .values(&rows)
                 .execute(conn)?;
 
@@ -89,19 +88,19 @@ impl VectorDatabase for BrainAtlasVectorDB {
         summary: NewRegionSummary,
     ) -> Result<Uuid, Self::Error> {
         self.run_blocking(database_url, move |conn| {
-            use region_summary::dsl::*;
+            use schema::region_summary;
 
             let row = NewRegionSummaryRow {
                 region_id: summary.region_id,
                 name: summary.name,
                 acronym: summary.acronym,
                 summary: summary.summary,
-                content_hash: summary.content_hash,
+                content_hash: Some(summary.content_hash),
             };
 
-            diesel::insert_into(region_summary)
+            diesel::insert_into(region_summary::table)
                 .values(&row)
-                .returning(id)
+                .returning(region_summary::id)
                 .get_result::<Uuid>(conn)
         })
         .await
@@ -115,18 +114,20 @@ impl VectorDatabase for BrainAtlasVectorDB {
     ) -> Result<Option<ExistingSummary>, Self::Error> {
         let hash = hash.to_string();
         self.run_blocking(database_url, move |conn| {
-            use region_summary::dsl::*;
+            use schema::region_summary;
 
-            region_summary
-                .filter(region_id.eq(region_id_param))
-                .filter(content_hash.eq(&hash))
-                .select((id, summary))
-                .first::<(Uuid, String)>(conn)
+            region_summary::table
+                .filter(region_summary::region_id.eq(region_id_param))
+                .filter(region_summary::content_hash.eq(Some(&hash)))
+                .select((region_summary::id, region_summary::summary))
+                .first::<(Uuid, Option<String>)>(conn)
                 .optional()
                 .map(|opt| {
-                    opt.map(|(summary_id, summary_text)| ExistingSummary {
-                        summary_id,
-                        summary: summary_text,
+                    opt.and_then(|(summary_id, summary_text)| {
+                        summary_text.map(|text| ExistingSummary {
+                            summary_id,
+                            summary: text,
+                        })
                     })
                 })
         })

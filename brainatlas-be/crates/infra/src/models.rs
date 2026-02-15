@@ -1,4 +1,4 @@
-use crate::schema::{region_mapping, region_summary};
+use crate::schema::{brain_region_embeddings, region_mapping, region_summary};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use diesel::prelude::*;
 use domain::{BrainRegionEntry, RegionMapping, Rgb};
@@ -58,18 +58,46 @@ pub struct RegionSummaryRow {
     pub region_id: i32,
     pub name: String,
     pub acronym: Option<String>,
-    pub summary: String,
-    pub created_at: NaiveDateTime,
+    pub summary: Option<String>,
+    pub created_at: Option<NaiveDateTime>,
+    pub content_hash: Option<String>,
 }
 
 impl From<RegionSummaryRow> for BrainRegionEntry {
     fn from(row: RegionSummaryRow) -> Self {
+        let created_at = row
+            .created_at
+            .map(|ndt| Utc.from_utc_datetime(&ndt))
+            .unwrap_or_else(Utc::now);
+            
         BrainRegionEntry {
             region_id: row.region_id,
             name: row.name,
             acronym: row.acronym.unwrap_or_default(),
-            summary: row.summary,
-            created_at: Utc.from_utc_datetime(&row.created_at),
+            summary: row.summary.unwrap_or_default(),
+            created_at,
         }
     }
+}
+
+/// Diesel insert model for `region_summary`
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = region_summary)]
+pub struct NewRegionSummaryRow {
+    pub region_id: i32,
+    pub name: String,
+    pub acronym: Option<String>,
+    pub summary: String,
+    pub content_hash: Option<String>,
+}
+
+/// Diesel insert model for `brain_region_embeddings`
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = brain_region_embeddings)]
+pub struct NewEmbeddingRow {
+    pub region_id: i32,
+    pub summary_id: Uuid,
+    pub chunk_index: i32,
+    pub chunk_text: String,
+    pub embedding: pgvector::Vector,
 }

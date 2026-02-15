@@ -19,7 +19,7 @@ impl OrchHttpClient {
 impl HttpClientTrait for OrchHttpClient {
     type Error = InfraError;
     
-    async fn get<T: DeserializeOwned>(&self, url: &str) -> Result<T, Self::Error> {
+    async fn get<T: DeserializeOwned + Send>(&self, url: &str) -> Result<T, Self::Error> {
         let response = self.client.get(url).send().await?;
         
         if !response.status().is_success() {
@@ -31,7 +31,7 @@ impl HttpClientTrait for OrchHttpClient {
         Ok(response.json().await?)
     }
     
-    async fn post<Req: Serialize + Send, Res: DeserializeOwned>(
+    async fn post<Req: Serialize + Send + Sync, Res: DeserializeOwned + Send + Sync>(
         &self,
         url: &str,
         body: &Req,

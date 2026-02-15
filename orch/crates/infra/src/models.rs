@@ -43,3 +43,128 @@ pub struct UpdateOrchConfig {
     pub value: String,
     pub updated_at: NaiveDateTime,
 }
+
+// Conversions from DB models to service models
+
+impl From<ProcessedFetchTask> for services::ProcessedFetchTask {
+    fn from(task: ProcessedFetchTask) -> Self {
+        Self {
+            fetch_task_id: task.fetch_task_id,
+            region_id: task.region_id,
+            processed_at: task.processed_at,
+            brainatlas_status: task.brainatlas_status,
+            brainatlas_started_at: task.brainatlas_started_at,
+            brainatlas_completed_at: task.brainatlas_completed_at,
+            error_message: task.error_message,
+        }
+    }
+}
+
+impl From<services::NewProcessedFetchTask> for NewProcessedFetchTask {
+    fn from(task: services::NewProcessedFetchTask) -> Self {
+        Self {
+            fetch_task_id: task.fetch_task_id,
+            region_id: task.region_id,
+            pmc_id: String::new(), // Will be populated from fetcher API call
+            brainatlas_status: task.brainatlas_status,
+        }
+    }
+}
+
+impl From<OrchConfig> for services::OrchConfig {
+    fn from(config: OrchConfig) -> Self {
+        Self {
+            key: config.key,
+            value: config.value,
+            description: config.description,
+            updated_at: config.updated_at,
+        }
+    }
+}
+
+// Batch processing models
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = crate::schema::region_queries)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct RegionQueryRow {
+    pub id: Uuid,
+    pub region_id: i32,
+    pub query_text: String,
+    pub source: String,
+    pub priority: Option<i32>,
+    pub enabled: Option<bool>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = crate::schema::region_queries)]
+pub struct NewRegionQuery {
+    pub region_id: i32,
+    pub query_text: String,
+    pub source: String,
+}
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = crate::schema::region_processing_batches)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct ProcessingBatchRow {
+    pub id: Uuid,
+    pub region_id: i32,
+    pub status: String,
+    pub fetch_task_ids: Vec<Option<i64>>,
+    pub expected_task_count: i32,
+    pub content_hash: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub ready_at: Option<NaiveDateTime>,
+    pub processing_started_at: Option<NaiveDateTime>,
+    pub completed_at: Option<NaiveDateTime>,
+    pub summary_id: Option<Uuid>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = crate::schema::region_processing_batches)]
+pub struct NewProcessingBatch {
+    pub region_id: i32,
+    pub expected_task_count: i32,
+}
+
+// Conversions from DB models to domain models
+
+impl From<RegionQueryRow> for domain::RegionQuery {
+    fn from(row: RegionQueryRow) -> Self {
+        use chrono::{DateTime, Utc};
+        Self {
+            id: row.id,
+            region_id: row.region_id,
+            query_text: row.query_text,
+            source: domain::QuerySource::from(row.source.as_str()),
+            priority: row.priority.unwrap_or(0),
+            enabled: row.enabled.unwrap_or(true),
+            created_at: DateTime::<Utc>::from_naive_utc_and_offset(row.created_at, Utc),
+            updated_at: DateTime::<Utc>::from_naive_utc_and_offset(row.updated_at, Utc),
+        }
+    }
+}
+
+impl From<ProcessingBatchRow> for domain::ProcessingBatch {
+    fn from(row: ProcessingBatchRow) -> Self {
+        use chrono::{DateTime, Utc};
+        Self {
+            id: row.id,
+            region_id: row.region_id,
+            status: domain::BatchStatus::from(row.status.as_str()),
+            fetch_task_ids: row.fetch_task_ids.into_iter().filter_map(|id| id).collect(),
+            expected_task_count: row.expected_task_count,
+            content_hash: row.content_hash,
+            created_at: DateTime::<Utc>::from_naive_utc_and_offset(row.created_at, Utc),
+            ready_at: row.ready_at.map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t, Utc)),
+            processing_started_at: row.processing_started_at.map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t, Utc)),
+            completed_at: row.completed_at.map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t, Utc)),
+            summary_id: row.summary_id,
+            error_message: row.error_message,
+        }
+    }
+}

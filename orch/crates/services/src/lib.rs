@@ -1,9 +1,11 @@
 mod error;
 mod infra;
-mod list_brain_regions;
 mod services;
-mod region_info;
+mod completion_watcher;
+mod types;
 
 pub use error::*;
 pub use infra::*;
 pub use services::*;
+pub use completion_watcher::CompletionWatcher;
+pub use types::*;

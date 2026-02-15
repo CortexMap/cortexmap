@@ -114,8 +114,8 @@ service BrainRegionService {
     };
   }
 
-  // Check the status of a specific brain region entry by ID,
-  // which can be used to track the progress of fetching, indexing, and generating the data for that region.
+  // DEPRECATED: pipeline status is owned by orch. Will be removed in a future version.
+  // Check the status of a specific brain region entry by ID.
   rpc Status(StatusRequest) returns (StatusResponse) {
     option (google.api.http) = {
       post: "/api/status"

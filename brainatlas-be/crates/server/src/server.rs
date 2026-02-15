@@ -108,7 +108,11 @@ async fn search_brain_region_handler(
     Json(body): Json<SearchBrainRegionRequest>,
 ) -> Result<impl IntoResponse, ServerError> {
     let id = body.id.and_then(|u| u.value.parse::<uuid::Uuid>().ok());
-    let resp = server.api.search_brain_region(id).await.map_err(ServerError)?;
+    let resp = server
+        .api
+        .search_brain_region(id)
+        .await
+        .map_err(ServerError)?;
     Ok(Json(resp))
 }
 
@@ -132,8 +136,11 @@ async fn process_region_handler(
 ) -> Result<impl IntoResponse, ServerError> {
     let region_id = body
         .region_id
-        .and_then(|u| u.value.parse::<uuid::Uuid>().ok())
-        .ok_or(ServerError(Error::MissingOrInvalidId))?;
-    let resp = server.api.process_region(region_id, body.s3_keys).await.map_err(ServerError)?;
+        .and_then(|u| u.value.parse::<uuid::Uuid>().ok());
+    let resp = server
+        .api
+        .process_region(region_id, body.s3_keys)
+        .await
+        .map_err(ServerError)?;
     Ok(Json(resp))
 }

@@ -1,4 +1,3 @@
-
 /// Newtype wrapper that makes `InteractError` `Sync`-safe.
 /// `InteractError` holds a `Box<dyn Any + Send>` which is not `Sync`,
 /// but we never share the inner value across threads — we only propagate it.
@@ -28,6 +27,10 @@ pub enum InfraError {
     Interact(#[from] InteractErr),
     #[error("env var not found: {0}")]
     EnvVarNotFound(String),
+    #[error("not found")]
+    NotFound,
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
 }
 
 impl From<deadpool_diesel::InteractError> for InfraError {

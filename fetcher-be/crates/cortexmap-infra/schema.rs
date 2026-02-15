@@ -48,8 +48,7 @@ diesel::table! {
         worker_id -> Nullable<Text>,
         heartbeat_at -> Nullable<Timestamp>,
         worker_version -> Nullable<Text>,
-        task_type -> Text,
-        source_fetch_task_id -> Nullable<Int8>,
+        region_id -> Nullable<Int4>,
     }
 }
 
@@ -76,6 +75,15 @@ diesel::table! {
 }
 
 diesel::table! {
+    orch_config (key) {
+        key -> Text,
+        value -> Text,
+        description -> Nullable<Text>,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     papers (id) {
         id -> Int8,
         pmc_id -> Text,
@@ -83,6 +91,19 @@ diesel::table! {
         uid -> Text,
         query -> Text,
         created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    processed_fetch_tasks (fetch_task_id) {
+        fetch_task_id -> Int8,
+        region_id -> Uuid,
+        pmc_id -> Text,
+        processed_at -> Timestamp,
+        brainatlas_status -> Text,
+        brainatlas_started_at -> Nullable<Timestamp>,
+        brainatlas_completed_at -> Nullable<Timestamp>,
+        error_message -> Nullable<Text>,
     }
 }
 
@@ -128,7 +149,9 @@ diesel::allow_tables_to_appear_in_same_query!(
     fetch_tasks,
     langchain_pg_collection,
     langchain_pg_embedding,
+    orch_config,
     papers,
+    processed_fetch_tasks,
     region_mapping,
     region_summary,
 );

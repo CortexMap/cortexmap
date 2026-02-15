@@ -1,6 +1,6 @@
 use crate::proto::*;
 use crate::worker_manager::WorkerManager;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::{error, info, Level};
+use serde::Deserialize;
 
 // ---------------------------------------------------------------------------
 // Shared server state
@@ -82,7 +83,9 @@ impl QueueServer {
             .route("/health", get(health_handler))
             .route("/api/queue/enqueue", post(enqueue_query_handler))
             .route("/api/queue/status", get(get_queue_status_handler))
+            .route("/api/queue/tasks", get(get_tasks_handler))
             .route("/api/queue/task/{pmc_id}", get(get_task_details_handler))
+            .route("/api/queue/task/{task_id}/components", get(get_task_components_handler))
             .route("/api/queue/workers/allocate", post(allocate_workers_handler))
             .route("/api/queue/workers/stop", post(stop_workers_handler))
             .route("/api/queue/workers/status", get(get_worker_status_handler))
@@ -422,4 +425,98 @@ async fn get_worker_status_handler(
     Json(WorkerStatusResponse {
         workers: worker_manager.get_worker_info_with_stats().await,
     })
+}
+
+/// GET /api/queue/task/:task_id/components
+async fn get_task_components_handler(
+    State(server): State<QueueServer>,
+    Path(task_id): Path<i64>,
+) -> Result<Json<TaskComponentsResponse>, AppError> {
+    use crate::proto::ComponentStatus;
+    
+    info!("Getting components for task_id {}", task_id);
+    
+    // Get the task to retrieve pmc_id and status
+    let task_opt = server.ctx.infra.get_task_by_id(task_id).await.map_err(|e| {
+        error!("Failed to query task by ID: {}", e);
+        AppError(e.into())
+    })?;
+    
+    let task = match task_opt {
+        Some(t) => t,
+        None => {
+            return Err(AppError(anyhow::anyhow!("Task not found")));
+        }
+    };
+    
+    // Get components
+    let components_data = server.ctx.infra.get_task_components(task_id).await.map_err(|e| {
+        error!("Failed to get task components: {}", e);
+        AppError(e.into())
+    })?;
+    
+    let components: Vec<ComponentStatus> = components_data.into_iter().map(|c| ComponentStatus {
+        component_type: c.component_type,
+        status: c.status,
+        attempt_count: c.attempt_count,
+        max_attempts: c.max_attempts,
+        s3_key: c.s3_key.unwrap_or_default(),
+        error_message: c.error_message.unwrap_or_default(),
+        last_attempted_at: c.last_attempted_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
+        completed_at: c.completed_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
+    }).collect();
+    
+    Ok(Json(TaskComponentsResponse {
+        task_id,
+        pmc_id: task.pmc_id,
+        task_status: task.status,
+        components,
+    }))
+}
+
+/// Query parameters for GET /tasks
+#[derive(Deserialize)]
+struct GetTasksQuery {
+    status: Option<String>,
+    limit: Option<i32>,
+}
+
+/// GET /api/queue/tasks?status=completed&limit=100
+async fn get_tasks_handler(
+    State(server): State<QueueServer>,
+    Query(params): Query<GetTasksQuery>,
+) -> Result<Json<Vec<TaskDetailsResponse>>, AppError> {
+    use crate::proto::ComponentStatus;
+    
+    let status = params.status.unwrap_or_else(|| "completed".to_string());
+    let limit = params.limit.unwrap_or(100).min(1000); // Cap at 1000
+    
+    info!("Getting tasks with status={} limit={}", status, limit);
+    
+    let tasks = server.ctx.infra.get_tasks_by_status(&status, limit).await.map_err(|e| {
+        error!("Failed to get tasks by status: {}", e);
+        AppError(e.into())
+    })?;
+    
+    // Convert to TaskDetailsResponse format (without components for efficiency)
+    let response: Vec<TaskDetailsResponse> = tasks.into_iter().map(|task| {
+        TaskDetailsResponse {
+            found: true,
+            pmc_id: task.pmc_id,
+            status: task.status,
+            components: vec![], // Don't fetch components in list view for performance
+            error_message: String::new(),
+            query: task.query,
+            priority: task.priority,
+            created_at: task.created_at.and_utc().timestamp(),
+            updated_at: task.updated_at.and_utc().timestamp(),
+            started_at: task.started_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
+            completed_at: task.completed_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
+            worker_id: task.worker_id.unwrap_or_default(),
+            heartbeat_at: task.heartbeat_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
+            worker_version: task.worker_version.unwrap_or_default(),
+        }
+    }).collect();
+    
+    Ok(Json(response))
 }

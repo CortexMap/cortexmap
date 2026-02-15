@@ -1,55 +1,71 @@
-use crate::{ApiError, BrainRegionApi};
-use app::{AppError, BrainAtlasApp, Services};
-use domain::rpc_types::{
-    BrainRegionListResponse, ProcessRegionResponse, SearchBrainRegionResponse, StatusResponse,
+use crate::{ApiError, OrchApi};
+use app::{AppError, OrchApp, Services};
+use domain::{
+    ConfigEntry, ConfigEntryUpdate, InvalidateResult, PipelineStatsResult, Priority,
+    RegionStatusResult, SearchRegionResult,
 };
 use std::sync::Arc;
 use uuid::Uuid;
 
-pub struct BrainAtlasApi<S> {
+pub struct Orch<S> {
     services: Arc<S>,
 }
 
-impl<S> BrainAtlasApi<S> {
+impl<S> Orch<S> {
     pub fn new(services: Arc<S>) -> Self {
         Self { services }
     }
 }
 
-impl<S: Services + 'static> BrainAtlasApi<S> {
-    fn app(&self) -> BrainAtlasApp<S> {
-        BrainAtlasApp::new(self.services.clone())
+impl<S: Services + 'static> Orch<S> {
+    fn app(&self) -> OrchApp<S> {
+        OrchApp::new(self.services.clone())
     }
 }
 
 #[async_trait::async_trait]
-impl<E, S> BrainRegionApi for BrainAtlasApi<S>
+impl<E, S> OrchApi for Orch<S>
 where
     E: std::error::Error + Send + Sync + 'static,
     S: Services<Error = E> + 'static,
 {
     type Error = ApiError<AppError<E>>;
 
-    async fn search_brain_region(&self, id: Option<Uuid>) -> Result<SearchBrainRegionResponse, Self::Error> {
-        let id = id.ok_or(ApiError::MissingOrInvalidId)?;
-        let entries = self.app().search(id).await.map_err(ApiError::AppError)?;
-        Ok(SearchBrainRegionResponse {
-            entries: entries.into_iter().map(Into::into).collect(),
-        })
+    async fn init(&self) -> Result<(), Self::Error> {
+        self.app()
+            .init()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
-    async fn list_brain_regions(&self) -> Result<BrainRegionListResponse, Self::Error> {
-        let regions = self.app().list().await.map_err(ApiError::AppError)?;
-        Ok(BrainRegionListResponse {
-            regions: regions.into_iter().map(Into::into).collect(),
-        })
-    }
-
-    async fn status(&self, _id: Uuid) -> Result<StatusResponse, Self::Error> {
+    async fn search_region(&self, _region_id: Uuid) -> Result<SearchRegionResult, Self::Error> {
         Err(ApiError::NotImplemented)
     }
 
-    async fn process_region(&self, _region_id: Uuid, _s3_keys: Vec<String>) -> Result<ProcessRegionResponse, Self::Error> {
+    async fn get_region_status(&self, _region_id: Uuid) -> Result<RegionStatusResult, Self::Error> {
+        Err(ApiError::NotImplemented)
+    }
+
+    async fn invalidate_region(
+        &self,
+        _region_id: Uuid,
+        _priority: Option<Priority>,
+    ) -> Result<InvalidateResult, Self::Error> {
+        Err(ApiError::NotImplemented)
+    }
+
+    async fn get_pipeline_stats(&self) -> Result<PipelineStatsResult, Self::Error> {
+        Err(ApiError::NotImplemented)
+    }
+
+    async fn get_config(&self) -> Result<Vec<ConfigEntry>, Self::Error> {
+        Err(ApiError::NotImplemented)
+    }
+
+    async fn update_config(
+        &self,
+        _entries: Vec<ConfigEntryUpdate>,
+    ) -> Result<Vec<ConfigEntry>, Self::Error> {
         Err(ApiError::NotImplemented)
     }
 }

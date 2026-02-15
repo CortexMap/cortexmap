@@ -1,56 +1,54 @@
-/// Text chunking utility for breaking down large documents
-/// into smaller pieces suitable for embedding generation.
+/// Text chunking implementation for BrainAtlasServices
 
-/// Chunk text into overlapping segments
-///
-/// # Arguments
-/// * `text` - The input text to chunk
-/// * `chunk_size` - Maximum size of each chunk in characters
-/// * `overlap` - Number of characters to overlap between chunks
-///
-/// # Returns
-/// Vector of text chunks
-///
-/// # Example
-/// ```
-/// let text = "The quick brown fox jumps over the lazy dog";
-/// let chunks = chunk_text(text, 20, 5);
-/// // chunks[0]: "The quick brown fox "
-/// // chunks[1]: " fox jumps over the "
-/// // chunks[2]: " the lazy dog"
-/// ```
-pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
-    if text.is_empty() {
-        return Vec::new();
+pub struct TextChunker;
+
+impl TextChunker {
+    pub fn new() -> Self {
+        Self
     }
-
-    if chunk_size == 0 {
-        return vec![text.to_string()];
-    }
-
-    if overlap >= chunk_size {
-        // Invalid overlap, treat as no overlap
-        return chunk_text(text, chunk_size, 0);
-    }
-
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    let text_len = text.len();
-
-    while start < text_len {
-        let end = (start + chunk_size).min(text_len);
-        let chunk = &text[start..end];
-        chunks.push(chunk.to_string());
-
-        if end >= text_len {
-            break;
+    
+    /// Chunk text into overlapping segments
+    ///
+    /// # Arguments
+    /// * `text` - The input text to chunk
+    /// * `chunk_size` - Maximum size of each chunk in characters
+    /// * `overlap` - Number of characters to overlap between chunks
+    ///
+    /// # Returns
+    /// Vector of text chunks
+    pub fn chunk(&self, text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
+        if text.is_empty() {
+            return Vec::new();
         }
 
-        // Move start forward by (chunk_size - overlap)
-        start += chunk_size - overlap;
-    }
+        if chunk_size == 0 {
+            return vec![text.to_string()];
+        }
 
-    chunks
+        if overlap >= chunk_size {
+            // Invalid overlap, treat as no overlap
+            return self.chunk(text, chunk_size, 0);
+        }
+
+        let mut chunks = Vec::new();
+        let mut start = 0;
+        let text_len = text.len();
+
+        while start < text_len {
+            let end = (start + chunk_size).min(text_len);
+            let chunk = &text[start..end];
+            chunks.push(chunk.to_string());
+
+            if end >= text_len {
+                break;
+            }
+
+            // Move start forward by (chunk_size - overlap)
+            start += chunk_size - overlap;
+        }
+
+        chunks
+    }
 }
 
 #[cfg(test)]
@@ -59,30 +57,34 @@ mod tests {
 
     #[test]
     fn test_empty_text() {
-        let chunks = chunk_text("", 100, 20);
+        let chunker = TextChunker::new();
+        let chunks = chunker.chunk("", 100, 20).unwrap();
         assert_eq!(chunks.len(), 0);
     }
 
     #[test]
     fn test_text_smaller_than_chunk_size() {
+        let chunker = TextChunker::new();
         let text = "Hello world";
-        let chunks = chunk_text(text, 100, 20);
+        let chunks = chunker.chunk(text, 100, 20).unwrap();
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0], "Hello world");
     }
 
     #[test]
     fn test_exact_chunk_size() {
+        let chunker = TextChunker::new();
         let text = "12345678901234567890"; // 20 chars
-        let chunks = chunk_text(text, 20, 0);
+        let chunks = chunker.chunk(text, 20, 0).unwrap();
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0], text);
     }
 
     #[test]
     fn test_multiple_chunks_no_overlap() {
+        let chunker = TextChunker::new();
         let text = "12345678901234567890ABCDEFGHIJ"; // 30 chars
-        let chunks = chunk_text(text, 10, 0);
+        let chunks = chunker.chunk(text, 10, 0).unwrap();
         assert_eq!(chunks.len(), 3);
         assert_eq!(chunks[0], "1234567890");
         assert_eq!(chunks[1], "1234567890");
@@ -91,8 +93,9 @@ mod tests {
 
     #[test]
     fn test_multiple_chunks_with_overlap() {
+        let chunker = TextChunker::new();
         let text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; // 26 chars
-        let chunks = chunk_text(text, 10, 3);
+        let chunks = chunker.chunk(text, 10, 3).unwrap();
         assert_eq!(chunks.len(), 4);
         assert_eq!(chunks[0], "ABCDEFGHIJ");
         assert_eq!(chunks[1], "HIJKLMNOPQ"); // overlaps HIJ
@@ -102,9 +105,10 @@ mod tests {
 
     #[test]
     fn test_overlap_larger_than_chunk_size() {
+        let chunker = TextChunker::new();
         // Should fallback to no overlap
         let text = "ABCDEFGHIJKLMNOP";
-        let chunks = chunk_text(text, 5, 10);
+        let chunks = chunker.chunk(text, 5, 10).unwrap();
         assert_eq!(chunks.len(), 4);
         assert_eq!(chunks[0], "ABCDE");
         assert_eq!(chunks[1], "FGHIJ");
@@ -112,19 +116,21 @@ mod tests {
 
     #[test]
     fn test_zero_chunk_size() {
+        let chunker = TextChunker::new();
         let text = "Hello world";
-        let chunks = chunk_text(text, 0, 5);
+        let chunks = chunker.chunk(text, 0, 5).unwrap();
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0], "Hello world");
     }
 
     #[test]
     fn test_real_world_example() {
+        let chunker = TextChunker::new();
         let text = "The hippocampus is a crucial structure in the brain. \
                     It plays a vital role in memory formation. \
                     Research shows it's particularly important for spatial navigation.";
         
-        let chunks = chunk_text(text, 50, 10);
+        let chunks = chunker.chunk(text, 50, 10).unwrap();
         
         // Should create overlapping chunks
         assert!(chunks.len() > 1);

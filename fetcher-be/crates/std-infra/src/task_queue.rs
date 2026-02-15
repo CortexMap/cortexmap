@@ -623,6 +623,34 @@ impl TaskQueueInfra for StdTaskQueue {
         .await
     }
     
+    async fn get_task_by_id(&self, task_id: i64) -> Result<Option<FetchTask>, InfraError> {
+        use cortexmap_infra::schema::fetch_tasks;
+        
+        self.run_blocking(move |conn| {
+            fetch_tasks::table
+                .find(task_id)
+                .first::<FetchTask>(conn)
+                .optional()
+                .map_err(Into::into)
+        })
+        .await
+    }
+    
+    async fn get_tasks_by_status(&self, status: &str, limit: i32) -> Result<Vec<FetchTask>, InfraError> {
+        use cortexmap_infra::schema::fetch_tasks;
+        
+        let status = status.to_string();
+        self.run_blocking(move |conn| {
+            fetch_tasks::table
+                .filter(fetch_tasks::status.eq(&status))
+                .order(fetch_tasks::completed_at.asc())
+                .limit(limit as i64)
+                .load::<FetchTask>(conn)
+                .map_err(Into::into)
+        })
+        .await
+    }
+    
     async fn get_task_components(&self, task_id: i64) -> Result<Vec<FetchTaskComponent>, InfraError> {
         use cortexmap_infra::schema::fetch_task_components;
         

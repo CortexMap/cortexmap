@@ -1,5 +1,6 @@
 use crate::{ApiError, BrainRegionApi};
 use app::{AppError, BrainAtlasApp, Services};
+use domain::rpc_types;
 use domain::rpc_types::{
     BrainRegionListResponse, ProcessRegionResponse, SearchBrainRegionResponse, StatusResponse,
 };
@@ -30,7 +31,10 @@ where
 {
     type Error = ApiError<AppError<E>>;
 
-    async fn search_brain_region(&self, id: Option<Uuid>) -> Result<SearchBrainRegionResponse, Self::Error> {
+    async fn search_brain_region(
+        &self,
+        id: Option<Uuid>,
+    ) -> Result<SearchBrainRegionResponse, Self::Error> {
         let id = id.ok_or(ApiError::MissingOrInvalidId)?;
         let entries = self.app().search(id).await.map_err(ApiError::AppError)?;
         Ok(SearchBrainRegionResponse {
@@ -49,7 +53,26 @@ where
         Err(ApiError::NotImplemented)
     }
 
-    async fn process_region(&self, _region_id: Uuid, _s3_keys: Vec<String>) -> Result<ProcessRegionResponse, Self::Error> {
-        Err(ApiError::NotImplemented)
+    async fn process_region(
+        &self,
+        region_id: Option<Uuid>,
+        s3_keys: Vec<String>,
+    ) -> Result<ProcessRegionResponse, Self::Error> {
+        // Validate region_id is present
+        let region_uuid = region_id.ok_or(ApiError::MissingOrInvalidId)?;
+
+        // Call the full processing pipeline
+        let summary_id = self
+            .app()
+            .process_region(region_uuid, s3_keys)
+            .await
+            .map_err(ApiError::AppError)?;
+
+        Ok(ProcessRegionResponse {
+            region_id: Some(rpc_types::Uuid {
+                value: region_uuid.to_string(),
+            }),
+            detail: format!("Successfully created summary {}", summary_id),
+        })
     }
 }

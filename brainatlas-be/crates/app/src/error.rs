@@ -5,4 +5,7 @@ pub enum AppError<E: std::error::Error + Send + Sync + 'static> {
     
     #[error("Invalid query result")]
     InvalidResult,
+    
+    #[error("not found")]
+    NotFound,
 }

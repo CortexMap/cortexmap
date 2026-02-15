@@ -1,6 +1,12 @@
 // Re-export rpc-types for convenience
 pub use rpc_types;
 
+mod processing;
+mod hash;
+
+pub use processing::*;
+pub use hash::compute_hash;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
