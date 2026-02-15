@@ -1,0 +1,5 @@
+### Health check
+GET http://localhost:8080/orch/health
+
+### Health check (localhost)
+# GET http://localhost:8081/orch/health

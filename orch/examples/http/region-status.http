@@ -1,0 +1,15 @@
+### Get region status by UUID
+GET http://localhost:8080/orch/api/regions/5370f50e-c5ca-4247-bc18-11de1fa2bfdd/status
+
+### Get region status (localhost) - Example UUID
+# GET http://localhost:8081/orch/api/regions/123e4567-e89b-12d3-a456-426614174000/status
+
+### Expected response:
+# {
+#   "region_id": "123e4567-e89b-12d3-a456-426614174000",
+#   "status": "Done",  // or NotStarted, FetchQueued, Fetching, etc.
+#   "last_fetch_at": "2026-02-15T10:30:00Z",
+#   "last_summary_at": "2026-02-15T10:35:00Z",
+#   "summary_count": 3,
+#   "current_priority": null
+# }

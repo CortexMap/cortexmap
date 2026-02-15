@@ -1,0 +1,56 @@
+### Get all configuration entries
+GET http://localhost:8080/orch/api/config
+
+### Get config (localhost)
+# GET http://localhost:8081/orch/api/config
+
+### Expected response:
+# [
+#   {
+#     "key": "completion_poll_interval_secs",
+#     "value": "30",
+#     "description": "Interval in seconds between completion watcher polls",
+#     "updated_at": "2026-02-15T10:00:00Z"
+#   },
+#   {
+#     "key": "fetcher_base_url",
+#     "value": "http://0.0.0.0:8082/fetcher-be",
+#     "description": "Base URL for fetcher service",
+#     "updated_at": "2026-02-15T09:00:00Z"
+#   }
+# ]
+
+###
+
+### Update configuration entries
+PATCH http://localhost:8080/orch/api/config
+Content-Type: application/json
+
+[
+  {
+    "key": "completion_poll_interval_secs",
+    "value": "60"
+  },
+  {
+    "key": "query_generation_limit",
+    "value": "5"
+  }
+]
+
+### Update config (localhost)
+# PATCH http://localhost:8081/orch/api/config
+# Content-Type: application/json
+#
+# [
+#   {
+#     "key": "completion_poll_interval_secs",
+#     "value": "45"
+#   }
+# ]
+
+### Valid config keys:
+# - completion_poll_interval_secs
+# - max_parallel_process_calls
+# - fetcher_base_url
+# - brainatlas_base_url
+# - query_generation_limit

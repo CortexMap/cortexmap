@@ -1,0 +1,12 @@
+### Invalidate region (force re-fetch and re-process)
+POST http://localhost:8080/orch/api/regions/00000000-0000-0000-0000-000000000001/invalidate
+
+### Invalidate region (localhost) - Example UUID
+# POST http://localhost:8081/orch/api/regions/123e4567-e89b-12d3-a456-426614174000/invalidate
+
+### Expected response:
+# {
+#   "region_id": "123e4567-e89b-12d3-a456-426614174000",
+#   "new_status": "Invalidated",  // or "NotStarted" if no batch existed
+#   "detail": "Batch abc123... reset to collecting status for reprocessing"
+# }
