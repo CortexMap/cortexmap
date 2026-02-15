@@ -1,8 +1,9 @@
-use api::{ApiError, Orch};
+use api::{ApiError, Orch, OrchApi};
 use app::AppError;
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::extract::{Path, State};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use infra::{InfraError, OrchInfra};
 use services::{OrchServices, ServiceError};
@@ -33,11 +34,11 @@ impl From<Error> for ServerError {
     }
 }
 
-pub struct BrainAtlasServer {
-    api: Arc<Orch<OrchServices<OrchInfra>>>,
+pub struct OrchServer {
+    pub api: Arc<Orch<OrchServices<OrchInfra>>>,
 }
 
-impl Clone for BrainAtlasServer {
+impl Clone for OrchServer {
     fn clone(&self) -> Self {
         Self {
             api: self.api.clone(),
@@ -45,7 +46,7 @@ impl Clone for BrainAtlasServer {
     }
 }
 
-impl BrainAtlasServer {
+impl OrchServer {
     pub fn new(api: Arc<Orch<OrchServices<OrchInfra>>>) -> Self {
         Self { api }
     }
@@ -55,6 +56,12 @@ impl BrainAtlasServer {
 
         let api_routes = Router::new()
             .route("/health", get(health_handler))
+            .route("/api/regions/:id/search", post(search_region_handler))
+            .route("/api/regions/:id/status", get(get_region_status_handler))
+            .route("/api/regions/:id/invalidate", post(invalidate_region_handler))
+            .route("/api/pipeline/stats", get(get_pipeline_stats_handler))
+            .route("/api/config", get(get_config_handler))
+            .route("/api/config", patch(update_config_handler))
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
@@ -86,4 +93,51 @@ fn cors_layer() -> CorsLayer {
 
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
+}
+
+async fn search_region_handler(
+    State(server): State<OrchServer>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = (*server.api).search_region(id).await?;
+    Ok(Json(result))
+}
+
+async fn get_region_status_handler(
+    State(server): State<OrchServer>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = (*server.api).get_region_status(id).await?;
+    Ok(Json(result))
+}
+
+async fn invalidate_region_handler(
+    State(server): State<OrchServer>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError> {
+    // Priority could be added as query param later if needed
+    let result = (*server.api).invalidate_region(id, None).await?;
+    Ok(Json(result))
+}
+
+async fn get_pipeline_stats_handler(
+    State(server): State<OrchServer>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = (*server.api).get_pipeline_stats().await?;
+    Ok(Json(result))
+}
+
+async fn get_config_handler(
+    State(server): State<OrchServer>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = (*server.api).get_config().await?;
+    Ok(Json(result))
+}
+
+async fn update_config_handler(
+    State(server): State<OrchServer>,
+    Json(body): Json<Vec<domain::ConfigEntryUpdate>>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = (*server.api).update_config(body).await?;
+    Ok(Json(result))
 }

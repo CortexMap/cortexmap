@@ -37,6 +37,12 @@ pub trait RegionManagement: Send + Sync {
     
     /// Generate search queries for a region using LLM
     async fn generate_queries(&self, region_name: &str, count: u32) -> Result<Vec<String>, Self::Error>;
+    
+    /// Update batch status (for invalidation)
+    async fn update_batch_status(&self, batch_id: Uuid, status: domain::BatchStatus, error: Option<String>) -> Result<(), Self::Error>;
+    
+    /// Get batches by status (for stats)
+    async fn get_batches_by_status(&self, status: domain::BatchStatus) -> Result<Vec<domain::ProcessingBatch>, Self::Error>;
 }
 
 /// Trait for managing batches and fetcher integration

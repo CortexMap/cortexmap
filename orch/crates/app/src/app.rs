@@ -1,5 +1,5 @@
 use crate::Services;
-use domain::{ConfigEntry, ConfigEntryUpdate, ConfigKey, InvalidateResult, PipelineStatsResult, Priority, RegionPipelineStatus, RegionStatusResult, SearchRegionResult};
+use domain::{BatchStatus, ConfigEntry, ConfigEntryUpdate, ConfigKey, InvalidateResult, PipelineStatsResult, Priority, RegionPipelineStatus, RegionStatusResult, SearchRegionResult};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -183,31 +183,113 @@ where
 
     /// Get the status of processing for a region
     pub async fn get_region_status(&self, region_id: Uuid) -> Result<RegionStatusResult, E> {
-        // TODO: Derive status from batch + summary state
-        todo!("Implement get_region_status")
+        // Map UUID to region_id (int) - using placeholder for now
+        let region_id_int = 1; // TODO: Implement proper UUID → region_id mapping
+        
+        // Get active batch if exists
+        let batch = self.services.get_active_batch(region_id_int).await?;
+        
+        // Get summaries count
+        let summaries = self.services.get_summaries(region_id_int).await?;
+        
+        let status = if !summaries.is_empty() {
+            RegionPipelineStatus::Done
+        } else if let Some(batch) = batch.as_ref() {
+            match batch.status {
+                domain::BatchStatus::Collecting => RegionPipelineStatus::FetchQueued,
+                domain::BatchStatus::Ready => RegionPipelineStatus::LlmQueued,
+                domain::BatchStatus::Processing => RegionPipelineStatus::Processing,
+                domain::BatchStatus::Completed => RegionPipelineStatus::Done,
+                domain::BatchStatus::Failed => RegionPipelineStatus::FetchFailed,
+            }
+        } else {
+            RegionPipelineStatus::NotStarted
+        };
+        
+        Ok(RegionStatusResult {
+            region_id,
+            status,
+            last_fetch_at: batch.as_ref().and_then(|b| b.completed_at),
+            last_summary_at: summaries.first().map(|s| s.created_at),
+            summary_count: summaries.len() as i32,
+            current_priority: None, // TODO: Get priority from batch or tasks
+        })
     }
 
     /// Invalidate existing summaries and re-process
     pub async fn invalidate_region(&self, region_id: Uuid, priority: Option<Priority>) -> Result<InvalidateResult, E> {
-        // TODO: Reset batch, bump priority, trigger reprocess
-        todo!("Implement invalidate_region")
+        // Map UUID to region_id (int)
+        let region_id_int = 1; // TODO: Implement proper UUID → region_id mapping
+        
+        // Get active batch if exists
+        let active_batch = self.services.get_active_batch(region_id_int).await?;
+        
+        let (detail, batch_existed) = if let Some(batch) = &active_batch {
+            // Batch exists - reset it to collecting to trigger reprocess
+            self.services.update_batch_status(
+                batch.id,
+                domain::BatchStatus::Collecting,
+                None
+            ).await?;
+            
+            (format!("Batch {} reset to collecting status for reprocessing", batch.id), true)
+        } else {
+            // No batch exists - invalidation will happen when user searches
+            ("No active batch found. A new batch will be created on next search.".to_string(), false)
+        };
+        
+        // Determine new status
+        let new_status = if batch_existed {
+            RegionPipelineStatus::Invalidated
+        } else {
+            RegionPipelineStatus::NotStarted
+        };
+        
+        Ok(InvalidateResult {
+            region_id,
+            new_status,
+            detail,
+        })
     }
 
     /// Get pipeline statistics across all regions
     pub async fn get_pipeline_stats(&self) -> Result<PipelineStatsResult, E> {
-        // TODO: Count regions by status
-        todo!("Implement get_pipeline_stats")
+        // Get all batches
+        let collecting = self.services.get_batches_by_status(BatchStatus::Collecting).await?.len();
+        let ready = self.services.get_batches_by_status(BatchStatus::Ready).await?.len();
+        let processing = self.services.get_batches_by_status(BatchStatus::Processing).await?.len();
+        let completed = self.services.get_batches_by_status(BatchStatus::Completed).await?.len();
+        let failed = self.services.get_batches_by_status(BatchStatus::Failed).await?.len();
+
+        Ok(PipelineStatsResult {
+            total_regions: 0, // TODO: Query total count from region_mapping
+            not_started: 0, // TODO: Count regions with no batches at all
+            fetch_queued: collecting as i32,
+            fetching: collecting as i32, // Same as collecting - tasks are in progress
+            fetch_failed: failed as i32,
+            llm_queued: ready as i32,
+            processing: processing as i32,
+            done: completed as i32,
+            invalidated: 0, // TODO: Track invalidated batches separately
+        })
     }
 
     /// Get all configuration entries
     pub async fn get_config(&self) -> Result<Vec<ConfigEntry>, E> {
-        // TODO: Query orch_config table
-        todo!("Implement get_config")
+        let database_url = std::env::var("DATABASE_URL").map_err(|e| {
+            // Convert env::VarError to E through Box<dyn Error>
+            // This is hacky but works for now
+            panic!("DATABASE_URL not set: {}", e);
+        })?;
+        
+        // TODO: Add get_all_config to Services trait
+        // For now, we need to collect all config keys
+        Ok(vec![]) // Placeholder
     }
 
     /// Update configuration entries
     pub async fn update_config(&self, entries: Vec<ConfigEntryUpdate>) -> Result<Vec<ConfigEntry>, E> {
-        // TODO: Update orch_config table
-        todo!("Implement update_config")
+        // TODO: Add update_config to Services trait
+        Ok(vec![]) // Placeholder
     }
 }

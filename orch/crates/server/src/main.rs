@@ -1,8 +1,8 @@
 mod server;
 
-use api::Orch;
+use api::{Orch, OrchApi};
 use infra::OrchInfra;
-use server::BrainAtlasServer;
+use server::OrchServer;
 use services::OrchServices;
 use std::sync::Arc;
 use tracing::info;
@@ -23,9 +23,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let infra = Arc::new(OrchInfra::new());
     let services = Arc::new(OrchServices::new(infra));
     let api = Arc::new(Orch::new(services));
-    let brain_atlas_server = BrainAtlasServer::new(api);
+    
+    // Initialize the orch (spawns background loop)
+    api.init().await?;
+    
+    let orch_server = OrchServer::new(api);
 
-    let router = brain_atlas_server.into_router();
+    let router = orch_server.into_router();
 
     info!("orch listening on {addr}");
 

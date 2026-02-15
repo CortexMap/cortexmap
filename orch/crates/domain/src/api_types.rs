@@ -1,7 +1,8 @@
+use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
 /// Priority levels for fetch/process tasks
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Priority {
     Background,     // 0 - Routine scheduled scan
     Normal,         // 5 - Standard enqueue
@@ -21,7 +22,7 @@ impl Priority {
 }
 
 /// End-to-end pipeline state for a brain region
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RegionPipelineStatus {
     NotStarted,   // No fetch task exists
     FetchQueued,  // Fetch task exists, status = pending
@@ -34,21 +35,21 @@ pub enum RegionPipelineStatus {
 }
 
 /// A single region summary entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegionSummary {
     pub summary: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Result of searching for a region
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchRegionResult {
     pub status: RegionPipelineStatus,
     pub summaries: Vec<RegionSummary>,
 }
 
 /// Result of getting region status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegionStatusResult {
     pub region_id: Uuid,
     pub status: RegionPipelineStatus,
@@ -59,7 +60,7 @@ pub struct RegionStatusResult {
 }
 
 /// Result of invalidating a region
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvalidateResult {
     pub region_id: Uuid,
     pub new_status: RegionPipelineStatus,
@@ -67,7 +68,7 @@ pub struct InvalidateResult {
 }
 
 /// Pipeline statistics across all regions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineStatsResult {
     pub total_regions: i32,
     pub not_started: i32,
@@ -81,7 +82,7 @@ pub struct PipelineStatsResult {
 }
 
 /// A configuration entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigEntry {
     pub key: String,
     pub value: String,
@@ -90,7 +91,7 @@ pub struct ConfigEntry {
 }
 
 /// Update for a configuration entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigEntryUpdate {
     pub key: String,
     pub value: String,
