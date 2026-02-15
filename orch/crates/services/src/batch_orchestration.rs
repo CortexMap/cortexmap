@@ -19,7 +19,7 @@ impl<I> OrchBatchOrchestration<I> {
 #[derive(Debug, Serialize)]
 struct EnqueueRequest {
     query: String,
-    region_id: Option<i32>,
+    region_id: Option<Uuid>,
     priority: Option<i32>,
 }
 
@@ -36,7 +36,7 @@ where
 {
     type Error = ServiceError<E>;
 
-    async fn create_batch(&self, region_id: i32, expected_count: usize) -> Result<Uuid, Self::Error> {
+    async fn create_batch(&self, region_id: Uuid, expected_count: usize) -> Result<Uuid, Self::Error> {
         let database_url = self
             .infra
             .get_env_var("DATABASE_URL")
@@ -51,7 +51,7 @@ where
     async fn enqueue_fetch_task(
         &self,
         query: String,
-        region_id: i32,
+        region_id: Uuid,
         priority: i32,
     ) -> Result<i64, Self::Error> {
         // Try env var first, fall back to config
@@ -87,7 +87,7 @@ where
             .await
             .map_err(ServiceError::InfraError)?;
 
-        tracing::info!(task_id = response.task_id, region_id, "Enqueued fetch task");
+        tracing::info!(task_id = response.task_id, region_id = %region_id, "Enqueued fetch task");
 
         Ok(response.task_id)
     }

@@ -22,7 +22,6 @@ impl BrainAtlasInfra {
         let env = BrainAtlasEnvInfra::new();
         let s3 = BrainAtlasS3::new();
 
-        // TODO: Get API key from env var
         let api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
         let llm = OpenRouterClient::new(api_key);
 

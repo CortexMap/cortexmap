@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// FIXME(drop me): use generated bindings or the once that's defined in domain.
-
 // Fetcher API types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskDetailsResponse {
@@ -39,5 +37,7 @@ pub struct ProcessRegionRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessRegionResponse {
     pub region_id: String,
+    pub summary_id: Uuid,
+    pub content_hash: String,
     pub detail: String,
 }

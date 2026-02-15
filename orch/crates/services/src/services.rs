@@ -1,10 +1,11 @@
 use crate::batch_orchestration::OrchBatchOrchestration;
 use crate::completion_watcher::CompletionWatcher;
+use crate::config_management::OrchConfigManagement;
 use crate::region_management::OrchRegionManagement;
 use crate::{Infra, ServiceError};
-use app::{BatchOrchestration, CompletionOrchestrator, RegionManagement};
+use app::{BatchOrchestration, CompletionOrchestrator, ConfigManagement, RegionManagement};
 use domain::{
-    ConfigKey, PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary,
+    ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary,
 };
 use std::error::Error;
 use std::sync::Arc;
@@ -14,17 +15,20 @@ pub struct OrchServices<I> {
     completion_watcher: CompletionWatcher<I>,
     region_management: OrchRegionManagement<I>,
     batch_orchestration: OrchBatchOrchestration<I>,
+    config_management: OrchConfigManagement<I>,
 }
 
 impl<I: Infra> OrchServices<I> {
     pub fn new(infra: Arc<I>) -> Self {
         let completion_watcher = CompletionWatcher::new(infra.clone());
         let region_management = OrchRegionManagement::new(infra.clone());
-        let batch_orchestration = OrchBatchOrchestration::new(infra);
+        let batch_orchestration = OrchBatchOrchestration::new(infra.clone());
+        let config_management = OrchConfigManagement::new(infra);
         Self {
             completion_watcher,
             region_management,
             batch_orchestration,
+            config_management,
         }
     }
 }
@@ -58,24 +62,24 @@ where
 {
     type Error = ServiceError<E>;
 
-    async fn get_summaries(&self, region_id: i32) -> Result<Vec<RegionSummary>, Self::Error> {
+    async fn get_summaries(&self, region_id: Uuid) -> Result<Vec<RegionSummary>, Self::Error> {
         self.region_management.get_summaries(region_id).await
     }
 
     async fn get_active_batch(
         &self,
-        region_id: i32,
+        region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
         self.region_management.get_active_batch(region_id).await
     }
 
-    async fn get_queries(&self, region_id: i32) -> Result<Vec<RegionQuery>, Self::Error> {
+    async fn get_queries(&self, region_id: Uuid) -> Result<Vec<RegionQuery>, Self::Error> {
         self.region_management.get_queries(region_id).await
     }
 
     async fn store_queries(
         &self,
-        region_id: i32,
+        region_id: Uuid,
         queries: Vec<String>,
     ) -> Result<Vec<Uuid>, Self::Error> {
         self.region_management
@@ -110,6 +114,42 @@ where
     ) -> Result<Vec<domain::ProcessingBatch>, Self::Error> {
         self.region_management.get_batches_by_status(status).await
     }
+    
+    async fn get_region_name(&self, region_id: Uuid) -> Result<String, Self::Error> {
+        self.region_management.get_region_name(region_id).await
+    }
+    
+    async fn get_total_regions(&self) -> Result<i64, Self::Error> {
+        self.region_management.get_total_regions().await
+    }
+    
+    async fn count_regions_without_batches(&self) -> Result<i64, Self::Error> {
+        self.region_management.count_regions_without_batches().await
+    }
+    
+    async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error> {
+        self.region_management.get_query_generation_limit().await
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> ConfigManagement for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn get_all_config(&self) -> Result<Vec<ConfigEntry>, Self::Error> {
+        self.config_management.get_all_config().await
+    }
+
+    async fn update_config(
+        &self,
+        entries: Vec<ConfigEntryUpdate>,
+    ) -> Result<Vec<ConfigEntry>, Self::Error> {
+        self.config_management.update_config(entries).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -122,7 +162,7 @@ where
 
     async fn create_batch(
         &self,
-        region_id: i32,
+        region_id: Uuid,
         expected_count: usize,
     ) -> Result<Uuid, Self::Error> {
         self.batch_orchestration
@@ -133,7 +173,7 @@ where
     async fn enqueue_fetch_task(
         &self,
         query: String,
-        region_id: i32,
+        region_id: Uuid,
         priority: i32,
     ) -> Result<i64, Self::Error> {
         self.batch_orchestration

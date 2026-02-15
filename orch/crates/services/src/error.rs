@@ -20,4 +20,7 @@ pub enum ServiceError<E: std::error::Error + Send + Sync + 'static> {
 
     #[error("failed to parse configuration value")]
     ConfigParseFailed,
+    
+    #[error("invalid configuration: {reason}")]
+    InvalidConfig { reason: String },
 }

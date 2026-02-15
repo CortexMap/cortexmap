@@ -34,7 +34,8 @@ impl Display for ContentType {
 
 #[async_trait::async_trait]
 pub trait HttpInfra {
-    // TODO: add some wrapper instead of using reqwest::Response
+    // Note: Currently returns reqwest::Response directly.
+    // Could be wrapped in a custom type for better abstraction if needed.
     async fn get(&self, url: &str) -> Result<Response, InfraError>;
     async fn post(&self, url: &str, body: Option<Bytes>) -> Result<Response, InfraError>;
 }

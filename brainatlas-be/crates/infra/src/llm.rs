@@ -4,6 +4,26 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
+// Load prompt template from file at compile time
+fn load_prompt(name: &str) -> &'static str {
+    match name {
+        "summarize_system" => include_str!("../prompts/summarize_system.md"),
+        "summarize_user" => include_str!("../prompts/summarize_user.md"),
+        "generate_queries_system" => include_str!("../prompts/generate_queries_system.md"),
+        "generate_queries_user" => include_str!("../prompts/generate_queries_user.md"),
+        _ => panic!("Unknown prompt: {}", name),
+    }
+}
+
+// Simple template replacement function
+fn render_template(template: &str, vars: &[(&str, &str)]) -> String {
+    let mut result = template.to_string();
+    for (key, value) in vars {
+        result = result.replace(&format!("{{{}}}", key), value);
+    }
+    result
+}
+
 pub struct OpenRouterClient {
     api_key: String,
     base_url: String,
@@ -125,15 +145,11 @@ impl LlmClient for OpenRouterClient {
         // Combine all chunks with separators
         let combined_text = chunks.join("\n\n---\n\n");
         
-        let system_prompt = "You are a neuroscience expert. Summarize the following research papers about a brain region. \
-            Focus on: \
-            1. Key anatomical features and connectivity \
-            2. Primary functions and role in cognition/behavior \
-            3. Clinical significance and disorders \
-            4. Recent research findings. \
-            Be comprehensive but concise. Use scientific terminology appropriately.";
-
-        let user_prompt = format!("Summarize these research papers:\n\n{}", combined_text);
+        let system_prompt = load_prompt("summarize_system");
+        let user_prompt = render_template(
+            load_prompt("summarize_user"),
+            &[("combined_text", &combined_text)]
+        );
 
         let request = ChatRequest {
             model: "openai/gpt-4o-mini".to_string(),
@@ -194,14 +210,10 @@ impl LlmClient for OpenRouterClient {
     async fn generate_queries(&self, region_name: &str, count: u32) -> Result<Vec<String>, Self::Error> {
         info!("Generating {} search queries for region: {}", count, region_name);
 
-        let system_prompt = "You are a research librarian specialized in neuroscience. \
-            Generate specific, targeted search queries that would find relevant academic papers about the given brain region. \
-            Focus on queries that would retrieve papers about anatomy, function, connectivity, and clinical significance.";
-
-        let user_prompt = format!(
-            "Generate exactly {} distinct search queries (one per line) to find research papers about the brain region: {}. \
-            Each query should target different aspects (anatomy, function, connectivity, disorders, etc.).",
-            count, region_name
+        let system_prompt = load_prompt("generate_queries_system");
+        let user_prompt = render_template(
+            load_prompt("generate_queries_user"),
+            &[("count", &count.to_string()), ("region_name", region_name)]
         );
 
         let request = ChatRequest {

@@ -89,19 +89,18 @@ impl From<OrchConfig> for services::OrchConfig {
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct RegionQueryRow {
     pub id: Uuid,
-    pub region_id: i32,
     pub query_text: String,
     pub source: String,
     pub priority: Option<i32>,
     pub enabled: Option<bool>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub region_id: Uuid,
 }
-
 #[derive(Insertable, Debug)]
 #[diesel(table_name = crate::schema::region_queries)]
 pub struct NewRegionQuery {
-    pub region_id: i32,
+    pub region_id: Uuid,
     pub query_text: String,
     pub source: String,
 }
@@ -111,7 +110,6 @@ pub struct NewRegionQuery {
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct ProcessingBatchRow {
     pub id: Uuid,
-    pub region_id: i32,
     pub status: String,
     pub fetch_task_ids: Vec<Option<i64>>,
     pub expected_task_count: i32,
@@ -122,12 +120,13 @@ pub struct ProcessingBatchRow {
     pub completed_at: Option<NaiveDateTime>,
     pub summary_id: Option<Uuid>,
     pub error_message: Option<String>,
+    pub region_id: Uuid,  // Moved to end to match schema
 }
 
 #[derive(Insertable, Debug)]
 #[diesel(table_name = crate::schema::region_processing_batches)]
 pub struct NewProcessingBatch {
-    pub region_id: i32,
+    pub region_id: Uuid,
     pub expected_task_count: i32,
 }
 
@@ -165,6 +164,36 @@ impl From<ProcessingBatchRow> for domain::ProcessingBatch {
             completed_at: row.completed_at.map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t, Utc)),
             summary_id: row.summary_id,
             error_message: row.error_message,
+        }
+    }
+}
+
+// Region Mapping Models
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = crate::schema::region_mapping)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct RegionMappingRow {
+    pub id: Uuid,
+    pub region_id: i32,
+    pub name: String,
+    pub acronym: Option<String>,
+    pub red: Option<i32>,
+    pub green: Option<i32>,
+    pub blue: Option<i32>,
+    pub structure_order: Option<i32>,
+    pub parent_region_id: Option<i32>,
+    pub parent_acronym: Option<String>,
+    pub created_at: Option<NaiveDateTime>,
+}
+
+impl From<RegionMappingRow> for services::RegionMapping {
+    fn from(row: RegionMappingRow) -> Self {
+        Self {
+            id: row.id,
+            region_id: row.region_id,
+            name: row.name,
+            acronym: row.acronym,
         }
     }
 }

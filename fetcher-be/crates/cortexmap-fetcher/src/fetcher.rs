@@ -21,13 +21,9 @@ pub async fn fetch<I: HttpInfra + DatabaseInfra + S3Infra + Send + Sync + 'stati
     )
     .await
     .into_iter()
-    // Ignoring all errors for now.
-    // We need more powerful type to
-    // catch list of errors (and to
-    // avoid failing on the first one).
-    // TODO: maybe we could use `tailcall-valid`
-    // for this or have some nexted FetchErrors'
-    // variant.
+    // Note: Currently ignoring errors to avoid failing on first error.
+    // Could use a more sophisticated error collection strategy (e.g., tailcall-valid)
+    // to capture partial failures while continuing processing.
     .flatten()
     .flatten()
     .collect::<Vec<_>>();

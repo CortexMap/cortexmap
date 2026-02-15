@@ -1,6 +1,6 @@
 use crate::{
     BatchManagement, EnvInfra, HttpClient, OrchDatabase, ProcessRegionRequest,
-    ProcessRegionResponse, ServiceError, TaskComponentsResponse, TaskDetailsResponse,
+    ProcessRegionResponse, ServiceError, TaskComponentsResponse,
 };
 use app::CompletionOrchestrator;
 use backon::{ExponentialBuilder, Retryable};
@@ -60,7 +60,7 @@ where
             .await
             .map_err(ServiceError::InfraError)?;
 
-        let mut already_processed = collecting_batches.len();
+        let already_processed = collecting_batches.len();
 
         // For each batch, check if all its fetch tasks are complete
         for batch in collecting_batches {
@@ -78,7 +78,7 @@ where
 
                 tracing::info!(
                     batch_id = %batch.id,
-                    region_id = batch.region_id,
+                    region_id = %batch.region_id,
                     task_count = batch.fetch_task_ids.len(),
                     "Batch ready for processing"
                 );
@@ -166,7 +166,7 @@ where
                     task_results.push(TaskResult {
                         task_id: batch.fetch_task_ids.first().copied().unwrap_or(0),
                         pmc_id: format!("batch_{}", batch.id),
-                        region_id: Uuid::nil(), // TODO: convert i32 region_id to UUID
+                        region_id: batch.region_id,
                         status: TaskStatus::Success,
                         detail: Some(detail),
                     });
@@ -176,7 +176,7 @@ where
                     task_results.push(TaskResult {
                         task_id: batch.fetch_task_ids.first().copied().unwrap_or(0),
                         pmc_id: format!("batch_{}", batch.id),
-                        region_id: Uuid::nil(),
+                        region_id: batch.region_id,
                         status: TaskStatus::Failed,
                         detail: Some(e.to_string()),
                     });
@@ -251,7 +251,7 @@ where
     ) -> Result<String, ServiceError<E>> {
         tracing::info!(
             batch_id = %batch.id,
-            region_id = batch.region_id,
+            region_id = %batch.region_id,
             task_count = batch.fetch_task_ids.len(),
             "Processing batch"
         );
@@ -305,9 +305,7 @@ where
         // Call brainatlas /process with retry logic
         let process_url = format!("{}/api/process", brainatlas_url);
         
-        // Convert i32 region_id to UUID (lookup from region_mapping)
-        // For now, use a placeholder - this needs proper region_mapping lookup
-        let region_uuid = Uuid::nil(); // TODO: lookup region UUID from region_id
+        let region_uuid = batch.region_id;
         
         let request = ProcessRegionRequest {
             region_id: region_uuid.to_string(),
@@ -334,20 +332,20 @@ where
 
         match result {
             Ok(response) => {
-                // Mark batch as complete
-                // TODO: parse summary_id from response.detail and compute actual hash
+                // Mark batch as complete with summary_id and content_hash from response
                 self.infra
                     .complete_batch(
                         database_url,
                         batch.id,
-                        Uuid::nil(), // TODO: parse summary_id from response
-                        "hash_placeholder".to_string(), // TODO: actual hash
+                        response.summary_id,
+                        response.content_hash,
                     )
                     .await
                     .map_err(ServiceError::InfraError)?;
 
                 tracing::info!(
                     batch_id = %batch.id,
+                    summary_id = %response.summary_id,
                     "Batch processing completed successfully"
                 );
 

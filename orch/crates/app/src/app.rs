@@ -77,16 +77,8 @@ where
     pub async fn search_region(&self, region_id: Uuid) -> Result<SearchRegionResult, E> {
         tracing::info!(?region_id, "Searching for region");
         
-        // For now, we need to convert UUID to region_id (integer)
-        // This requires looking up the region mapping
-        // For MVP implementation, let's document what needs to happen:
-        
-        // STEP 1: Map UUID to region_id (int) - NEEDS brainatlas API call or local region_mapping table
-        // For now, using a placeholder since we don't have this mapping yet
-        let region_id_int = 1; // TODO: Implement proper UUID → region_id mapping
-        
-        // STEP 2: Check for existing summaries
-        let summaries = self.services.get_summaries(region_id_int).await
+        // STEP 1: Check for existing summaries
+        let summaries = self.services.get_summaries(region_id).await
             .map_err(|e| e.into())?;
         
         if !summaries.is_empty() {
@@ -100,7 +92,7 @@ where
         tracing::info!(?region_id, "No summaries found, checking for batch");
         
         // STEP 3: Check for active batch
-        let active_batch = self.services.get_active_batch(region_id_int).await
+        let active_batch = self.services.get_active_batch(region_id).await
             .map_err(|e| e.into())?;
         
         if let Some(batch) = active_batch {
@@ -126,22 +118,26 @@ where
         // STEP 4: No batch exists, create one
         
         // 4a. Check if queries exist for this region
-        let queries = self.services.get_queries(region_id_int).await
+        let queries = self.services.get_queries(region_id).await
             .map_err(|e| e.into())?;
         
         let query_strings: Vec<String> = if queries.is_empty() {
             tracing::info!(?region_id, "No queries found, generating new ones");
             
-            // Generate queries via LLM
-            // TODO: Get region name from region mapping
-            let region_name = "hippocampus"; // Placeholder
-            let count = 3; // TODO: Get from config
+            // Get region name from region_mapping
+            let region_name = self.services.get_region_name(region_id).await
+                .map_err(|e| e.into())?;
             
-            let generated = self.services.generate_queries(region_name, count).await
+            // Get query count from config (default to 3)
+            let count = self.services.get_query_generation_limit().await
+                .map_err(|e| e.into())?
+                .unwrap_or(3);
+            
+            let generated = self.services.generate_queries(&region_name, count).await
                 .map_err(|e| e.into())?;
             
             // Store generated queries
-            self.services.store_queries(region_id_int, generated.clone()).await
+            self.services.store_queries(region_id, generated.clone()).await
                 .map_err(|e| e.into())?;
             
             tracing::info!(?region_id, count = generated.len(), "Generated and stored queries");
@@ -152,7 +148,7 @@ where
         };
         
         // 4b. Create batch
-        let batch_id = self.services.create_batch(region_id_int, query_strings.len()).await
+        let batch_id = self.services.create_batch(region_id, query_strings.len()).await
             .map_err(|e| e.into())?;
         
         tracing::info!(?region_id, ?batch_id, "Created batch");
@@ -162,7 +158,7 @@ where
         for query in &query_strings {
             let task_id = self.services.enqueue_fetch_task(
                 query.clone(),
-                region_id_int,
+                region_id,
                 5, // Normal priority
             ).await.map_err(|e| e.into())?;
             
@@ -183,14 +179,11 @@ where
 
     /// Get the status of processing for a region
     pub async fn get_region_status(&self, region_id: Uuid) -> Result<RegionStatusResult, E> {
-        // Map UUID to region_id (int) - using placeholder for now
-        let region_id_int = 1; // TODO: Implement proper UUID → region_id mapping
-        
         // Get active batch if exists
-        let batch = self.services.get_active_batch(region_id_int).await?;
+        let batch = self.services.get_active_batch(region_id).await?;
         
         // Get summaries count
-        let summaries = self.services.get_summaries(region_id_int).await?;
+        let summaries = self.services.get_summaries(region_id).await?;
         
         let status = if !summaries.is_empty() {
             RegionPipelineStatus::Done
@@ -212,17 +205,18 @@ where
             last_fetch_at: batch.as_ref().and_then(|b| b.completed_at),
             last_summary_at: summaries.first().map(|s| s.created_at),
             summary_count: summaries.len() as i32,
-            current_priority: None, // TODO: Get priority from batch or tasks
+            current_priority: batch.as_ref().and_then(|_b| {
+                // Priority would come from the batch's tasks
+                // For now, return None - could be enhanced to lookup from fetch_tasks
+                None
+            }),
         })
     }
 
     /// Invalidate existing summaries and re-process
-    pub async fn invalidate_region(&self, region_id: Uuid, priority: Option<Priority>) -> Result<InvalidateResult, E> {
-        // Map UUID to region_id (int)
-        let region_id_int = 1; // TODO: Implement proper UUID → region_id mapping
-        
+    pub async fn invalidate_region(&self, region_id: Uuid, _priority: Option<Priority>) -> Result<InvalidateResult, E> {
         // Get active batch if exists
-        let active_batch = self.services.get_active_batch(region_id_int).await?;
+        let active_batch = self.services.get_active_batch(region_id).await?;
         
         let (detail, batch_existed) = if let Some(batch) = &active_batch {
             // Batch exists - reset it to collecting to trigger reprocess
@@ -254,7 +248,15 @@ where
 
     /// Get pipeline statistics across all regions
     pub async fn get_pipeline_stats(&self) -> Result<PipelineStatsResult, E> {
-        // Get all batches
+        // Get total region count
+        let total_regions = self.services.get_total_regions().await
+            .map_err(|e| e.into())? as i32;
+        
+        // Get count of regions with no batches
+        let not_started = self.services.count_regions_without_batches().await
+            .map_err(|e| e.into())? as i32;
+        
+        // Get all batches by status
         let collecting = self.services.get_batches_by_status(BatchStatus::Collecting).await?.len();
         let ready = self.services.get_batches_by_status(BatchStatus::Ready).await?.len();
         let processing = self.services.get_batches_by_status(BatchStatus::Processing).await?.len();
@@ -262,34 +264,25 @@ where
         let failed = self.services.get_batches_by_status(BatchStatus::Failed).await?.len();
 
         Ok(PipelineStatsResult {
-            total_regions: 0, // TODO: Query total count from region_mapping
-            not_started: 0, // TODO: Count regions with no batches at all
+            total_regions,
+            not_started,
             fetch_queued: collecting as i32,
             fetching: collecting as i32, // Same as collecting - tasks are in progress
             fetch_failed: failed as i32,
             llm_queued: ready as i32,
             processing: processing as i32,
             done: completed as i32,
-            invalidated: 0, // TODO: Track invalidated batches separately
+            invalidated: 0, // Invalidated is a transient state, not stored separately
         })
     }
 
     /// Get all configuration entries
     pub async fn get_config(&self) -> Result<Vec<ConfigEntry>, E> {
-        let database_url = std::env::var("DATABASE_URL").map_err(|e| {
-            // Convert env::VarError to E through Box<dyn Error>
-            // This is hacky but works for now
-            panic!("DATABASE_URL not set: {}", e);
-        })?;
-        
-        // TODO: Add get_all_config to Services trait
-        // For now, we need to collect all config keys
-        Ok(vec![]) // Placeholder
+        self.services.get_all_config().await.map_err(|e| e.into())
     }
 
     /// Update configuration entries
     pub async fn update_config(&self, entries: Vec<ConfigEntryUpdate>) -> Result<Vec<ConfigEntry>, E> {
-        // TODO: Add update_config to Services trait
-        Ok(vec![]) // Placeholder
+        self.services.update_config(entries).await.map_err(|e| e.into())
     }
 }

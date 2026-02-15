@@ -197,7 +197,7 @@ impl BatchManagement for OrchPostgresql {
     async fn get_queries(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
     ) -> Result<Vec<RegionQuery>, Self::Error> {
         use crate::schema::region_queries;
         
@@ -218,9 +218,9 @@ impl BatchManagement for OrchPostgresql {
     async fn insert_queries(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
         queries: Vec<String>,
-    ) -> Result<Vec<Uuid>, Self::Error> {
+    ) -> Result<Vec<uuid::Uuid>, Self::Error> {
         use crate::schema::region_queries;
         
         let new_queries: Vec<NewRegionQuery> = queries
@@ -248,7 +248,7 @@ impl BatchManagement for OrchPostgresql {
     async fn create_batch(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
         expected_count: i32,
     ) -> Result<Uuid, Self::Error> {
         use crate::schema::region_processing_batches;
@@ -418,7 +418,7 @@ impl BatchManagement for OrchPostgresql {
     async fn get_active_batch(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
         use crate::schema::region_processing_batches;
         
@@ -438,5 +438,73 @@ impl BatchManagement for OrchPostgresql {
             .await??;
         
         Ok(result.map(Into::into))
+    }
+}
+
+#[async_trait::async_trait]
+impl services::RegionMappingQueries for OrchPostgresql {
+    type Error = InfraError;
+
+    async fn get_region_mapping(
+        &self,
+        database_url: &str,
+        region_uuid: Uuid,
+    ) -> Result<Option<services::RegionMapping>, Self::Error> {
+        use crate::schema::region_mapping;
+        use crate::models::RegionMappingRow;
+        
+        let conn = self.pool(database_url).await?.get().await?;
+        let result = conn
+            .interact(move |c| {
+                region_mapping::table
+                    .find(region_uuid)
+                    .first::<RegionMappingRow>(c)
+                    .optional()
+            })
+            .await??;
+        
+        Ok(result.map(Into::into))
+    }
+
+    async fn get_total_region_count(
+        &self,
+        database_url: &str,
+    ) -> Result<i64, Self::Error> {
+        use crate::schema::region_mapping;
+        use diesel::dsl::count_star;
+        
+        let conn = self.pool(database_url).await?.get().await?;
+        let result = conn
+            .interact(move |c| {
+                region_mapping::table
+                    .select(count_star())
+                    .first::<i64>(c)
+            })
+            .await??;
+        
+        Ok(result)
+    }
+
+    async fn count_regions_without_batches(
+        &self,
+        database_url: &str,
+    ) -> Result<i64, Self::Error> {
+        use crate::schema::{region_mapping, region_processing_batches};
+        use diesel::dsl::{count_star, not, exists};
+        
+        let conn = self.pool(database_url).await?.get().await?;
+        let result = conn
+            .interact(move |c| {
+                region_mapping::table
+                    .filter(not(exists(
+                        region_processing_batches::table
+                            .filter(region_processing_batches::region_id.eq(region_mapping::id))
+                    )))
+                    .select(count_star())
+                    .first::<i64>(c)
+            })
+            .await??;
+        
+        Ok(result)
     }
 }

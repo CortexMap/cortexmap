@@ -19,7 +19,8 @@ pub async fn upload<I: DatabaseInfra + S3Infra + Send + Sync + 'static>(
         .collect();
 
     for stream in streams {
-        // TODO: skip if the paper alr exists in the DB.
+        // Note: Could check if paper exists before uploading to avoid duplicates.
+        // Current behavior: re-upload and update database entry.
 
         let pdf_key = determine_pdf_key(&stream.pmc_id, blueprint);
         let metadata_key = determine_metadata_key(&stream.pmc_id, blueprint);

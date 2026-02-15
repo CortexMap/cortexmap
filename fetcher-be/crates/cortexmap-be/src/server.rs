@@ -486,8 +486,6 @@ async fn get_tasks_handler(
     State(server): State<QueueServer>,
     Query(params): Query<GetTasksQuery>,
 ) -> Result<Json<Vec<TaskDetailsResponse>>, AppError> {
-    use crate::proto::ComponentStatus;
-    
     let status = params.status.unwrap_or_else(|| "completed".to_string());
     let limit = params.limit.unwrap_or(100).min(1000); // Cap at 1000
     

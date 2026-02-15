@@ -107,14 +107,14 @@ pub trait BatchManagement: Send + Sync {
     async fn get_queries(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
     ) -> Result<Vec<RegionQuery>, Self::Error>;
     
     /// Insert generated queries for a region
     async fn insert_queries(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
         queries: Vec<String>,
     ) -> Result<Vec<Uuid>, Self::Error>;
     
@@ -122,7 +122,7 @@ pub trait BatchManagement: Send + Sync {
     async fn create_batch(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
         expected_count: i32,
     ) -> Result<Uuid, Self::Error>;
     
@@ -159,27 +159,61 @@ pub trait BatchManagement: Send + Sync {
         content_hash: String,
     ) -> Result<(), Self::Error>;
     
-    /// Get active batch for a region (if any)
+    /// Get active batch for a region
     async fn get_active_batch(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error>;
 }
 
-/// Blanket: any `T: OrchDatabase + EnvInfra + HttpClient + BatchManagement` automatically satisfies `Infra`.
+/// Region mapping information from region_mapping table
+#[derive(Debug, Clone)]
+pub struct RegionMapping {
+    pub id: Uuid,
+    pub region_id: i32,
+    pub name: String,
+    pub acronym: Option<String>,
+}
+
+#[async_trait::async_trait]
+pub trait RegionMappingQueries: Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
+    
+    /// Get region mapping by UUID
+    async fn get_region_mapping(
+        &self,
+        database_url: &str,
+        region_uuid: Uuid,
+    ) -> Result<Option<RegionMapping>, Self::Error>;
+    
+    /// Get total count of regions in region_mapping table
+    async fn get_total_region_count(
+        &self,
+        database_url: &str,
+    ) -> Result<i64, Self::Error>;
+    
+    /// Count regions that have no batches at all
+    async fn count_regions_without_batches(
+        &self,
+        database_url: &str,
+    ) -> Result<i64, Self::Error>;
+}
+
+/// Blanket: any `T: OrchDatabase + EnvInfra + HttpClient + BatchManagement + RegionMappingQueries` automatically satisfies `Infra`.
 pub trait Infra:
    EnvInfra<Error = <Self as Infra>::Error>
    + OrchDatabase<Error = <Self as Infra>::Error>
    + HttpClient<Error = <Self as Infra>::Error>
    + BatchManagement<Error = <Self as Infra>::Error>
+   + RegionMappingQueries<Error = <Self as Infra>::Error>
 {
     type Error: std::error::Error + Send + Sync + 'static;
 }
 
 impl<E, T> Infra for T
 where
-    T: EnvInfra<Error = E> + OrchDatabase<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E>,
+    T: EnvInfra<Error = E> + OrchDatabase<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + RegionMappingQueries<Error = E>,
     E: std::error::Error + Send + Sync + 'static,
 {
     type Error = E;

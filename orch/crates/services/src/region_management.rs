@@ -19,42 +19,20 @@ impl<I> OrchRegionManagement<I> {
 impl<E, I> RegionManagement for OrchRegionManagement<I>
 where
     E: Error + Send + Sync + 'static,
-    I: EnvInfra<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + crate::OrchDatabase<Error = E> + Send + Sync,
+    I: EnvInfra<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + crate::OrchDatabase<Error = E> + crate::RegionMappingQueries<Error = E> + Send + Sync,
 {
     type Error = ServiceError<E>;
 
-    async fn get_summaries(&self, region_id: i32) -> Result<Vec<RegionSummary>, Self::Error> {
-        // Try env var first, fall back to config
-        let brainatlas_url = match self.infra.get_env_var("BRAINATLAS_URL") {
-            Ok(url) => url,
-            Err(_) => {
-                let database_url = self
-                    .infra
-                    .get_env_var("DATABASE_URL")
-                    .map_err(ServiceError::InfraError)?;
-                
-                self.infra
-                    .get_config(&database_url, ConfigKey::BrainatlasBaseUrl)
-                    .await
-                    .map_err(ServiceError::InfraError)?
-                    .ok_or_else(|| ServiceError::ConfigNotFound {
-                        key: "brainatlas_base_url".to_string(),
-                    })?
-            }
-        };
-
-        let url = format!("{}/brainatlas-be/api/search", brainatlas_url.trim_end_matches('/'));
-
-        // TODO: Call brainatlas API to get summaries
+    async fn get_summaries(&self, region_id: Uuid) -> Result<Vec<RegionSummary>, Self::Error> {
         // For now, return empty since brainatlas doesn't have a "get summaries by region_id" endpoint yet
-        // We'll need to add this to brainatlas
-        tracing::warn!(region_id, "get_summaries not yet implemented in brainatlas");
+        // When brainatlas adds the endpoint, we'll call it here
+        tracing::warn!(region_id = %region_id, "get_summaries not yet implemented in brainatlas");
         Ok(vec![])
     }
 
     async fn get_active_batch(
         &self,
-        region_id: i32,
+        region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
         let database_url = self
             .infra
@@ -67,7 +45,7 @@ where
             .map_err(ServiceError::InfraError)
     }
 
-    async fn get_queries(&self, region_id: i32) -> Result<Vec<RegionQuery>, Self::Error> {
+    async fn get_queries(&self, region_id: Uuid) -> Result<Vec<RegionQuery>, Self::Error> {
         let database_url = self
             .infra
             .get_env_var("DATABASE_URL")
@@ -98,7 +76,7 @@ where
 
     async fn store_queries(
         &self,
-        region_id: i32,
+        region_id: Uuid,
         queries: Vec<String>,
     ) -> Result<Vec<Uuid>, Self::Error> {
         let database_url = self
@@ -113,8 +91,7 @@ where
     }
 
     async fn generate_queries(&self, region_name: &str, count: u32) -> Result<Vec<String>, Self::Error> {
-        // TODO: Call LLM to generate queries
-        // For now, generate simple queries
+        // For now, generate simple queries until LLM integration is added
         tracing::info!(region_name, count, "Generating queries for region");
         
         // Placeholder queries until LLM integration is added
@@ -138,5 +115,60 @@ where
             .get_batches_by_status(&database_url, status)
             .await
             .map_err(ServiceError::InfraError)
+    }
+    
+    async fn get_region_name(&self, region_id: Uuid) -> Result<String, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let region = self
+            .infra
+            .get_region_mapping(&database_url, region_id)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .ok_or_else(|| ServiceError::NotFound)?;
+
+        Ok(region.name)
+    }
+    
+    async fn get_total_regions(&self) -> Result<i64, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .get_total_region_count(&database_url)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+    
+    async fn count_regions_without_batches(&self) -> Result<i64, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .count_regions_without_batches(&database_url)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+    
+    async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let value = self
+            .infra
+            .get_config(&database_url, ConfigKey::QueryGenerationLimit)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        Ok(value.and_then(|v| v.parse::<u32>().ok()))
     }
 }

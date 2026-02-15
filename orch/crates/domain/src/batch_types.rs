@@ -35,7 +35,7 @@ impl From<&str> for QuerySource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegionQuery {
     pub id: Uuid,
-    pub region_id: i32,
+    pub region_id: Uuid,
     pub query_text: String,
     pub source: QuerySource,
     pub priority: i32,
@@ -85,10 +85,11 @@ impl From<&str> for BatchStatus {
 }
 
 /// Processing batch tracking
+/// Batch processing tracker
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessingBatch {
     pub id: Uuid,
-    pub region_id: i32,
+    pub region_id: Uuid,
     pub status: BatchStatus,
     pub fetch_task_ids: Vec<i64>,
     pub expected_task_count: i32,

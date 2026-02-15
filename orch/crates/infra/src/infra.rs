@@ -114,7 +114,7 @@ impl BatchManagement for OrchInfra {
     async fn get_queries(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
     ) -> Result<Vec<RegionQuery>, Self::Error> {
         self.pg.get_queries(database_url, region_id).await
     }
@@ -122,7 +122,7 @@ impl BatchManagement for OrchInfra {
     async fn insert_queries(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
         queries: Vec<String>,
     ) -> Result<Vec<Uuid>, Self::Error> {
         self.pg.insert_queries(database_url, region_id, queries).await
@@ -131,7 +131,7 @@ impl BatchManagement for OrchInfra {
     async fn create_batch(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
         expected_count: i32,
     ) -> Result<Uuid, Self::Error> {
         self.pg.create_batch(database_url, region_id, expected_count).await
@@ -177,8 +177,35 @@ impl BatchManagement for OrchInfra {
     async fn get_active_batch(
         &self,
         database_url: &str,
-        region_id: i32,
+        region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
         self.pg.get_active_batch(database_url, region_id).await
+    }
+}
+
+#[async_trait::async_trait]
+impl services::RegionMappingQueries for OrchInfra {
+    type Error = InfraError;
+
+    async fn get_region_mapping(
+        &self,
+        database_url: &str,
+        region_uuid: Uuid,
+    ) -> Result<Option<services::RegionMapping>, Self::Error> {
+        self.pg.get_region_mapping(database_url, region_uuid).await
+    }
+
+    async fn get_total_region_count(
+        &self,
+        database_url: &str,
+    ) -> Result<i64, Self::Error> {
+        self.pg.get_total_region_count(database_url).await
+    }
+
+    async fn count_regions_without_batches(
+        &self,
+        database_url: &str,
+    ) -> Result<i64, Self::Error> {
+        self.pg.count_regions_without_batches(database_url).await
     }
 }
