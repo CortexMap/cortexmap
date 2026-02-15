@@ -141,12 +141,15 @@ async fn enqueue_query_handler(
     blueprint.fetcher.max_retry_attempts = req.max_retry_attempts;
 
     match enqueue_query(&blueprint, server.ctx.clone()).await {
-        Ok(pmc_ids) => {
-            info!("Successfully enqueued {} tasks", pmc_ids.len());
+        Ok(results) => {
+            info!("Successfully enqueued {} tasks", results.len());
+            let pmc_ids: Vec<String> = results.iter().map(|(pmc, _)| pmc.clone()).collect();
+            let task_ids: Vec<i64> = results.iter().map(|(_, id)| *id).collect();
             Ok(Json(EnqueueResponse {
                 success: true,
-                tasks_enqueued: pmc_ids.len() as u32,
+                tasks_enqueued: results.len() as u32,
                 pmc_ids,
+                task_ids,
                 error_message: String::new(),
             }))
         }
@@ -156,6 +159,7 @@ async fn enqueue_query_handler(
                 success: false,
                 tasks_enqueued: 0,
                 pmc_ids: vec![],
+                task_ids: vec![],
                 error_message: e.to_string(),
             }))
         }

@@ -96,3 +96,24 @@ pub struct ConfigEntryUpdate {
     pub key: String,
     pub value: String,
 }
+
+/// Brain region from region_mapping table
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Region {
+    pub id: Uuid,
+    pub region_id: i32,
+    pub name: String,
+    pub acronym: Option<String>,
+    pub color: Option<RegionColor>,
+    pub structure_order: Option<i32>,
+    pub parent_region_id: Option<i32>,
+    pub parent_acronym: Option<String>,
+}
+
+/// RGB color representation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegionColor {
+    pub red: i32,
+    pub green: i32,
+    pub blue: i32,
+}

@@ -285,4 +285,9 @@ where
     pub async fn update_config(&self, entries: Vec<ConfigEntryUpdate>) -> Result<Vec<ConfigEntry>, E> {
         self.services.update_config(entries).await.map_err(|e| e.into())
     }
+    
+    /// Get all brain regions from region_mapping
+    pub async fn get_all_regions(&self) -> Result<Vec<domain::Region>, E> {
+        self.services.get_all_regions().await.map_err(|e| e.into())
+    }
 }

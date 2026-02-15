@@ -55,6 +55,9 @@ pub trait RegionManagement: Send + Sync {
     
     /// Get query generation limit from config (or default)
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error>;
+    
+    /// Get all regions from region_mapping
+    async fn get_all_regions(&self) -> Result<Vec<domain::Region>, Self::Error>;
 }
 
 /// Trait for managing batches and fetcher integration
@@ -84,11 +87,24 @@ pub trait ConfigManagement: Send + Sync {
     async fn update_config(&self, entries: Vec<ConfigEntryUpdate>) -> Result<Vec<ConfigEntry>, Self::Error>;
 }
 
+/// Trait for service health checks
+#[async_trait::async_trait]
+pub trait HealthCheck: Send + Sync {
+    type Error: Error + Send + Sync;
+    
+    /// Check if the fetcher service is healthy
+    async fn fetcher_health(&self) -> Result<(), Self::Error>;
+    
+    /// Check if the brainatlas service is healthy
+    async fn brainatlas_health(&self) -> Result<(), Self::Error>;
+}
+
 pub trait Services: 
     CompletionOrchestrator<Error = <Self as Services>::Error>
     + RegionManagement<Error = <Self as Services>::Error>
     + BatchOrchestration<Error = <Self as Services>::Error>
     + ConfigManagement<Error = <Self as Services>::Error>
+    + HealthCheck<Error = <Self as Services>::Error>
 {
     type Error: Error + Send + Sync;
 }
@@ -98,7 +114,8 @@ where
     T: CompletionOrchestrator<Error = E>
         + RegionManagement<Error = E>
         + BatchOrchestration<Error = E>
-        + ConfigManagement<Error = E>,
+        + ConfigManagement<Error = E>
+        + HealthCheck<Error = E>,
     E: Error + Send + Sync,
 {
     type Error = E;

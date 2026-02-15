@@ -1,8 +1,8 @@
 use api::{ApiError, Orch, OrchApi};
 use app::AppError;
+use axum::extract::{Path, State};
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::extract::{Path, State};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use infra::{InfraError, OrchInfra};
@@ -56,9 +56,13 @@ impl OrchServer {
 
         let api_routes = Router::new()
             .route("/health", get(health_handler))
-            .route("/api/regions/:id/search", post(search_region_handler))
-            .route("/api/regions/:id/status", get(get_region_status_handler))
-            .route("/api/regions/:id/invalidate", post(invalidate_region_handler))
+            .route("/api/regions", get(get_all_regions_handler))
+            .route("/api/regions/{id}/search", post(search_region_handler))
+            .route("/api/regions/{id}/status", get(get_region_status_handler))
+            .route(
+                "/api/regions/{id}/invalidate",
+                post(invalidate_region_handler),
+            )
             .route("/api/pipeline/stats", get(get_pipeline_stats_handler))
             .route("/api/config", get(get_config_handler))
             .route("/api/config", patch(update_config_handler))
@@ -99,7 +103,7 @@ async fn search_region_handler(
     State(server): State<OrchServer>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<impl IntoResponse, ServerError> {
-    let result = (*server.api).search_region(id).await?;
+    let result = server.api.search_region(id).await?;
     Ok(Json(result))
 }
 
@@ -107,7 +111,7 @@ async fn get_region_status_handler(
     State(server): State<OrchServer>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<impl IntoResponse, ServerError> {
-    let result = (*server.api).get_region_status(id).await?;
+    let result = server.api.get_region_status(id).await?;
     Ok(Json(result))
 }
 
@@ -116,21 +120,21 @@ async fn invalidate_region_handler(
     Path(id): Path<uuid::Uuid>,
 ) -> Result<impl IntoResponse, ServerError> {
     // Priority could be added as query param later if needed
-    let result = (*server.api).invalidate_region(id, None).await?;
+    let result = server.api.invalidate_region(id, None).await?;
     Ok(Json(result))
 }
 
 async fn get_pipeline_stats_handler(
     State(server): State<OrchServer>,
 ) -> Result<impl IntoResponse, ServerError> {
-    let result = (*server.api).get_pipeline_stats().await?;
+    let result = server.api.get_pipeline_stats().await?;
     Ok(Json(result))
 }
 
 async fn get_config_handler(
     State(server): State<OrchServer>,
 ) -> Result<impl IntoResponse, ServerError> {
-    let result = (*server.api).get_config().await?;
+    let result = server.api.get_config().await?;
     Ok(Json(result))
 }
 
@@ -138,6 +142,13 @@ async fn update_config_handler(
     State(server): State<OrchServer>,
     Json(body): Json<Vec<domain::ConfigEntryUpdate>>,
 ) -> Result<impl IntoResponse, ServerError> {
-    let result = (*server.api).update_config(body).await?;
+    let result = server.api.update_config(body).await?;
+    Ok(Json(result))
+}
+
+async fn get_all_regions_handler(
+    State(server): State<OrchServer>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_all_regions().await?;
     Ok(Json(result))
 }

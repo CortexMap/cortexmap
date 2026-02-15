@@ -80,6 +80,7 @@ message EnqueueResponse {
   uint32 tasks_enqueued = 2;
   repeated string pmc_ids = 3;
   string error_message = 4;
+  repeated int64 task_ids = 5;  // Task IDs corresponding to pmc_ids (for batch linking)
 }
 
 // Request for queue status

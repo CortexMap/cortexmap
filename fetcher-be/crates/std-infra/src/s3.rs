@@ -54,13 +54,7 @@ impl S3Infra for StdS3Infra {
             .content_type(content_type.to_string())
             .send()
             .await;
-        
-        // Enhanced error logging
-        if let Err(e) = &result {
-            eprintln!("S3 PUT ERROR for key '{}': {:?}", key, e);
-            eprintln!("Error details: {}", e);
-        }
-        
+
         result?;
 
         Ok(())

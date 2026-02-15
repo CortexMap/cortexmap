@@ -23,4 +23,7 @@ pub enum ServiceError<E: std::error::Error + Send + Sync + 'static> {
     
     #[error("invalid configuration: {reason}")]
     InvalidConfig { reason: String },
+    
+    #[error("external service error: {message}")]
+    External { message: String },
 }

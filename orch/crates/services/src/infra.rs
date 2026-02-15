@@ -96,6 +96,9 @@ pub trait HttpClient: Send + Sync {
         url: &str,
         body: &Req,
     ) -> Result<Res, Self::Error>;
+    
+    /// Check if a service is healthy by calling its health endpoint
+    async fn check_health(&self, base_url: &str, service_name: &str) -> Result<(), Self::Error>;
 }
 
 /// Batch management for region processing
@@ -141,6 +144,20 @@ pub trait BatchManagement: Send + Sync {
         status: BatchStatus,
     ) -> Result<Vec<ProcessingBatch>, Self::Error>;
     
+    /// Count completed fetch tasks from a list of task IDs
+    async fn count_completed_tasks(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<usize, Self::Error>;
+    
+    /// Get S3 keys for completed fetch tasks
+    async fn get_task_s3_keys(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<Vec<String>, Self::Error>;
+    
     /// Update batch status
     async fn update_batch_status(
         &self,
@@ -155,8 +172,6 @@ pub trait BatchManagement: Send + Sync {
         &self,
         database_url: &str,
         batch_id: Uuid,
-        summary_id: Uuid,
-        content_hash: String,
     ) -> Result<(), Self::Error>;
     
     /// Get active batch for a region
@@ -174,6 +189,20 @@ pub struct RegionMapping {
     pub region_id: i32,
     pub name: String,
     pub acronym: Option<String>,
+    pub red: Option<i32>,
+    pub green: Option<i32>,
+    pub blue: Option<i32>,
+    pub structure_order: Option<i32>,
+    pub parent_region_id: Option<i32>,
+    pub parent_acronym: Option<String>,
+}
+
+/// Region summary record from database
+#[derive(Debug, Clone)]
+pub struct RegionSummaryRecord {
+    pub id: Uuid,
+    pub summary: Option<String>,
+    pub created_at: chrono::NaiveDateTime,
 }
 
 #[async_trait::async_trait]
@@ -187,6 +216,12 @@ pub trait RegionMappingQueries: Send + Sync {
         region_uuid: Uuid,
     ) -> Result<Option<RegionMapping>, Self::Error>;
     
+    /// Get all regions from region_mapping table
+    async fn get_all_regions(
+        &self,
+        database_url: &str,
+    ) -> Result<Vec<RegionMapping>, Self::Error>;
+    
     /// Get total count of regions in region_mapping table
     async fn get_total_region_count(
         &self,
@@ -198,6 +233,13 @@ pub trait RegionMappingQueries: Send + Sync {
         &self,
         database_url: &str,
     ) -> Result<i64, Self::Error>;
+    
+    /// Get region summaries by region_id (Int4)
+    async fn get_region_summaries(
+        &self,
+        database_url: &str,
+        region_id: i32,
+    ) -> Result<Vec<RegionSummaryRecord>, Self::Error>;
 }
 
 /// Blanket: any `T: OrchDatabase + EnvInfra + HttpClient + BatchManagement + RegionMappingQueries` automatically satisfies `Infra`.

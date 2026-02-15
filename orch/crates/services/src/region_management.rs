@@ -24,10 +24,37 @@ where
     type Error = ServiceError<E>;
 
     async fn get_summaries(&self, region_id: Uuid) -> Result<Vec<RegionSummary>, Self::Error> {
-        // For now, return empty since brainatlas doesn't have a "get summaries by region_id" endpoint yet
-        // When brainatlas adds the endpoint, we'll call it here
-        tracing::warn!(region_id = %region_id, "get_summaries not yet implemented in brainatlas");
-        Ok(vec![])
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        // First get the region mapping to find the Int4 region_id
+        let region_mapping = self
+            .infra
+            .get_region_mapping(&database_url, region_id)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .ok_or_else(|| ServiceError::NotFound)?;
+
+        // Query the region_summary table directly
+        let summaries = self
+            .infra
+            .get_region_summaries(&database_url, region_mapping.region_id)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        // Convert to domain::RegionSummary
+        Ok(summaries
+            .into_iter()
+            .map(|s| RegionSummary {
+                summary: s.summary.unwrap_or_default(),
+                created_at: chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                    s.created_at,
+                    chrono::Utc,
+                ),
+            })
+            .collect())
     }
 
     async fn get_active_batch(
@@ -170,5 +197,36 @@ where
             .map_err(ServiceError::InfraError)?;
 
         Ok(value.and_then(|v| v.parse::<u32>().ok()))
+    }
+    
+    async fn get_all_regions(&self) -> Result<Vec<domain::Region>, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let regions = self
+            .infra
+            .get_all_regions(&database_url)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        Ok(regions
+            .into_iter()
+            .map(|r| domain::Region {
+                id: r.id,
+                region_id: r.region_id,
+                name: r.name,
+                acronym: r.acronym,
+                color: if let (Some(red), Some(green), Some(blue)) = (r.red, r.green, r.blue) {
+                    Some(domain::RegionColor { red, green, blue })
+                } else {
+                    None
+                },
+                structure_order: r.structure_order,
+                parent_region_id: r.parent_region_id,
+                parent_acronym: r.parent_acronym,
+            })
+            .collect())
     }
 }

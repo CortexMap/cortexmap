@@ -29,15 +29,18 @@ pub struct TaskComponentsResponse {
 
 // Brainatlas API types
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UuidWrapper {
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessRegionRequest {
-    pub region_id: String,
+    pub region_id: UuidWrapper,
     pub s3_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessRegionResponse {
-    pub region_id: String,
-    pub summary_id: Uuid,
-    pub content_hash: String,
+    pub region_id: UuidWrapper,
     pub detail: String,
 }

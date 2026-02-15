@@ -14,18 +14,33 @@ impl<I> OrchBatchOrchestration<I> {
     pub fn new(infra: Arc<I>) -> Self {
         Self { infra }
     }
+
+    /// Normalize HTTP address to full URL
+    /// Converts "0.0.0.0:8080" to "http://localhost:8080"
+    fn normalize_url(addr: &str) -> String {
+        if addr.starts_with("http://") || addr.starts_with("https://") {
+            addr.to_string()
+        } else {
+            let host_port = addr.replace("0.0.0.0", "localhost");
+            format!("http://{}", host_port)
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
 struct EnqueueRequest {
     query: String,
-    region_id: Option<Uuid>,
-    priority: Option<i32>,
+    page_size: u32,
+    max_retry_attempts: u32,
 }
 
 #[derive(Debug, Deserialize)]
 struct EnqueueResponse {
-    task_id: i64,
+    success: bool,
+    tasks_enqueued: u32,
+    pmc_ids: Vec<String>,
+    task_ids: Vec<i64>,
+    error_message: String,
 }
 
 #[async_trait::async_trait]
@@ -52,11 +67,11 @@ where
         &self,
         query: String,
         region_id: Uuid,
-        priority: i32,
+        _priority: i32,
     ) -> Result<i64, Self::Error> {
         // Try env var first, fall back to config
-        let fetcher_url = match self.infra.get_env_var("FETCHER_URL") {
-            Ok(url) => url,
+        let fetcher_url = match self.infra.get_env_var("FETCHER_HTTP_ADDR") {
+            Ok(addr) => Self::normalize_url(&addr),
             Err(_) => {
                 let database_url = self
                     .infra
@@ -73,13 +88,15 @@ where
             }
         };
 
-        let url = format!("{}/api/queue/enqueue", fetcher_url.trim_end_matches('/'));
+        let url = format!("{}/fetcher-be/api/queue/enqueue", fetcher_url.trim_end_matches('/'));
 
         let request = EnqueueRequest {
-            query,
-            region_id: Some(region_id),
-            priority: Some(priority),
+            query: query.clone(),
+            page_size: 20, // Get up to 20 papers per query
+            max_retry_attempts: 3,
         };
+
+        tracing::info!(url = %url, region_id = %region_id, query = %request.query, "Calling fetcher enqueue");
 
         let response: EnqueueResponse = self
             .infra
@@ -87,9 +104,23 @@ where
             .await
             .map_err(ServiceError::InfraError)?;
 
-        tracing::info!(task_id = response.task_id, region_id = %region_id, "Enqueued fetch task");
+        if !response.success {
+            return Err(ServiceError::External {
+                message: format!("Fetcher enqueue failed: {}", response.error_message),
+            });
+        }
 
-        Ok(response.task_id)
+        tracing::info!(
+            tasks_enqueued = response.tasks_enqueued,
+            pmc_count = response.pmc_ids.len(),
+            task_ids_count = response.task_ids.len(),
+            region_id = %region_id,
+            "Successfully enqueued fetch tasks"
+        );
+
+        // Return the first task ID (or 0 if none)
+        // The app layer will collect all task IDs from multiple queries
+        Ok(response.task_ids.first().copied().unwrap_or(0))
     }
 
     async fn add_tasks_to_batch(&self, batch_id: Uuid, task_ids: Vec<i64>) -> Result<(), Self::Error> {

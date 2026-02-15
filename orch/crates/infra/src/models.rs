@@ -194,6 +194,38 @@ impl From<RegionMappingRow> for services::RegionMapping {
             region_id: row.region_id,
             name: row.name,
             acronym: row.acronym,
+            red: row.red,
+            green: row.green,
+            blue: row.blue,
+            structure_order: row.structure_order,
+            parent_region_id: row.parent_region_id,
+            parent_acronym: row.parent_acronym,
+        }
+    }
+}
+
+// Region Summary Models
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = crate::schema::region_summary)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct RegionSummaryRow {
+    pub id: Uuid,
+    pub region_id: i32,
+    pub name: String,
+    pub acronym: Option<String>,
+    pub summary: Option<String>,
+    pub created_at: Option<NaiveDateTime>,
+    pub content_hash: Option<String>,
+}
+
+impl From<RegionSummaryRow> for services::RegionSummaryRecord {
+    fn from(row: RegionSummaryRow) -> Self {
+        use chrono::Utc;
+        Self {
+            id: row.id,
+            summary: row.summary,
+            created_at: row.created_at.unwrap_or_else(|| Utc::now().naive_utc()),
         }
     }
 }

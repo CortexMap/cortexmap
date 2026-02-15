@@ -2,8 +2,8 @@ use crate::batch_orchestration::OrchBatchOrchestration;
 use crate::completion_watcher::CompletionWatcher;
 use crate::config_management::OrchConfigManagement;
 use crate::region_management::OrchRegionManagement;
-use crate::{Infra, ServiceError};
-use app::{BatchOrchestration, CompletionOrchestrator, ConfigManagement, RegionManagement};
+use crate::{Infra, ServiceError, EnvInfra, HttpClient};
+use app::{BatchOrchestration, CompletionOrchestrator, ConfigManagement, RegionManagement, HealthCheck};
 use domain::{
     ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary,
 };
@@ -16,6 +16,7 @@ pub struct OrchServices<I> {
     region_management: OrchRegionManagement<I>,
     batch_orchestration: OrchBatchOrchestration<I>,
     config_management: OrchConfigManagement<I>,
+    infra: Arc<I>,
 }
 
 impl<I: Infra> OrchServices<I> {
@@ -23,12 +24,13 @@ impl<I: Infra> OrchServices<I> {
         let completion_watcher = CompletionWatcher::new(infra.clone());
         let region_management = OrchRegionManagement::new(infra.clone());
         let batch_orchestration = OrchBatchOrchestration::new(infra.clone());
-        let config_management = OrchConfigManagement::new(infra);
+        let config_management = OrchConfigManagement::new(infra.clone());
         Self {
             completion_watcher,
             region_management,
             batch_orchestration,
             config_management,
+            infra,
         }
     }
 }
@@ -130,6 +132,10 @@ where
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error> {
         self.region_management.get_query_generation_limit().await
     }
+    
+    async fn get_all_regions(&self) -> Result<Vec<domain::Region>, Self::Error> {
+        self.region_management.get_all_regions().await
+    }
 }
 
 #[async_trait::async_trait]
@@ -189,5 +195,64 @@ where
         self.batch_orchestration
             .add_tasks_to_batch(batch_id, task_ids)
             .await
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> HealthCheck for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn fetcher_health(&self) -> Result<(), Self::Error> {
+        // Normalize URL helper
+        fn normalize_url(addr: &str) -> String {
+            if addr.starts_with("http://") || addr.starts_with("https://") {
+                addr.to_string()
+            } else {
+                let replaced = addr.replace("0.0.0.0", "localhost");
+                format!("http://{}", replaced)
+            }
+        }
+        
+        let fetcher_addr = self.infra
+            .get_env_var("FETCHER_HTTP_ADDR")
+            .map_err(|e| ServiceError::ConfigNotFound {
+                key: format!("FETCHER_HTTP_ADDR environment variable: {}", e),
+            })?;
+        
+        let fetcher_url = format!("{}/fetcher-be", normalize_url(&fetcher_addr));
+        
+        self.infra
+            .check_health(&fetcher_url, "fetcher")
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+
+    async fn brainatlas_health(&self) -> Result<(), Self::Error> {
+        // Normalize URL helper
+        fn normalize_url(addr: &str) -> String {
+            if addr.starts_with("http://") || addr.starts_with("https://") {
+                addr.to_string()
+            } else {
+                let replaced = addr.replace("0.0.0.0", "localhost");
+                format!("http://{}", replaced)
+            }
+        }
+        
+        let brainatlas_addr = self.infra
+            .get_env_var("BRAINATLAS_HTTP_ADDR")
+            .map_err(|e| ServiceError::ConfigNotFound {
+                key: format!("BRAINATLAS_HTTP_ADDR environment variable: {}", e),
+            })?;
+        
+        let brainatlas_url = format!("{}/brainatlas-be", normalize_url(&brainatlas_addr));
+        
+        self.infra
+            .check_health(&brainatlas_url, "brainatlas")
+            .await
+            .map_err(ServiceError::InfraError)
     }
 }

@@ -1,5 +1,5 @@
 use domain::{
-    ConfigEntry, ConfigEntryUpdate, InvalidateResult, PipelineStatsResult, Priority,
+    ConfigEntry, ConfigEntryUpdate, InvalidateResult, PipelineStatsResult, Priority, Region,
     RegionStatusResult, SearchRegionResult,
 };
 use uuid::Uuid;
@@ -38,4 +38,13 @@ pub trait OrchApi: Send + Sync {
     
     /// Update one or more config entries at runtime without restart
     async fn update_config(&self, entries: Vec<ConfigEntryUpdate>) -> Result<Vec<ConfigEntry>, Self::Error>;
+    
+    /// Get all brain regions from region_mapping table
+    async fn get_all_regions(&self) -> Result<Vec<Region>, Self::Error>;
+    
+    /// Health check for fetcher service
+    async fn fetcher_health(&self) -> Result<(), Self::Error>;
+    
+    /// Health check for brainatlas service
+    async fn brainatlas_health(&self) -> Result<(), Self::Error>;
 }

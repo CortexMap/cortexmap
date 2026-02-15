@@ -393,8 +393,6 @@ impl BatchManagement for OrchPostgresql {
         &self,
         database_url: &str,
         batch_id: Uuid,
-        summary_id: Uuid,
-        content_hash: String,
     ) -> Result<(), Self::Error> {
         use crate::schema::region_processing_batches;
         use diesel::dsl::now;
@@ -404,8 +402,6 @@ impl BatchManagement for OrchPostgresql {
             diesel::update(region_processing_batches::table.find(batch_id))
                 .set((
                     region_processing_batches::status.eq("completed"),
-                    region_processing_batches::summary_id.eq(summary_id),
-                    region_processing_batches::content_hash.eq(content_hash),
                     region_processing_batches::completed_at.eq(now),
                 ))
                 .execute(c)
@@ -439,6 +435,54 @@ impl BatchManagement for OrchPostgresql {
         
         Ok(result.map(Into::into))
     }
+    
+    async fn count_completed_tasks(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<usize, Self::Error> {
+        use crate::schema::fetch_tasks::dsl;
+        use diesel::prelude::*;
+        
+        let task_ids_vec = task_ids.to_vec();
+        let conn = self.pool(database_url).await?.get().await?;
+        
+        let count = conn
+            .interact(move |c| {
+                dsl::fetch_tasks
+                    .filter(dsl::id.eq_any(task_ids_vec))
+                    .filter(dsl::status.eq("completed"))
+                    .count()
+                    .get_result::<i64>(c)
+            })
+            .await??;
+        
+        Ok(count as usize)
+    }
+    
+    async fn get_task_s3_keys(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<Vec<String>, Self::Error> {
+        use crate::schema::fetch_task_components::dsl;
+        use diesel::prelude::*;
+        
+        let task_ids_vec = task_ids.to_vec();
+        let conn = self.pool(database_url).await?.get().await?;
+        
+        let s3_keys = conn
+            .interact(move |c| {
+                dsl::fetch_task_components
+                    .filter(dsl::task_id.eq_any(task_ids_vec))
+                    .filter(dsl::s3_key.is_not_null())
+                    .select(dsl::s3_key)
+                    .load::<Option<String>>(c)
+            })
+            .await??;
+        
+        Ok(s3_keys.into_iter().flatten().collect())
+    }
 }
 
 #[async_trait::async_trait]
@@ -464,6 +508,25 @@ impl services::RegionMappingQueries for OrchPostgresql {
             .await??;
         
         Ok(result.map(Into::into))
+    }
+
+    async fn get_all_regions(
+        &self,
+        database_url: &str,
+    ) -> Result<Vec<services::RegionMapping>, Self::Error> {
+        use crate::schema::region_mapping;
+        use crate::models::RegionMappingRow;
+        
+        let conn = self.pool(database_url).await?.get().await?;
+        let results = conn
+            .interact(move |c| {
+                region_mapping::table
+                    .order(region_mapping::name.asc())
+                    .load::<RegionMappingRow>(c)
+            })
+            .await??;
+        
+        Ok(results.into_iter().map(Into::into).collect())
     }
 
     async fn get_total_region_count(
@@ -506,5 +569,26 @@ impl services::RegionMappingQueries for OrchPostgresql {
             .await??;
         
         Ok(result)
+    }
+
+    async fn get_region_summaries(
+        &self,
+        database_url: &str,
+        region_id: i32,
+    ) -> Result<Vec<services::RegionSummaryRecord>, Self::Error> {
+        use crate::schema::region_summary;
+        use crate::models::RegionSummaryRow;
+        
+        let conn = self.pool(database_url).await?.get().await?;
+        let summaries = conn
+            .interact(move |c| {
+                region_summary::table
+                    .filter(region_summary::region_id.eq(region_id))
+                    .order(region_summary::created_at.desc())
+                    .load::<RegionSummaryRow>(c)
+            })
+            .await??;
+        
+        Ok(summaries.into_iter().map(Into::into).collect())
     }
 }

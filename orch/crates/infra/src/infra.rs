@@ -105,6 +105,10 @@ impl HttpClient for OrchInfra {
     ) -> Result<Res, Self::Error> {
         self.http.post(url, body).await
     }
+    
+    async fn check_health(&self, base_url: &str, service_name: &str) -> Result<(), Self::Error> {
+        self.http.check_health(base_url, service_name).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -168,10 +172,8 @@ impl BatchManagement for OrchInfra {
         &self,
         database_url: &str,
         batch_id: Uuid,
-        summary_id: Uuid,
-        content_hash: String,
     ) -> Result<(), Self::Error> {
-        self.pg.complete_batch(database_url, batch_id, summary_id, content_hash).await
+        self.pg.complete_batch(database_url, batch_id).await
     }
 
     async fn get_active_batch(
@@ -180,6 +182,22 @@ impl BatchManagement for OrchInfra {
         region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
         self.pg.get_active_batch(database_url, region_id).await
+    }
+    
+    async fn count_completed_tasks(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<usize, Self::Error> {
+        self.pg.count_completed_tasks(database_url, task_ids).await
+    }
+    
+    async fn get_task_s3_keys(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<Vec<String>, Self::Error> {
+        self.pg.get_task_s3_keys(database_url, task_ids).await
     }
 }
 
@@ -195,6 +213,13 @@ impl services::RegionMappingQueries for OrchInfra {
         self.pg.get_region_mapping(database_url, region_uuid).await
     }
 
+    async fn get_all_regions(
+        &self,
+        database_url: &str,
+    ) -> Result<Vec<services::RegionMapping>, Self::Error> {
+        self.pg.get_all_regions(database_url).await
+    }
+
     async fn get_total_region_count(
         &self,
         database_url: &str,
@@ -207,5 +232,13 @@ impl services::RegionMappingQueries for OrchInfra {
         database_url: &str,
     ) -> Result<i64, Self::Error> {
         self.pg.count_regions_without_batches(database_url).await
+    }
+
+    async fn get_region_summaries(
+        &self,
+        database_url: &str,
+        region_id: i32,
+    ) -> Result<Vec<services::RegionSummaryRecord>, Self::Error> {
+        self.pg.get_region_summaries(database_url, region_id).await
     }
 }

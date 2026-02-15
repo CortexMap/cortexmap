@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let addr: std::net::SocketAddr = std::env::var("HTTP_ADDR")
+    let addr: std::net::SocketAddr = std::env::var("BRAINATLAS_HTTP_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8081".to_string())
         .parse()?;
 

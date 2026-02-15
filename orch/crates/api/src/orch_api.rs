@@ -1,7 +1,7 @@
 use crate::{ApiError, OrchApi};
 use app::{AppError, OrchApp, Services};
 use domain::{
-    ConfigEntry, ConfigEntryUpdate, InvalidateResult, PipelineStatsResult, Priority,
+    ConfigEntry, ConfigEntryUpdate, InvalidateResult, PipelineStatsResult, Priority, Region,
     RegionStatusResult, SearchRegionResult,
 };
 use std::sync::Arc;
@@ -83,6 +83,27 @@ where
     ) -> Result<Vec<ConfigEntry>, Self::Error> {
         self.app()
             .update_config(entries)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_all_regions(&self) -> Result<Vec<Region>, Self::Error> {
+        self.app()
+            .get_all_regions()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+    
+    async fn fetcher_health(&self) -> Result<(), Self::Error> {
+        self.services
+            .fetcher_health()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+    
+    async fn brainatlas_health(&self) -> Result<(), Self::Error> {
+        self.services
+            .brainatlas_health()
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
