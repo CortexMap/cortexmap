@@ -16,6 +16,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "com.cortexmap.StatusResponse",
         "com.cortexmap.ProcessRegionRequest",
         "com.cortexmap.ProcessRegionResponse",
+        "com.cortexmap.GenerateQueriesRequest",
+        "com.cortexmap.GenerateQueriesResponse",
         "com.cortexmap.Status",
     ];
 

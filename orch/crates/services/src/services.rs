@@ -2,10 +2,13 @@ use crate::batch_orchestration::OrchBatchOrchestration;
 use crate::completion_watcher::CompletionWatcher;
 use crate::config_management::OrchConfigManagement;
 use crate::region_management::OrchRegionManagement;
-use crate::{Infra, ServiceError, EnvInfra, HttpClient};
-use app::{BatchOrchestration, CompletionOrchestrator, ConfigManagement, RegionManagement, HealthCheck};
+use crate::{Infra, ServiceError};
+use app::{
+    BatchOrchestration, CompletionOrchestrator, ConfigManagement, HealthCheck, RegionManagement,
+};
 use domain::{
-    ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary,
+    ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult,
+    ProcessingBatch, RegionQuery, RegionSummary,
 };
 use std::error::Error;
 use std::sync::Arc;
@@ -75,6 +78,13 @@ where
         self.region_management.get_active_batch(region_id).await
     }
 
+    async fn get_recent_batch(
+        &self,
+        region_id: Uuid,
+    ) -> Result<Option<ProcessingBatch>, Self::Error> {
+        self.region_management.get_recent_batch(region_id).await
+    }
+
     async fn get_queries(&self, region_id: Uuid) -> Result<Vec<RegionQuery>, Self::Error> {
         self.region_management.get_queries(region_id).await
     }
@@ -116,25 +126,29 @@ where
     ) -> Result<Vec<domain::ProcessingBatch>, Self::Error> {
         self.region_management.get_batches_by_status(status).await
     }
-    
+
     async fn get_region_name(&self, region_id: Uuid) -> Result<String, Self::Error> {
         self.region_management.get_region_name(region_id).await
     }
-    
+
     async fn get_total_regions(&self) -> Result<i64, Self::Error> {
         self.region_management.get_total_regions().await
     }
-    
+
     async fn count_regions_without_batches(&self) -> Result<i64, Self::Error> {
         self.region_management.count_regions_without_batches().await
     }
-    
+
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error> {
         self.region_management.get_query_generation_limit().await
     }
-    
+
     async fn get_all_regions(&self) -> Result<Vec<domain::Region>, Self::Error> {
         self.region_management.get_all_regions().await
+    }
+    
+    async fn delete_queries(&self, region_id: Uuid) -> Result<(), Self::Error> {
+        self.region_management.delete_queries(region_id).await
     }
 }
 
@@ -181,7 +195,7 @@ where
         query: String,
         region_id: Uuid,
         priority: i32,
-    ) -> Result<i64, Self::Error> {
+    ) -> Result<Vec<i64>, Self::Error> {
         self.batch_orchestration
             .enqueue_fetch_task(query, region_id, priority)
             .await
@@ -194,6 +208,24 @@ where
     ) -> Result<(), Self::Error> {
         self.batch_orchestration
             .add_tasks_to_batch(batch_id, task_ids)
+            .await
+    }
+
+    async fn update_batch_expected_count(&self, batch_id: Uuid, count: i32) -> Result<(), Self::Error> {
+        self.batch_orchestration
+            .update_batch_expected_count(batch_id, count)
+            .await
+    }
+
+    async fn get_batch_by_id(&self, batch_id: Uuid) -> Result<Option<domain::ProcessingBatch>, Self::Error> {
+        self.batch_orchestration
+            .get_batch_by_id(batch_id)
+            .await
+    }
+
+    async fn ensure_workers_allocated(&self) -> Result<(), Self::Error> {
+        self.batch_orchestration
+            .ensure_workers_allocated()
             .await
     }
 }
@@ -216,15 +248,15 @@ where
                 format!("http://{}", replaced)
             }
         }
-        
-        let fetcher_addr = self.infra
-            .get_env_var("FETCHER_HTTP_ADDR")
-            .map_err(|e| ServiceError::ConfigNotFound {
+
+        let fetcher_addr = self.infra.get_env_var("FETCHER_HTTP_ADDR").map_err(|e| {
+            ServiceError::ConfigNotFound {
                 key: format!("FETCHER_HTTP_ADDR environment variable: {}", e),
-            })?;
-        
+            }
+        })?;
+
         let fetcher_url = format!("{}/fetcher-be", normalize_url(&fetcher_addr));
-        
+
         self.infra
             .check_health(&fetcher_url, "fetcher")
             .await
@@ -241,15 +273,16 @@ where
                 format!("http://{}", replaced)
             }
         }
-        
-        let brainatlas_addr = self.infra
+
+        let brainatlas_addr = self
+            .infra
             .get_env_var("BRAINATLAS_HTTP_ADDR")
             .map_err(|e| ServiceError::ConfigNotFound {
                 key: format!("BRAINATLAS_HTTP_ADDR environment variable: {}", e),
             })?;
-        
+
         let brainatlas_url = format!("{}/brainatlas-be", normalize_url(&brainatlas_addr));
-        
+
         self.infra
             .check_health(&brainatlas_url, "brainatlas")
             .await

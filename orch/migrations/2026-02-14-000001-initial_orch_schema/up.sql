@@ -32,4 +32,6 @@ INSERT INTO orch_config (key, value, description) VALUES
     ('max_parallel_process_calls', '10', 'Max concurrent calls to brainatlas /process'),
     ('summary_staleness_days', '30', 'Consider summaries older than N days stale'),
     ('fetcher_base_url', 'http://localhost:8080', 'Base URL for fetcher-be service'),
-    ('brainatlas_base_url', 'http://localhost:8082', 'Base URL for brainatlas-be service');
+    ('brainatlas_base_url', 'http://localhost:8082', 'Base URL for brainatlas-be service'),
+    ('default_worker_count', '2', 'Default number of workers to allocate when tasks are enqueued'),
+    ('query_generation_limit', '3', 'Number of search queries to generate per brain region');

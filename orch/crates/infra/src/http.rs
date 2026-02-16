@@ -31,7 +31,10 @@ impl HttpClientTrait for OrchHttpClient {
                 response = %error_body,
                 "HTTP GET failed"
             );
-            return Err(InfraError::NotFound);
+            return Err(InfraError::HttpStatus {
+                status: status.as_u16(),
+                body: error_body,
+            });
         }
         
         Ok(response.json().await?)
@@ -53,7 +56,10 @@ impl HttpClientTrait for OrchHttpClient {
                 response = %error_body,
                 "HTTP POST failed"
             );
-            return Err(InfraError::NotFound);
+            return Err(InfraError::HttpStatus {
+                status: status.as_u16(),
+                body: error_body,
+            });
         }
         
         Ok(response.json().await?)

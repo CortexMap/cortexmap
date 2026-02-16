@@ -17,6 +17,12 @@ pub struct OrchInfra {
     http: OrchHttpClient,
 }
 
+impl Default for OrchInfra {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OrchInfra {
     pub fn new() -> Self {
         Self {
@@ -132,6 +138,14 @@ impl BatchManagement for OrchInfra {
         self.pg.insert_queries(database_url, region_id, queries).await
     }
 
+    async fn delete_queries(
+        &self,
+        database_url: &str,
+        region_id: Uuid,
+    ) -> Result<(), Self::Error> {
+        self.pg.delete_queries(database_url, region_id).await
+    }
+
     async fn create_batch(
         &self,
         database_url: &str,
@@ -148,6 +162,23 @@ impl BatchManagement for OrchInfra {
         task_ids: Vec<i64>,
     ) -> Result<(), Self::Error> {
         self.pg.add_tasks_to_batch(database_url, batch_id, task_ids).await
+    }
+
+    async fn update_batch_expected_count(
+        &self,
+        database_url: &str,
+        batch_id: Uuid,
+        expected_count: i32,
+    ) -> Result<(), Self::Error> {
+        self.pg.update_batch_expected_count(database_url, batch_id, expected_count).await
+    }
+
+    async fn get_batch_by_id(
+        &self,
+        database_url: &str,
+        batch_id: Uuid,
+    ) -> Result<Option<ProcessingBatch>, Self::Error> {
+        self.pg.get_batch_by_id(database_url, batch_id).await
     }
 
     async fn get_batches_by_status(
@@ -182,6 +213,14 @@ impl BatchManagement for OrchInfra {
         region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
         self.pg.get_active_batch(database_url, region_id).await
+    }
+    
+    async fn get_recent_batch(
+        &self,
+        database_url: &str,
+        region_id: Uuid,
+    ) -> Result<Option<ProcessingBatch>, Self::Error> {
+        self.pg.get_recent_batch(database_url, region_id).await
     }
     
     async fn count_completed_tasks(

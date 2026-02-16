@@ -57,12 +57,10 @@ impl OrchServer {
         let api_routes = Router::new()
             .route("/health", get(health_handler))
             .route("/api/regions", get(get_all_regions_handler))
-            .route("/api/regions/{id}/search", post(search_region_handler))
+            .route("/api/regions/{id}/summaries", get(list_summaries_handler))
+            .route("/api/regions/{id}/generate", post(generate_summary_handler))
+            .route("/api/batches/{id}/status", get(get_batch_status_handler))
             .route("/api/regions/{id}/status", get(get_region_status_handler))
-            .route(
-                "/api/regions/{id}/invalidate",
-                post(invalidate_region_handler),
-            )
             .route("/api/pipeline/stats", get(get_pipeline_stats_handler))
             .route("/api/config", get(get_config_handler))
             .route("/api/config", patch(update_config_handler))
@@ -99,11 +97,27 @@ async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
 }
 
-async fn search_region_handler(
+async fn list_summaries_handler(
     State(server): State<OrchServer>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<impl IntoResponse, ServerError> {
-    let result = server.api.search_region(id).await?;
+    let result = server.api.list_summaries(id).await?;
+    Ok(Json(result))
+}
+
+async fn generate_summary_handler(
+    State(server): State<OrchServer>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.generate_summary(id).await?;
+    Ok(Json(result))
+}
+
+async fn get_batch_status_handler(
+    State(server): State<OrchServer>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_batch_status(id).await?;
     Ok(Json(result))
 }
 
@@ -112,15 +126,6 @@ async fn get_region_status_handler(
     Path(id): Path<uuid::Uuid>,
 ) -> Result<impl IntoResponse, ServerError> {
     let result = server.api.get_region_status(id).await?;
-    Ok(Json(result))
-}
-
-async fn invalidate_region_handler(
-    State(server): State<OrchServer>,
-    Path(id): Path<uuid::Uuid>,
-) -> Result<impl IntoResponse, ServerError> {
-    // Priority could be added as query param later if needed
-    let result = server.api.invalidate_region(id, None).await?;
     Ok(Json(result))
 }
 

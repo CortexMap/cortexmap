@@ -5,7 +5,7 @@ use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use domain::rpc_types::{ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest};
+use domain::rpc_types::{ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest, GenerateQueriesRequest};
 use infra::{BrainAtlasInfra, InfraError};
 use services::{BrainAtlasServices, ServiceError};
 use std::sync::Arc;
@@ -61,6 +61,7 @@ impl BrainAtlasServer {
             .route("/api/search", post(search_brain_region_handler))
             .route("/api/status", post(status_handler))
             .route("/api/process", post(process_region_handler))
+            .route("/api/generate-queries", post(generate_queries_handler))
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
@@ -129,7 +130,7 @@ async fn status_handler(
     Ok(Json(resp))
 }
 
-/// POST /brainatlas-be/api/process  body: { "region_id": { "value": "<uuid>" }, "s3_keys": ["..."] }
+/// POST /brainatlas-be/api/process  body: { "region_id": { "value": "<uuid>" }, "batch_id": { "value": "<uuid>" }, "s3_keys": ["..."] }
 async fn process_region_handler(
     State(server): State<BrainAtlasServer>,
     Json(body): Json<ProcessRegionRequest>,
@@ -137,9 +138,25 @@ async fn process_region_handler(
     let region_id = body
         .region_id
         .and_then(|u| u.value.parse::<uuid::Uuid>().ok());
+    let batch_id = body
+        .batch_id
+        .and_then(|u| u.value.parse::<uuid::Uuid>().ok());
     let resp = server
         .api
-        .process_region(region_id, body.s3_keys)
+        .process_region(region_id, batch_id, body.s3_keys)
+        .await
+        .map_err(ServerError)?;
+    Ok(Json(resp))
+}
+
+/// POST /brainatlas-be/api/generate-queries  body: { "region_name": "hippocampus", "count": 3 }
+async fn generate_queries_handler(
+    State(server): State<BrainAtlasServer>,
+    Json(body): Json<GenerateQueriesRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let resp = server
+        .api
+        .generate_queries(body.region_name, body.count)
         .await
         .map_err(ServerError)?;
     Ok(Json(resp))

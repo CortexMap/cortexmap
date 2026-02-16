@@ -31,6 +31,8 @@ pub enum InfraError {
     NotFound,
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
+    #[error("HTTP {status}: {body}")]
+    HttpStatus { status: u16, body: String },
 }
 
 impl From<deadpool_diesel::InteractError> for InfraError {

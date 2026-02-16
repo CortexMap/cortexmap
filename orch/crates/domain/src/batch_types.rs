@@ -58,6 +58,8 @@ pub enum BatchStatus {
     Completed,
     /// Processing failed
     Failed,
+    /// Batch invalidated by user, will be recreated on next search
+    Invalidated,
 }
 
 impl BatchStatus {
@@ -68,6 +70,7 @@ impl BatchStatus {
             BatchStatus::Processing => "processing",
             BatchStatus::Completed => "completed",
             BatchStatus::Failed => "failed",
+            BatchStatus::Invalidated => "invalidated",
         }
     }
 }
@@ -79,6 +82,7 @@ impl From<&str> for BatchStatus {
             "processing" => BatchStatus::Processing,
             "completed" => BatchStatus::Completed,
             "failed" => BatchStatus::Failed,
+            "invalidated" => BatchStatus::Invalidated,
             _ => BatchStatus::Collecting,
         }
     }

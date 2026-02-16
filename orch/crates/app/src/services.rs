@@ -29,6 +29,9 @@ pub trait RegionManagement: Send + Sync {
     /// Get active processing batch for a region
     async fn get_active_batch(&self, region_id: Uuid) -> Result<Option<ProcessingBatch>, Self::Error>;
     
+    /// Get most recent batch for a region (regardless of status)
+    async fn get_recent_batch(&self, region_id: Uuid) -> Result<Option<ProcessingBatch>, Self::Error>;
+    
     /// Get stored queries for a region
     async fn get_queries(&self, region_id: Uuid) -> Result<Vec<RegionQuery>, Self::Error>;
     
@@ -58,6 +61,9 @@ pub trait RegionManagement: Send + Sync {
     
     /// Get all regions from region_mapping
     async fn get_all_regions(&self) -> Result<Vec<domain::Region>, Self::Error>;
+    
+    /// Delete all queries for a region (used for invalidation)
+    async fn delete_queries(&self, region_id: Uuid) -> Result<(), Self::Error>;
 }
 
 /// Trait for managing batches and fetcher integration
@@ -69,10 +75,21 @@ pub trait BatchOrchestration: Send + Sync {
     async fn create_batch(&self, region_id: Uuid, expected_count: usize) -> Result<Uuid, Self::Error>;
     
     /// Enqueue a fetch task in the fetcher service
-    async fn enqueue_fetch_task(&self, query: String, region_id: Uuid, priority: i32) -> Result<i64, Self::Error>;
+    /// Returns the list of task IDs created (one query may result in multiple papers/tasks)
+    async fn enqueue_fetch_task(&self, query: String, region_id: Uuid, priority: i32) -> Result<Vec<i64>, Self::Error>;
     
     /// Add task IDs to a batch
     async fn add_tasks_to_batch(&self, batch_id: Uuid, task_ids: Vec<i64>) -> Result<(), Self::Error>;
+    
+    /// Update the expected task count for a batch (when some queries return no results)
+    async fn update_batch_expected_count(&self, batch_id: Uuid, count: i32) -> Result<(), Self::Error>;
+    
+    /// Get a batch by its ID
+    async fn get_batch_by_id(&self, batch_id: Uuid) -> Result<Option<domain::ProcessingBatch>, Self::Error>;
+    
+    /// Ensure workers are allocated in fetcher service
+    /// Checks if any workers are active, and if not, allocates the default number
+    async fn ensure_workers_allocated(&self) -> Result<(), Self::Error>;
 }
 
 /// Trait for configuration management

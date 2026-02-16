@@ -61,6 +61,8 @@ pub struct RegionSummaryRow {
     pub summary: Option<String>,
     pub created_at: Option<NaiveDateTime>,
     pub content_hash: Option<String>,
+    pub is_active: bool,
+    pub batch_id: Uuid,
 }
 
 impl From<RegionSummaryRow> for BrainRegionEntry {
@@ -89,6 +91,7 @@ pub struct NewRegionSummaryRow {
     pub acronym: Option<String>,
     pub summary: String,
     pub content_hash: Option<String>,
+    pub batch_id: uuid::Uuid,
 }
 
 /// Diesel insert model for `brain_region_embeddings`

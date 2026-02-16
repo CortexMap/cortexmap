@@ -138,7 +138,6 @@ diesel::table! {
 diesel::table! {
     region_processing_batches (id) {
         id -> Uuid,
-        region_id -> Int4,
         status -> Text,
         fetch_task_ids -> Array<Nullable<Int8>>,
         expected_task_count -> Int4,
@@ -150,19 +149,20 @@ diesel::table! {
         completed_at -> Nullable<Timestamp>,
         summary_id -> Nullable<Uuid>,
         error_message -> Nullable<Text>,
+        region_id -> Uuid,
     }
 }
 
 diesel::table! {
     region_queries (id) {
         id -> Uuid,
-        region_id -> Int4,
         query_text -> Text,
         source -> Text,
         priority -> Nullable<Int4>,
         enabled -> Nullable<Bool>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        region_id -> Uuid,
     }
 }
 
@@ -178,6 +178,8 @@ diesel::table! {
         created_at -> Nullable<Timestamp>,
         #[max_length = 64]
         content_hash -> Nullable<Varchar>,
+        is_active -> Bool,
+        batch_id -> Uuid,
     }
 }
 
@@ -185,6 +187,8 @@ diesel::joinable!(brain_region_embeddings -> region_summary (summary_id));
 diesel::joinable!(fetch_task_components -> fetch_tasks (task_id));
 diesel::joinable!(fetch_task_logs -> fetch_tasks (task_id));
 diesel::joinable!(langchain_pg_embedding -> langchain_pg_collection (collection_id));
+diesel::joinable!(region_processing_batches -> region_mapping (region_id));
+diesel::joinable!(region_queries -> region_mapping (region_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     brain_region_embeddings,

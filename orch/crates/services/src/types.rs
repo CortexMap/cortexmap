@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 // Fetcher API types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +35,7 @@ pub struct UuidWrapper {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessRegionRequest {
     pub region_id: UuidWrapper,
+    pub batch_id: UuidWrapper,
     pub s3_keys: Vec<String>,
 }
 
@@ -43,4 +43,15 @@ pub struct ProcessRegionRequest {
 pub struct ProcessRegionResponse {
     pub region_id: UuidWrapper,
     pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateQueriesRequest {
+    pub region_name: String,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateQueriesResponse {
+    pub queries: Vec<String>,
 }

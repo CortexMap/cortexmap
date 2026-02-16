@@ -155,7 +155,7 @@ impl From<ProcessingBatchRow> for domain::ProcessingBatch {
             id: row.id,
             region_id: row.region_id,
             status: domain::BatchStatus::from(row.status.as_str()),
-            fetch_task_ids: row.fetch_task_ids.into_iter().filter_map(|id| id).collect(),
+            fetch_task_ids: row.fetch_task_ids.into_iter().flatten().collect(),
             expected_task_count: row.expected_task_count,
             content_hash: row.content_hash,
             created_at: DateTime::<Utc>::from_naive_utc_and_offset(row.created_at, Utc),
@@ -217,6 +217,7 @@ pub struct RegionSummaryRow {
     pub summary: Option<String>,
     pub created_at: Option<NaiveDateTime>,
     pub content_hash: Option<String>,
+    pub batch_id: Uuid,
 }
 
 impl From<RegionSummaryRow> for services::RegionSummaryRecord {
@@ -226,6 +227,7 @@ impl From<RegionSummaryRow> for services::RegionSummaryRecord {
             id: row.id,
             summary: row.summary,
             created_at: row.created_at.unwrap_or_else(|| Utc::now().naive_utc()),
+            batch_id: row.batch_id,
         }
     }
 }

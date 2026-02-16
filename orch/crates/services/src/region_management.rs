@@ -1,4 +1,4 @@
-use crate::{BatchManagement, EnvInfra, HttpClient, ServiceError};
+use crate::{BatchManagement, EnvInfra, HttpClient, ServiceError, GenerateQueriesRequest, GenerateQueriesResponse};
 use app::RegionManagement;
 use domain::{BatchStatus, ConfigKey, ProcessingBatch, RegionQuery, RegionSummary};
 use std::error::Error;
@@ -53,6 +53,7 @@ where
                     s.created_at,
                     chrono::Utc,
                 ),
+                batch_id: s.batch_id, // Now tracked from database
             })
             .collect())
     }
@@ -68,6 +69,21 @@ where
 
         self.infra
             .get_active_batch(&database_url, region_id)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+
+    async fn get_recent_batch(
+        &self,
+        region_id: Uuid,
+    ) -> Result<Option<ProcessingBatch>, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .get_recent_batch(&database_url, region_id)
             .await
             .map_err(ServiceError::InfraError)
     }
@@ -118,15 +134,59 @@ where
     }
 
     async fn generate_queries(&self, region_name: &str, count: u32) -> Result<Vec<String>, Self::Error> {
-        // For now, generate simple queries until LLM integration is added
-        tracing::info!(region_name, count, "Generating queries for region");
+        tracing::info!(region_name, count, "Generating queries using LLM via brainatlas");
         
-        // Placeholder queries until LLM integration is added
-        Ok(vec![
-            format!("{} research papers", region_name),
-            format!("{} neuroscience studies", region_name),
-            format!("{} brain function", region_name),
-        ][..count.min(3) as usize].to_vec())
+        // Normalize URL helper
+        fn normalize_url(addr: &str) -> String {
+            if addr.starts_with("http://") || addr.starts_with("https://") {
+                addr.to_string()
+            } else {
+                let replaced = addr.replace("0.0.0.0", "localhost");
+                format!("http://{}", replaced)
+            }
+        }
+        
+        // Get brainatlas URL from env or config
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+        
+        let brainatlas_url = match self.infra.get_env_var("BRAINATLAS_HTTP_ADDR") {
+            Ok(addr) => normalize_url(&addr),
+            Err(_) => {
+                self.infra
+                    .get_config(&database_url, ConfigKey::BrainatlasBaseUrl)
+                    .await
+                    .map_err(ServiceError::InfraError)?
+                    .ok_or_else(|| ServiceError::ConfigNotFound {
+                        key: "brainatlas_base_url".to_string(),
+                    })?
+            }
+        };
+        
+        let url = format!("{}/brainatlas-be/api/generate-queries", brainatlas_url.trim_end_matches('/'));
+        
+        let request = GenerateQueriesRequest {
+            region_name: region_name.to_string(),
+            count,
+        };
+        
+        tracing::info!(url = %url, region_name, count, "Calling brainatlas generate-queries endpoint");
+        
+        let response: GenerateQueriesResponse = self.infra
+            .post(&url, &request)
+            .await
+            .map_err(ServiceError::InfraError)?;
+        
+        tracing::info!(
+            region_name,
+            query_count = response.queries.len(),
+            queries = ?response.queries,
+            "Successfully generated LLM queries"
+        );
+        
+        Ok(response.queries)
     }
     
     async fn get_batches_by_status(
@@ -228,5 +288,17 @@ where
                 parent_acronym: r.parent_acronym,
             })
             .collect())
+    }
+    
+    async fn delete_queries(&self, region_id: Uuid) -> Result<(), Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .delete_queries(&database_url, region_id)
+            .await
+            .map_err(ServiceError::InfraError)
     }
 }

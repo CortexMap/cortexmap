@@ -25,3 +25,5 @@ plans/
 # Binary and protobuf test files
 *.bin
 *.pb
+
+*.log

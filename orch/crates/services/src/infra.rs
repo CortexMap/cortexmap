@@ -121,6 +121,13 @@ pub trait BatchManagement: Send + Sync {
         queries: Vec<String>,
     ) -> Result<Vec<Uuid>, Self::Error>;
     
+    /// Delete all queries for a region
+    async fn delete_queries(
+        &self,
+        database_url: &str,
+        region_id: Uuid,
+    ) -> Result<(), Self::Error>;
+    
     /// Create a new processing batch
     async fn create_batch(
         &self,
@@ -136,6 +143,21 @@ pub trait BatchManagement: Send + Sync {
         batch_id: Uuid,
         task_ids: Vec<i64>,
     ) -> Result<(), Self::Error>;
+    
+    /// Update the expected task count for a batch
+    async fn update_batch_expected_count(
+        &self,
+        database_url: &str,
+        batch_id: Uuid,
+        count: i32,
+    ) -> Result<(), Self::Error>;
+
+    /// Get a batch by its ID
+    async fn get_batch_by_id(
+        &self,
+        database_url: &str,
+        batch_id: Uuid,
+    ) -> Result<Option<domain::ProcessingBatch>, Self::Error>;
     
     /// Get batches by status
     async fn get_batches_by_status(
@@ -180,6 +202,13 @@ pub trait BatchManagement: Send + Sync {
         database_url: &str,
         region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error>;
+    
+    /// Get most recent batch for a region (regardless of status)
+    async fn get_recent_batch(
+        &self,
+        database_url: &str,
+        region_id: Uuid,
+    ) -> Result<Option<ProcessingBatch>, Self::Error>;
 }
 
 /// Region mapping information from region_mapping table
@@ -203,6 +232,7 @@ pub struct RegionSummaryRecord {
     pub id: Uuid,
     pub summary: Option<String>,
     pub created_at: chrono::NaiveDateTime,
+    pub batch_id: Uuid,
 }
 
 #[async_trait::async_trait]

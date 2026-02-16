@@ -10,3 +10,4 @@ domain.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+chrono.workspace = true

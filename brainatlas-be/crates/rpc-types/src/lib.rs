@@ -13,4 +13,5 @@ pub use proto::{
     Acronym, BrainRegionEntry, BrainRegionList, BrainRegionListResponse, ProcessRegionRequest,
     ProcessRegionResponse, RegionId, RegionMapping, Rgb, SearchBrainRegionRequest,
     SearchBrainRegionResponse, Status, StatusRequest, StatusResponse, Uuid,
+    GenerateQueriesRequest, GenerateQueriesResponse,
 };

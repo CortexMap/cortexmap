@@ -3,6 +3,7 @@ use app::{AppError, BrainAtlasApp, Services};
 use domain::rpc_types;
 use domain::rpc_types::{
     BrainRegionListResponse, ProcessRegionResponse, SearchBrainRegionResponse, StatusResponse,
+    GenerateQueriesResponse,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -56,15 +57,17 @@ where
     async fn process_region(
         &self,
         region_id: Option<Uuid>,
+        batch_id: Option<Uuid>,
         s3_keys: Vec<String>,
     ) -> Result<ProcessRegionResponse, Self::Error> {
-        // Validate region_id is present
+        // Validate region_id and batch_id are present
         let region_uuid = region_id.ok_or(ApiError::MissingOrInvalidId)?;
+        let batch_uuid = batch_id.ok_or(ApiError::MissingOrInvalidId)?;
 
         // Call the full processing pipeline
         let summary_id = self
             .app()
-            .process_region(region_uuid, s3_keys)
+            .process_region(region_uuid, batch_uuid, s3_keys)
             .await
             .map_err(ApiError::AppError)?;
 
@@ -74,5 +77,20 @@ where
             }),
             detail: format!("Successfully created summary {}", summary_id),
         })
+    }
+
+    async fn generate_queries(
+        &self,
+        region_name: String,
+        count: u32,
+    ) -> Result<GenerateQueriesResponse, Self::Error> {
+        // Call the LLM to generate queries
+        let queries = self
+            .app()
+            .generate_queries(&region_name, count)
+            .await
+            .map_err(ApiError::AppError)?;
+
+        Ok(GenerateQueriesResponse { queries })
     }
 }

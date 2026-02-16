@@ -531,7 +531,7 @@ mod workflow_tests {
         let batch_id = Uuid::new_v4();
         
         // Test all state transitions
-        let states = vec!["collecting", "ready", "processing", "completed"];
+        let states = ["collecting", "ready", "processing", "completed"];
         
         // Create batch
         diesel::sql_query(
@@ -553,7 +553,7 @@ mod workflow_tests {
             .bind::<diesel::sql_types::Text, _>(state)
             .bind::<diesel::sql_types::Uuid, _>(batch_id)
             .execute(&mut conn)
-            .expect(&format!("Failed to transition to {}", state));
+            .unwrap_or_else(|_| panic!("Failed to transition to {}", state));
             
             let batch = diesel::sql_query(
                 "SELECT id, status FROM region_processing_batches WHERE id = $1"

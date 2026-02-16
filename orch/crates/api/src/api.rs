@@ -1,6 +1,6 @@
 use domain::{
-    ConfigEntry, ConfigEntryUpdate, InvalidateResult, PipelineStatsResult, Priority, Region,
-    RegionStatusResult, SearchRegionResult,
+    BatchStatusResult, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult, PipelineStatsResult,
+    Region, RegionStatusResult, SearchRegionResult,
 };
 use uuid::Uuid;
 
@@ -14,21 +14,19 @@ pub trait OrchApi: Send + Sync {
     /// Spawns background tasks (completion watcher loop)
     async fn init(&self) -> Result<(), Self::Error>;
     
-    /// Search for region summaries by region UUID
-    /// If no summary exists, triggers the pipeline at USER_REQUESTED priority
-    /// Returns current status and any existing summaries
-    async fn search_region(&self, region_id: Uuid) -> Result<SearchRegionResult, Self::Error>;
+    /// List all summaries for a region (just returns summaries with metadata)
+    async fn list_summaries(&self, region_id: Uuid) -> Result<SearchRegionResult, Self::Error>;
+    
+    /// Generate a new summary for a region
+    /// Creates a new batch, generates queries, enqueues tasks
+    /// Returns batch_id immediately for tracking progress
+    async fn generate_summary(&self, region_id: Uuid) -> Result<GenerateSummaryResult, Self::Error>;
+    
+    /// Get the status of a specific batch
+    async fn get_batch_status(&self, batch_id: Uuid) -> Result<BatchStatusResult, Self::Error>;
     
     /// Get the end-to-end pipeline status for a single region
     async fn get_region_status(&self, region_id: Uuid) -> Result<RegionStatusResult, Self::Error>;
-    
-    /// Queue a fresh fetch + process cycle for a region
-    /// Existing summaries remain readable while new cycle runs
-    async fn invalidate_region(
-        &self,
-        region_id: Uuid,
-        priority: Option<Priority>,
-    ) -> Result<InvalidateResult, Self::Error>;
     
     /// Get high-level count breakdown across all regions
     async fn get_pipeline_stats(&self) -> Result<PipelineStatsResult, Self::Error>;

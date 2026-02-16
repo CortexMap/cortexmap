@@ -19,6 +19,7 @@ pub struct NewRegionSummary {
     pub acronym: Option<String>,
     pub summary: String,
     pub content_hash: String,
+    pub batch_id: Uuid,
 }
 
 /// Existing summary found via content hash (deduplication)

@@ -184,6 +184,7 @@ diesel::table! {
         created_at -> Nullable<Timestamp>,
         #[max_length = 64]
         content_hash -> Nullable<Varchar>,
+        batch_id -> Uuid,
     }
 }
 

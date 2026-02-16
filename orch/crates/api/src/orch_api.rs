@@ -1,8 +1,8 @@
 use crate::{ApiError, OrchApi};
 use app::{AppError, OrchApp, Services};
 use domain::{
-    ConfigEntry, ConfigEntryUpdate, InvalidateResult, PipelineStatsResult, Priority, Region,
-    RegionStatusResult, SearchRegionResult,
+    BatchStatusResult, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult, PipelineStatsResult,
+    Region, RegionStatusResult, SearchRegionResult,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -38,9 +38,23 @@ where
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
-    async fn search_region(&self, region_id: Uuid) -> Result<SearchRegionResult, Self::Error> {
+    async fn list_summaries(&self, region_id: Uuid) -> Result<SearchRegionResult, Self::Error> {
         self.app()
-            .search_region(region_id)
+            .list_summaries(region_id)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn generate_summary(&self, region_id: Uuid) -> Result<GenerateSummaryResult, Self::Error> {
+        self.app()
+            .generate_summary(region_id)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_batch_status(&self, batch_id: Uuid) -> Result<BatchStatusResult, Self::Error> {
+        self.app()
+            .get_batch_status(batch_id)
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
@@ -48,17 +62,6 @@ where
     async fn get_region_status(&self, region_id: Uuid) -> Result<RegionStatusResult, Self::Error> {
         self.app()
             .get_region_status(region_id)
-            .await
-            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
-    }
-
-    async fn invalidate_region(
-        &self,
-        region_id: Uuid,
-        priority: Option<Priority>,
-    ) -> Result<InvalidateResult, Self::Error> {
-        self.app()
-            .invalidate_region(region_id, priority)
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }

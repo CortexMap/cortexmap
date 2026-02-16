@@ -90,12 +90,25 @@ message ProcessRegionRequest {
   Uuid region_id       = 1;
   // S3 object keys for the files to process (PDF, abstract, etc.).
   repeated string s3_keys = 2;
+  // UUID of the batch that triggered this processing
+  Uuid batch_id = 3;
 }
 
 message ProcessRegionResponse {
   Uuid   region_id = 1;
   // Human-readable summary of what was written (e.g. "stored 1 summary for region 42").
   string detail    = 2;
+}
+
+// Called by orch to generate search queries for a brain region using LLM.
+// This allows orch to get intelligent, context-aware queries instead of using templates.
+message GenerateQueriesRequest {
+  string region_name = 1;  // Name of the brain region (e.g., "hippocampus")
+  uint32 count = 2;        // Number of queries to generate (typically 3-5)
+}
+
+message GenerateQueriesResponse {
+  repeated string queries = 1;  // LLM-generated search queries
 }
 
 service BrainRegionService {
@@ -129,6 +142,16 @@ service BrainRegionService {
   rpc ProcessRegion(ProcessRegionRequest) returns (ProcessRegionResponse) {
     option (google.api.http) = {
       post: "/api/process"
+      body: "*"
+    };
+  }
+
+  // Generate search queries for a brain region using LLM.
+  // Called by orch when creating a new batch to get intelligent queries
+  // instead of using hardcoded templates.
+  rpc GenerateQueries(GenerateQueriesRequest) returns (GenerateQueriesResponse) {
+    option (google.api.http) = {
+      post: "/api/generate-queries"
       body: "*"
     };
   }

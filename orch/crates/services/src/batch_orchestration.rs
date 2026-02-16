@@ -43,6 +43,33 @@ struct EnqueueResponse {
     error_message: String,
 }
 
+#[derive(Debug, Serialize)]
+struct AllocateWorkersRequest {
+    worker_count: u32,
+    task_timeout_secs: u64,
+    max_retry_attempts: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct AllocateWorkersResponse {
+    success: bool,
+    worker_ids: Vec<String>,
+    error_message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkerStatusResponse {
+    workers: Vec<WorkerInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct WorkerInfo {
+    worker_id: String,
+    status: String,
+}
+
+
 #[async_trait::async_trait]
 impl<E, I> BatchOrchestration for OrchBatchOrchestration<I>
 where
@@ -68,7 +95,7 @@ where
         query: String,
         region_id: Uuid,
         _priority: i32,
-    ) -> Result<i64, Self::Error> {
+    ) -> Result<Vec<i64>, Self::Error> {
         // Try env var first, fall back to config
         let fetcher_url = match self.infra.get_env_var("FETCHER_HTTP_ADDR") {
             Ok(addr) => Self::normalize_url(&addr),
@@ -118,9 +145,8 @@ where
             "Successfully enqueued fetch tasks"
         );
 
-        // Return the first task ID (or 0 if none)
-        // The app layer will collect all task IDs from multiple queries
-        Ok(response.task_ids.first().copied().unwrap_or(0))
+        // Return all task IDs created by this query
+        Ok(response.task_ids)
     }
 
     async fn add_tasks_to_batch(&self, batch_id: Uuid, task_ids: Vec<i64>) -> Result<(), Self::Error> {
@@ -133,5 +159,115 @@ where
             .add_tasks_to_batch(&database_url, batch_id, task_ids)
             .await
             .map_err(ServiceError::InfraError)
+    }
+
+    async fn update_batch_expected_count(&self, batch_id: Uuid, count: i32) -> Result<(), Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .update_batch_expected_count(&database_url, batch_id, count)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+
+    async fn get_batch_by_id(&self, batch_id: Uuid) -> Result<Option<domain::ProcessingBatch>, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .get_batch_by_id(&database_url, batch_id)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+
+    async fn ensure_workers_allocated(&self) -> Result<(), Self::Error> {
+        // Get fetcher URL
+        let fetcher_url = match self.infra.get_env_var("FETCHER_HTTP_ADDR") {
+            Ok(addr) => Self::normalize_url(&addr),
+            Err(_) => {
+                let database_url = self
+                    .infra
+                    .get_env_var("DATABASE_URL")
+                    .map_err(ServiceError::InfraError)?;
+                
+                self.infra
+                    .get_config(&database_url, ConfigKey::FetcherBaseUrl)
+                    .await
+                    .map_err(ServiceError::InfraError)?
+                    .ok_or_else(|| ServiceError::ConfigNotFound {
+                        key: "fetcher_base_url".to_string(),
+                    })?
+            }
+        };
+
+        // Check current worker status
+        let worker_status_url = format!("{}/fetcher-be/api/queue/workers/status", fetcher_url.trim_end_matches('/'));
+        
+        tracing::debug!(url = %worker_status_url, "Checking worker status");
+        
+        let worker_status: WorkerStatusResponse = self
+            .infra
+            .get(&worker_status_url)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        // Count active workers
+        let active_workers = worker_status.workers.iter()
+            .filter(|w| w.status == "running")
+            .count();
+
+        tracing::info!(active_workers = active_workers, "Current worker count");
+
+        // If no workers are active, allocate default number
+        if active_workers == 0 {
+            let database_url = self
+                .infra
+                .get_env_var("DATABASE_URL")
+                .map_err(ServiceError::InfraError)?;
+            
+            let default_worker_count: u32 = self.infra
+                .get_config(&database_url, ConfigKey::DefaultWorkerCount)
+                .await
+                .map_err(ServiceError::InfraError)?
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2); // Fallback to 2 if not configured
+
+            tracing::info!(worker_count = default_worker_count, "No workers active, allocating default workers");
+
+            let allocate_url = format!("{}/fetcher-be/api/queue/workers/allocate", fetcher_url.trim_end_matches('/'));
+            
+            let request = AllocateWorkersRequest {
+                worker_count: default_worker_count,
+                task_timeout_secs: 300,
+                max_retry_attempts: 3,
+            };
+
+            let response: AllocateWorkersResponse = self
+                .infra
+                .post(&allocate_url, &request)
+                .await
+                .map_err(ServiceError::InfraError)?;
+
+            if !response.success {
+                return Err(ServiceError::External {
+                    message: format!("Failed to allocate workers: {}", response.error_message),
+                });
+            }
+
+            tracing::info!(
+                worker_ids = ?response.worker_ids,
+                count = response.worker_ids.len(),
+                "Successfully allocated workers"
+            );
+        } else {
+            tracing::info!(active_workers = active_workers, "Workers already active, skipping allocation");
+        }
+
+        Ok(())
     }
 }

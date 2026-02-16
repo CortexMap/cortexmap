@@ -41,6 +41,7 @@ where
     pub async fn process_region(
         &self,
         uuid: Uuid,
+        batch_id: Uuid,
         s3_keys: Vec<String>,
     ) -> Result<Uuid, AppError<E>> {
         let region = self.get_region_by_uuid(uuid).await?;
@@ -106,13 +107,14 @@ where
             .await
             .map_err(AppError::ServiceError)?;
 
-        // 8. Create NewRegionSummary with content hash
+        // 8. Create NewRegionSummary with content hash and batch_id
         let new_summary = NewRegionSummary {
             region_id: region.region_id,
             name: region.name,
             acronym: region.acronym,
             summary: summary_text,
             content_hash,
+            batch_id,
         };
 
         // 9. Insert summary + embeddings in transaction (atomic)
@@ -123,5 +125,17 @@ where
             .map_err(AppError::ServiceError)?;
 
         Ok(summary_id)
+    }
+
+    /// Generate search queries for a brain region using LLM
+    pub async fn generate_queries(
+        &self,
+        region_name: &str,
+        count: u32,
+    ) -> Result<Vec<String>, AppError<E>> {
+        self.services
+            .generate_queries(region_name, count)
+            .await
+            .map_err(AppError::ServiceError)
     }
 }

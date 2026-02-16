@@ -55,7 +55,7 @@ CREATE TABLE region_processing_batches (
   error_message TEXT,
   
   -- Constraints
-  CONSTRAINT status_check CHECK (status IN ('collecting', 'ready', 'processing', 'completed', 'failed')),
+  CONSTRAINT status_check CHECK (status IN ('collecting', 'ready', 'processing', 'completed', 'failed', 'invalidated')),
   CONSTRAINT expected_count_positive CHECK (expected_task_count > 0)
 );
 
@@ -64,6 +64,7 @@ CREATE INDEX idx_batches_region_status
   ON region_processing_batches(region_id, status);
 
 -- Only one active batch per region at a time
+-- Note: 'invalidated', 'completed', and 'failed' batches don't count as active
 CREATE UNIQUE INDEX idx_one_active_batch_per_region 
   ON region_processing_batches(region_id) 
   WHERE status IN ('collecting', 'ready', 'processing');

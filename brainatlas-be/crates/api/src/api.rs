@@ -1,4 +1,4 @@
-use domain::rpc_types::{BrainRegionListResponse, ProcessRegionResponse, SearchBrainRegionResponse, StatusResponse};
+use domain::rpc_types::{BrainRegionListResponse, ProcessRegionResponse, SearchBrainRegionResponse, StatusResponse, GenerateQueriesResponse};
 use uuid::Uuid;
 
 #[async_trait::async_trait]
@@ -21,5 +21,9 @@ pub trait BrainRegionApi: Send + Sync {
 
     /// Chunk, embed, and summarize the S3 files for a region, then persist to region_summary.
     /// POST /api/process — called by orch
-    async fn process_region(&self, region_id: Option<Uuid>, s3_keys: Vec<String>) -> Result<ProcessRegionResponse, Self::Error>;
+    async fn process_region(&self, region_id: Option<Uuid>, batch_id: Option<Uuid>, s3_keys: Vec<String>) -> Result<ProcessRegionResponse, Self::Error>;
+
+    /// Generate search queries for a brain region using LLM.
+    /// POST /api/generate-queries — called by orch when creating a new batch
+    async fn generate_queries(&self, region_name: String, count: u32) -> Result<GenerateQueriesResponse, Self::Error>;
 }

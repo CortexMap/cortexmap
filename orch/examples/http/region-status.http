@@ -1,5 +1,5 @@
 ### Get region status by UUID
-GET http://localhost:8080/orch/api/regions/5370f50e-c5ca-4247-bc18-11de1fa2bfdd/status
+GET http://localhost:8080/orch/api/regions/08307474-3943-4c92-b3db-f8bcea86e226/status
 
 ### Get region status (localhost) - Example UUID
 # GET http://localhost:8081/orch/api/regions/123e4567-e89b-12d3-a456-426614174000/status

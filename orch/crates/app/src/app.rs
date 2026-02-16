@@ -1,5 +1,5 @@
 use crate::Services;
-use domain::{BatchStatus, ConfigEntry, ConfigEntryUpdate, ConfigKey, InvalidateResult, PipelineStatsResult, Priority, RegionPipelineStatus, RegionStatusResult, SearchRegionResult};
+use domain::{BatchStatus, BatchStatusResult, ConfigEntry, ConfigEntryUpdate, ConfigKey, GenerateSummaryResult, InvalidateResult, PipelineStatsResult, Priority, RegionPipelineStatus, RegionStatusResult, SearchRegionResult};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -74,107 +74,10 @@ where
     /// Search for summaries of a brain region
     /// If summaries exist, return them
     /// If not, create a batch and return status
+    /// Search for a region (deprecated - use list_summaries + generate_summary + get_batch_status)
     pub async fn search_region(&self, region_id: Uuid) -> Result<SearchRegionResult, E> {
-        tracing::info!(?region_id, "Searching for region");
-        
-        // STEP 1: Check for existing summaries
-        let summaries = self.services.get_summaries(region_id).await
-            .map_err(|e| e.into())?;
-        
-        if !summaries.is_empty() {
-            tracing::info!(?region_id, count = summaries.len(), "Found existing summaries");
-            return Ok(SearchRegionResult {
-                status: RegionPipelineStatus::Done,
-                summaries,
-            });
-        }
-        
-        tracing::info!(?region_id, "No summaries found, checking for batch");
-        
-        // STEP 3: Check for active batch
-        let active_batch = self.services.get_active_batch(region_id).await
-            .map_err(|e| e.into())?;
-        
-        if let Some(batch) = active_batch {
-            tracing::info!(?region_id, ?batch.status, "Found active batch");
-            
-            // Derive status from batch state
-            let status = match batch.status {
-                domain::BatchStatus::Collecting => RegionPipelineStatus::Fetching,
-                domain::BatchStatus::Ready => RegionPipelineStatus::LlmQueued,
-                domain::BatchStatus::Processing => RegionPipelineStatus::Processing,
-                domain::BatchStatus::Completed => RegionPipelineStatus::Done,
-                domain::BatchStatus::Failed => RegionPipelineStatus::FetchFailed,
-            };
-            
-            return Ok(SearchRegionResult {
-                status,
-                summaries: vec![],
-            });
-        }
-        
-        tracing::info!(?region_id, "No batch found, creating new batch");
-        
-        // STEP 4: No batch exists, create one
-        
-        // 4a. Check if queries exist for this region
-        let queries = self.services.get_queries(region_id).await
-            .map_err(|e| e.into())?;
-        
-        let query_strings: Vec<String> = if queries.is_empty() {
-            tracing::info!(?region_id, "No queries found, generating new ones");
-            
-            // Get region name from region_mapping
-            let region_name = self.services.get_region_name(region_id).await
-                .map_err(|e| e.into())?;
-            
-            // Get query count from config (default to 3)
-            let count = self.services.get_query_generation_limit().await
-                .map_err(|e| e.into())?
-                .unwrap_or(3);
-            
-            let generated = self.services.generate_queries(&region_name, count).await
-                .map_err(|e| e.into())?;
-            
-            // Store generated queries
-            self.services.store_queries(region_id, generated.clone()).await
-                .map_err(|e| e.into())?;
-            
-            tracing::info!(?region_id, count = generated.len(), "Generated and stored queries");
-            generated
-        } else {
-            tracing::info!(?region_id, count = queries.len(), "Using existing queries");
-            queries.into_iter().map(|q| q.query_text).collect()
-        };
-        
-        // 4b. Create batch
-        let batch_id = self.services.create_batch(region_id, query_strings.len()).await
-            .map_err(|e| e.into())?;
-        
-        tracing::info!(?region_id, ?batch_id, "Created batch");
-        
-        // 4c. Enqueue fetch tasks for each query
-        let mut task_ids = Vec::new();
-        for query in &query_strings {
-            let task_id = self.services.enqueue_fetch_task(
-                query.clone(),
-                region_id,
-                5, // Normal priority
-            ).await.map_err(|e| e.into())?;
-            
-            task_ids.push(task_id);
-        }
-        
-        tracing::info!(?region_id, ?batch_id, task_count = task_ids.len(), "Enqueued fetch tasks");
-        
-        // 4d. Link tasks to batch
-        self.services.add_tasks_to_batch(batch_id, task_ids).await
-            .map_err(|e| e.into())?;
-        
-        Ok(SearchRegionResult {
-            status: RegionPipelineStatus::FetchQueued,
-            summaries: vec![],
-        })
+        tracing::warn!("search_region is deprecated, use list_summaries instead");
+        self.list_summaries(region_id).await
     }
 
     /// Get the status of processing for a region
@@ -194,6 +97,7 @@ where
                 domain::BatchStatus::Processing => RegionPipelineStatus::Processing,
                 domain::BatchStatus::Completed => RegionPipelineStatus::Done,
                 domain::BatchStatus::Failed => RegionPipelineStatus::FetchFailed,
+                domain::BatchStatus::Invalidated => RegionPipelineStatus::Invalidated,
             }
         } else {
             RegionPipelineStatus::NotStarted
@@ -205,7 +109,7 @@ where
             last_fetch_at: batch.as_ref().and_then(|b| b.completed_at),
             last_summary_at: summaries.first().map(|s| s.created_at),
             summary_count: summaries.len() as i32,
-            current_priority: batch.as_ref().and_then(|_b| {
+            current_priority: batch.as_ref().and({
                 // Priority would come from the batch's tasks
                 // For now, return None - could be enhanced to lookup from fetch_tasks
                 None
@@ -215,33 +119,34 @@ where
 
     /// Invalidate existing summaries and re-process
     pub async fn invalidate_region(&self, region_id: Uuid, _priority: Option<Priority>) -> Result<InvalidateResult, E> {
-        // Get active batch if exists
-        let active_batch = self.services.get_active_batch(region_id).await?;
+        tracing::info!(?region_id, "Invalidating region");
         
-        let (detail, batch_existed) = if let Some(batch) = &active_batch {
-            // Batch exists - reset it to collecting to trigger reprocess
+        // Step 1: Delete all queries for this region to force regeneration
+        self.services.delete_queries(region_id).await?;
+        tracing::info!(?region_id, "Deleted existing queries");
+        
+        // Step 2: Get active batch if exists
+        // Step 2: Get the most recent batch (including completed ones)
+        let recent_batch = self.services.get_recent_batch(region_id).await?;
+
+        let detail = if let Some(batch) = &recent_batch {
+            // Mark batch as invalidated (even if it was completed)
             self.services.update_batch_status(
                 batch.id,
-                domain::BatchStatus::Collecting,
-                None
+                domain::BatchStatus::Invalidated,
+                Some("Invalidated by user".to_string())
             ).await?;
-            
-            (format!("Batch {} reset to collecting status for reprocessing", batch.id), true)
+            tracing::info!(?region_id, batch_id=?batch.id, "Marked batch as invalidated");
+
+            format!("Batch {} marked as invalidated. Queries deleted. Next search will create a new batch with fresh queries.", batch.id)
         } else {
-            // No batch exists - invalidation will happen when user searches
-            ("No active batch found. A new batch will be created on next search.".to_string(), false)
+            "No batch found. Queries deleted. A new batch with fresh queries will be created on next search.".to_string()
         };
-        
-        // Determine new status
-        let new_status = if batch_existed {
-            RegionPipelineStatus::Invalidated
-        } else {
-            RegionPipelineStatus::NotStarted
-        };
+        tracing::info!(?region_id, "Region invalidated successfully");
         
         Ok(InvalidateResult {
             region_id,
-            new_status,
+            new_status: RegionPipelineStatus::Invalidated,
             detail,
         })
     }
@@ -249,12 +154,10 @@ where
     /// Get pipeline statistics across all regions
     pub async fn get_pipeline_stats(&self) -> Result<PipelineStatsResult, E> {
         // Get total region count
-        let total_regions = self.services.get_total_regions().await
-            .map_err(|e| e.into())? as i32;
+        let total_regions = self.services.get_total_regions().await? as i32;
         
         // Get count of regions with no batches
-        let not_started = self.services.count_regions_without_batches().await
-            .map_err(|e| e.into())? as i32;
+        let not_started = self.services.count_regions_without_batches().await? as i32;
         
         // Get all batches by status
         let collecting = self.services.get_batches_by_status(BatchStatus::Collecting).await?.len();
@@ -278,16 +181,140 @@ where
 
     /// Get all configuration entries
     pub async fn get_config(&self) -> Result<Vec<ConfigEntry>, E> {
-        self.services.get_all_config().await.map_err(|e| e.into())
+        self.services.get_all_config().await
     }
 
     /// Update configuration entries
     pub async fn update_config(&self, entries: Vec<ConfigEntryUpdate>) -> Result<Vec<ConfigEntry>, E> {
-        self.services.update_config(entries).await.map_err(|e| e.into())
+        self.services.update_config(entries).await
     }
     
     /// Get all brain regions from region_mapping
     pub async fn get_all_regions(&self) -> Result<Vec<domain::Region>, E> {
-        self.services.get_all_regions().await.map_err(|e| e.into())
+        self.services.get_all_regions().await
+    }
+
+    /// List all summaries for a region (no status logic, just list)
+    pub async fn list_summaries(&self, region_id: Uuid) -> Result<SearchRegionResult, E> {
+        tracing::info!(?region_id, "Listing summaries for region");
+        
+        let summaries = self.services.get_summaries(region_id).await?;
+        
+        Ok(SearchRegionResult {
+            summaries: summaries.into_iter().map(|s| domain::RegionSummary {
+                summary: s.summary,
+                created_at: s.created_at,
+                batch_id: s.batch_id, // Batch ID is now always tracked
+            }).collect(),
+        })
+    }
+
+    /// Generate a new summary for a region (creates batch, enqueues tasks)
+    pub async fn generate_summary(&self, region_id: Uuid) -> Result<GenerateSummaryResult, E> {
+        tracing::info!(?region_id, "Generating new summary for region");
+        
+        // Step 1: Get region name
+        let region_name = self.services.get_region_name(region_id).await?;
+        
+        // Step 2: Get query count from config (default to 3)
+        let query_count = self.services.get_query_generation_limit().await?
+            .unwrap_or(3);
+        
+        // Step 3: Generate queries via LLM
+        let queries = self.services.generate_queries(&region_name, query_count).await?;
+        
+        if queries.is_empty() {
+            tracing::warn!(?region_id, "No queries generated by LLM");
+            // Just return empty result instead of error
+            return Ok(GenerateSummaryResult {
+                batch_id: Uuid::nil(),
+                query_count: 0,
+                task_count: 0,
+            });
+        }
+        
+        tracing::info!(?region_id, query_count = queries.len(), "Generated queries");
+        
+        // Step 4: Create a new batch
+        let batch_id = self.services.create_batch(region_id, queries.len()).await?;
+        tracing::info!(?region_id, ?batch_id, "Created batch");
+        
+        // Step 5: Save queries
+        self.services.store_queries(region_id, queries.clone()).await?;
+        
+        // Step 6: Enqueue fetch tasks for each query
+        let mut task_ids = Vec::new();
+        for query in &queries {
+            let query_task_ids = self.services.enqueue_fetch_task(query.clone(), region_id, domain::Priority::UserRequested.as_i32()).await?;
+            task_ids.extend(query_task_ids);
+        }
+        
+        let task_count = task_ids.len();
+        tracing::info!(?region_id, ?batch_id, task_count, "Enqueued fetch tasks");
+        
+        // Step 7: Add tasks to batch (if any)
+        if !task_ids.is_empty() {
+            self.services.add_tasks_to_batch(batch_id, task_ids).await?;
+            
+            // Step 8: Update expected count if mismatch
+            if task_count != queries.len() {
+                tracing::info!(?region_id, ?batch_id, expected = queries.len(), actual = task_count, "Updating batch expected count");
+                self.services.update_batch_expected_count(batch_id, task_count as i32).await?;
+            }
+        } else {
+            // No tasks created - mark batch as failed
+            tracing::warn!(?region_id, ?batch_id, "No tasks created, marking batch as failed");
+            self.services.update_batch_status(batch_id, domain::BatchStatus::Failed, Some("No papers found".to_string())).await?;
+        }
+        
+        // Step 9: Ensure workers are allocated
+        if let Err(e) = self.services.ensure_workers_allocated().await {
+            tracing::warn!(?e, "Failed to ensure workers allocated, tasks will remain queued");
+        }
+        
+        Ok(GenerateSummaryResult {
+            batch_id,
+            query_count: queries.len(),
+            task_count,
+        })
+    }
+
+    /// Get the status of a batch
+    pub async fn get_batch_status(&self, batch_id: Uuid) -> Result<BatchStatusResult, E> {
+        tracing::info!(?batch_id, "Getting batch status");
+        
+        // Get batch details from database
+        let batch = self.services.get_batch_by_id(batch_id).await?;
+        let batch = batch.expect("Batch not found");
+        
+        // Map batch status to pipeline status
+        let status = match batch.status {
+            domain::BatchStatus::Collecting => domain::RegionPipelineStatus::Fetching,
+            domain::BatchStatus::Ready => domain::RegionPipelineStatus::LlmQueued,
+            domain::BatchStatus::Processing => domain::RegionPipelineStatus::Processing,
+            domain::BatchStatus::Completed => domain::RegionPipelineStatus::Done,
+            domain::BatchStatus::Failed => domain::RegionPipelineStatus::FetchFailed,
+            domain::BatchStatus::Invalidated => domain::RegionPipelineStatus::Invalidated,
+        };
+        
+        // Generate appropriate message
+        let message = match batch.status {
+            domain::BatchStatus::Collecting => format!("Fetching papers from PubMed Central ({} tasks)", batch.expected_task_count),
+            domain::BatchStatus::Ready => "Papers fetched, waiting for LLM processing".to_string(),
+            domain::BatchStatus::Processing => "Generating summary with LLM".to_string(),
+            domain::BatchStatus::Completed => "Summary generation complete".to_string(),
+            domain::BatchStatus::Failed => format!("Failed: {}", batch.error_message.as_deref().unwrap_or("Unknown error")),
+            domain::BatchStatus::Invalidated => "Batch was invalidated".to_string(),
+        };
+        
+        Ok(BatchStatusResult {
+            batch_id,
+            status,
+            message,
+            error: batch.error_message,
+            expected_tasks: batch.expected_task_count,
+            completed_tasks: None, // TODO: Query fetcher for completion count
+            created_at: batch.created_at,
+        })
     }
 }

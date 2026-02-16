@@ -96,6 +96,7 @@ impl VectorDatabase for BrainAtlasVectorDB {
                 acronym: summary.acronym,
                 summary: summary.summary,
                 content_hash: Some(summary.content_hash),
+                batch_id: summary.batch_id,
             };
 
             diesel::insert_into(region_summary::table)

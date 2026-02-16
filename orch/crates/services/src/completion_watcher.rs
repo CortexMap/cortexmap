@@ -229,6 +229,17 @@ where
         brainatlas_url: &str,
         database_url: &str,
     ) -> Result<String, ServiceError<E>> {
+        // Check if batch was invalidated (skip processing if so)
+        if batch.status == BatchStatus::Invalidated {
+            tracing::info!(
+                batch_id = %batch.id,
+                "Skipping invalidated batch"
+            );
+            return Err(ServiceError::External { 
+                message: "Batch was invalidated".to_string() 
+            });
+        }
+
         tracing::info!(
             batch_id = %batch.id,
             region_id = %batch.region_id,
@@ -291,6 +302,9 @@ where
         let request = ProcessRegionRequest {
             region_id: UuidWrapper {
                 value: region_uuid.to_string(),
+            },
+            batch_id: UuidWrapper {
+                value: batch.id.to_string(),
             },
             s3_keys: text_s3_keys.clone(),
         };

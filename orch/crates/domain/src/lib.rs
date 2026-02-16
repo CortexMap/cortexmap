@@ -22,6 +22,8 @@ pub enum ConfigKey {
     BrainatlasBaseUrl,
     /// Number of search queries to generate per brain region
     QueryGenerationLimit,
+    /// Default number of workers to allocate when tasks are enqueued
+    DefaultWorkerCount,
 }
 
 /// Result of polling for completed fetch tasks

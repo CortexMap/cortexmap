@@ -39,13 +39,45 @@ pub enum RegionPipelineStatus {
 pub struct RegionSummary {
     pub summary: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The batch that generated this summary
+    pub batch_id: Uuid,
 }
 
-/// Result of searching for a region
+/// Result of searching/listing summaries for a region
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchRegionResult {
-    pub status: RegionPipelineStatus,
+    /// All summaries for this region, ordered by creation time (newest first)
     pub summaries: Vec<RegionSummary>,
+}
+
+/// Result of creating a new summary generation batch
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateSummaryResult {
+    /// The newly created batch ID
+    pub batch_id: Uuid,
+    /// Number of queries generated
+    pub query_count: usize,
+    /// Number of fetch tasks enqueued
+    pub task_count: usize,
+}
+
+/// Current status of a batch
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchStatusResult {
+    /// Batch ID
+    pub batch_id: Uuid,
+    /// Current batch status
+    pub status: RegionPipelineStatus,
+    /// Progress message (e.g., "Fetching papers: 10/20 complete")
+    pub message: String,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// Expected task count
+    pub expected_tasks: i32,
+    /// Completed task count (if available)
+    pub completed_tasks: Option<i32>,
+    /// Created timestamp
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Result of getting region status
@@ -59,7 +91,7 @@ pub struct RegionStatusResult {
     pub current_priority: Option<Priority>,
 }
 
-/// Result of invalidating a region
+/// Result of invalidating a region (deprecated, use /generate instead)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InvalidateResult {
     pub region_id: Uuid,
