@@ -1,0 +1,1 @@
+Search the indexed papers about {{REGION_NAME}} and create a detailed clinical neuroscience profile. Make at least 4-5 search calls covering anatomy, function, disorders, symptoms, and treatments before writing your final response.
