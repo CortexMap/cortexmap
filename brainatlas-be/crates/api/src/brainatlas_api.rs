@@ -3,7 +3,7 @@ use app::{AppError, BrainAtlasApp, Services};
 use domain::rpc_types;
 use domain::rpc_types::{
     BrainRegionListResponse, ProcessRegionResponse, SearchBrainRegionResponse, StatusResponse,
-    GenerateQueriesResponse,
+    GenerateQueriesResponse, PaperMetadata,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -59,6 +59,9 @@ where
         region_id: Option<Uuid>,
         batch_id: Option<Uuid>,
         s3_keys: Vec<String>,
+        paper_metadata: Vec<PaperMetadata>,
+        chat_model: Option<String>,
+        embedding_model: Option<String>,
     ) -> Result<ProcessRegionResponse, Self::Error> {
         // Validate region_id and batch_id are present
         let region_uuid = region_id.ok_or(ApiError::MissingOrInvalidId)?;
@@ -67,7 +70,7 @@ where
         // Call the full processing pipeline
         let summary_id = self
             .app()
-            .process_region(region_uuid, batch_uuid, s3_keys)
+            .process_region(region_uuid, batch_uuid, s3_keys, paper_metadata, chat_model, embedding_model)
             .await
             .map_err(ApiError::AppError)?;
 

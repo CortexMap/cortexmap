@@ -5,7 +5,7 @@ use crate::llm_service::BrainAtlasLlmService;
 use crate::embedding_service::BrainAtlasEmbeddingService;
 use crate::{Infra, ServiceError};
 use app::{BrainRegionInfo, ListBrainRegions, Chunker, LlmService, EmbeddingService, S3Storage, VectorDatabase};
-use domain::{BrainRegionEntry, RegionMapping, NewEmbedding, NewRegionSummary, ExistingSummary};
+use domain::{BrainRegionEntry, RegionMapping, NewEmbedding, NewRegionSummary, ExistingSummary, SimilarChunk, LlmResponse};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -51,8 +51,13 @@ where
 {
     type Error = ServiceError<E>;
 
-    async fn summarize(&self, chunks: Vec<&str>) -> Result<String, Self::Error> {
-        self.llm_service.summarize(chunks).await
+    async fn summarize_with_tools(
+        &self,
+        messages: &[serde_json::Value],
+        tools: &[serde_json::Value],
+        chat_model_override: Option<&str>,
+    ) -> Result<LlmResponse, Self::Error> {
+        self.llm_service.summarize_with_tools(messages, tools, chat_model_override).await
     }
 
     async fn generate_queries(&self, region_name: &str, count: u32) -> Result<Vec<String>, Self::Error> {
@@ -69,8 +74,8 @@ where
 {
     type Error = ServiceError<E>;
 
-    async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>, Self::Error> {
-        self.embedding_service.generate_embedding(text).await
+    async fn generate_embedding(&self, text: &str, model_override: Option<&str>) -> Result<Vec<f32>, Self::Error> {
+        self.embedding_service.generate_embedding(text, model_override).await
     }
 }
 
@@ -161,5 +166,38 @@ where
             .map_err(ServiceError::InfraError)?;
         
         Ok(summary_id)
+    }
+
+    async fn search_similar(
+        &self,
+        query_embedding: Vec<f32>,
+        region_id: i32,
+        top_k: usize,
+    ) -> Result<Vec<SimilarChunk>, Self::Error> {
+        let database_url = self
+            .infra
+            .get("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .search_similar(&database_url, query_embedding, region_id, top_k)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+
+    async fn update_summary_text(
+        &self,
+        summary_id: Uuid,
+        summary_text: &str,
+    ) -> Result<(), Self::Error> {
+        let database_url = self
+            .infra
+            .get("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .update_summary_text(&database_url, summary_id, summary_text)
+            .await
+            .map_err(ServiceError::InfraError)
     }
 }

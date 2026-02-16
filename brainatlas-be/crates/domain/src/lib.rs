@@ -3,9 +3,13 @@ pub use rpc_types;
 
 mod processing;
 mod hash;
+mod tool_calling;
+pub mod boolean_query;
 
 pub use processing::*;
 pub use hash::compute_hash;
+pub use tool_calling::*;
+pub use boolean_query::BooleanQuery;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

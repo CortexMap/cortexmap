@@ -2,7 +2,8 @@ use crate::error::InfraError;
 use crate::models::*;
 use crate::schema;
 use diesel::prelude::*;
-use domain::{ExistingSummary, NewEmbedding, NewRegionSummary};
+use diesel::sql_types::{Float8, Int4, Text};
+use domain::{ExistingSummary, NewEmbedding, NewRegionSummary, SimilarChunk};
 use services::infra::VectorDatabase;
 use std::sync::{Arc, Mutex, OnceLock};
 use uuid::Uuid;
@@ -70,6 +71,10 @@ impl VectorDatabase for BrainAtlasVectorDB {
                     chunk_index: e.chunk_index,
                     chunk_text: e.chunk_text,
                     embedding: pgvector::Vector::from(e.embedding),
+                    source_pmc_id: e.source_pmc_id,
+                    source_uid: e.source_uid,
+                    source_s3_key: e.source_s3_key,
+                    source_query: e.source_query,
                 })
                 .collect();
 
@@ -131,6 +136,90 @@ impl VectorDatabase for BrainAtlasVectorDB {
                         })
                     })
                 })
+        })
+        .await
+    }
+
+    async fn search_similar(
+        &self,
+        database_url: &str,
+        query_embedding: Vec<f32>,
+        region_id_param: i32,
+        top_k: usize,
+    ) -> Result<Vec<SimilarChunk>, Self::Error> {
+        let embedding_str = format!(
+            "[{}]",
+            query_embedding
+                .iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+
+        #[derive(QueryableByName)]
+        struct SimilarChunkRow {
+            #[diesel(sql_type = Int4)]
+            chunk_index: i32,
+            #[diesel(sql_type = Text)]
+            chunk_text: String,
+            #[diesel(sql_type = Float8)]
+            similarity_score: f64,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Varchar>)]
+            source_pmc_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Varchar>)]
+            source_uid: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<Text>)]
+            source_s3_key: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<Text>)]
+            source_query: Option<String>,
+        }
+
+        self.run_blocking(database_url, move |conn| {
+            let rows = diesel::sql_query(
+                "SELECT chunk_index, chunk_text, \
+                 1.0 - (embedding <=> $1::vector) AS similarity_score, \
+                 source_pmc_id, source_uid, source_s3_key, source_query \
+                 FROM brain_region_embeddings \
+                 WHERE region_id = $2 \
+                 ORDER BY embedding <=> $1::vector \
+                 LIMIT $3",
+            )
+            .bind::<Text, _>(&embedding_str)
+            .bind::<Int4, _>(region_id_param)
+            .bind::<diesel::sql_types::BigInt, _>(top_k as i64)
+            .load::<SimilarChunkRow>(conn)?;
+
+            Ok(rows
+                .into_iter()
+                .map(|r| SimilarChunk {
+                    chunk_index: r.chunk_index,
+                    chunk_text: r.chunk_text,
+                    similarity_score: r.similarity_score,
+                    source_pmc_id: r.source_pmc_id,
+                    source_uid: r.source_uid,
+                    source_s3_key: r.source_s3_key,
+                    source_query: r.source_query,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    async fn update_summary_text(
+        &self,
+        database_url: &str,
+        summary_id_param: Uuid,
+        summary_text: &str,
+    ) -> Result<(), Self::Error> {
+        let text = summary_text.to_string();
+        self.run_blocking(database_url, move |conn| {
+            use schema::region_summary;
+
+            diesel::update(region_summary::table.filter(region_summary::id.eq(summary_id_param)))
+                .set(region_summary::summary.eq(Some(&text)))
+                .execute(conn)?;
+
+            Ok(())
         })
         .await
     }

@@ -92,6 +92,22 @@ message ProcessRegionRequest {
   repeated string s3_keys = 2;
   // UUID of the batch that triggered this processing
   Uuid batch_id = 3;
+  // Optional: LLM model for chat/summarization (e.g., "openai/gpt-4o-mini").
+  // If empty, falls back to CHAT_MODEL env var or default.
+  optional string chat_model = 4;
+  // Optional: LLM model for embeddings (e.g., "text-embedding-3-small").
+  // If empty, falls back to EMBEDDING_MODEL env var or default.
+  optional string embedding_model = 5;
+  // Paper metadata for source attribution
+  repeated PaperMetadata paper_metadata = 6;
+}
+
+// Metadata for a single paper fetched from PubMed
+message PaperMetadata {
+  string s3_key = 1;                    // S3 key that matches an entry in s3_keys
+  optional string pmc_id = 2;           // PubMed Central ID (e.g., "PMC12345")
+  optional string uid = 3;              // PubMed UID for linking
+  optional string query = 4;            // The PubMed query that found this paper
 }
 
 message ProcessRegionResponse {

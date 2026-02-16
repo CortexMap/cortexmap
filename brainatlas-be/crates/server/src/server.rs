@@ -130,7 +130,7 @@ async fn status_handler(
     Ok(Json(resp))
 }
 
-/// POST /brainatlas-be/api/process  body: { "region_id": { "value": "<uuid>" }, "batch_id": { "value": "<uuid>" }, "s3_keys": ["..."] }
+/// POST /brainatlas-be/api/process  body: { "region_id": { "value": "<uuid>" }, "batch_id": { "value": "<uuid>" }, "s3_keys": ["..."], "paper_metadata": [...] }
 async fn process_region_handler(
     State(server): State<BrainAtlasServer>,
     Json(body): Json<ProcessRegionRequest>,
@@ -143,7 +143,14 @@ async fn process_region_handler(
         .and_then(|u| u.value.parse::<uuid::Uuid>().ok());
     let resp = server
         .api
-        .process_region(region_id, batch_id, body.s3_keys)
+        .process_region(
+            region_id,
+            batch_id,
+            body.s3_keys,
+            body.paper_metadata,
+            body.chat_model,
+            body.embedding_model,
+        )
         .await
         .map_err(ServerError)?;
     Ok(Json(resp))

@@ -12,6 +12,12 @@ diesel::table! {
         chunk_text -> Text,
         embedding -> Vector,
         created_at -> Timestamp,
+        #[max_length = 20]
+        source_pmc_id -> Nullable<Varchar>,
+        #[max_length = 20]
+        source_uid -> Nullable<Varchar>,
+        source_s3_key -> Nullable<Text>,
+        source_query -> Nullable<Text>,
     }
 }
 

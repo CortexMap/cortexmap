@@ -4,7 +4,7 @@ use crate::llm::OpenRouterClient;
 use crate::pg::BrainAtlasPostgresql;
 use crate::s3::BrainAtlasS3;
 use crate::vectordb::BrainAtlasVectorDB;
-use domain::{ExistingSummary, NewEmbedding, NewRegionSummary};
+use domain::{ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary, SimilarChunk};
 use services::infra::{EmbeddingGenerator, LlmClient, S3Storage, VectorDatabase};
 use services::{EnvInfra, Postgres, Query, QueryResult};
 
@@ -80,13 +80,16 @@ impl EmbeddingGenerator for BrainAtlasInfra {
 impl LlmClient for BrainAtlasInfra {
     type Error = InfraError;
 
-    async fn summarize(
+    async fn summarize_with_tools(
         &self,
         api_key: &str,
         chat_model: &str,
-        chunks: Vec<&str>,
-    ) -> Result<String, Self::Error> {
-        self.llm.summarize(api_key, chat_model, chunks).await
+        messages: &[serde_json::Value],
+        tools: &[serde_json::Value],
+    ) -> Result<LlmResponse, Self::Error> {
+        self.llm
+            .summarize_with_tools(api_key, chat_model, messages, tools)
+            .await
     }
 
     async fn generate_queries(
@@ -96,7 +99,9 @@ impl LlmClient for BrainAtlasInfra {
         region_name: &str,
         count: u32,
     ) -> Result<Vec<String>, Self::Error> {
-        self.llm.generate_queries(api_key, chat_model, region_name, count).await
+        self.llm
+            .generate_queries(api_key, chat_model, region_name, count)
+            .await
     }
 }
 
@@ -130,6 +135,29 @@ impl VectorDatabase for BrainAtlasInfra {
     ) -> Result<Option<ExistingSummary>, Self::Error> {
         self.vectordb
             .check_content_hash(database_url, region_id, hash)
+            .await
+    }
+
+    async fn search_similar(
+        &self,
+        database_url: &str,
+        query_embedding: Vec<f32>,
+        region_id: i32,
+        top_k: usize,
+    ) -> Result<Vec<SimilarChunk>, Self::Error> {
+        self.vectordb
+            .search_similar(database_url, query_embedding, region_id, top_k)
+            .await
+    }
+
+    async fn update_summary_text(
+        &self,
+        database_url: &str,
+        summary_id: uuid::Uuid,
+        summary_text: &str,
+    ) -> Result<(), Self::Error> {
+        self.vectordb
+            .update_summary_text(database_url, summary_id, summary_text)
             .await
     }
 }

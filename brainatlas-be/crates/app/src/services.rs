@@ -1,4 +1,4 @@
-use domain::{BrainRegionEntry, RegionMapping, NewEmbedding, NewRegionSummary, ExistingSummary};
+use domain::{BrainRegionEntry, RegionMapping, NewEmbedding, NewRegionSummary, ExistingSummary, SimilarChunk, LlmResponse};
 use uuid::Uuid;
 use std::error::Error;
 
@@ -26,8 +26,16 @@ pub trait Chunker: Send + Sync {
 #[async_trait::async_trait]
 pub trait LlmService: Send + Sync {
     type Error: Error + Send + Sync;
-    
-    async fn summarize(&self, chunks: Vec<&str>) -> Result<String, Self::Error>;
+
+    /// Send a multi-turn chat with tool definitions, returning tool calls or final text.
+    /// `chat_model_override` if Some, overrides the default/env model.
+    async fn summarize_with_tools(
+        &self,
+        messages: &[serde_json::Value],
+        tools: &[serde_json::Value],
+        chat_model_override: Option<&str>,
+    ) -> Result<LlmResponse, Self::Error>;
+
     async fn generate_queries(&self, region_name: &str, count: u32) -> Result<Vec<String>, Self::Error>;
 }
 
@@ -35,8 +43,10 @@ pub trait LlmService: Send + Sync {
 #[async_trait::async_trait]
 pub trait EmbeddingService: Send + Sync {
     type Error: Error + Send + Sync;
-    
-    async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>, Self::Error>;
+
+    /// Generate embedding for text.
+    /// `model_override` if Some, overrides the default/env embedding model.
+    async fn generate_embedding(&self, text: &str, model_override: Option<&str>) -> Result<Vec<f32>, Self::Error>;
 }
 
 /// S3 storage service
@@ -58,6 +68,17 @@ pub trait VectorDatabase: Send + Sync {
         summary: NewRegionSummary,
         embeddings: Vec<NewEmbedding>,
     ) -> Result<Uuid, Self::Error>;
+    async fn search_similar(
+        &self,
+        query_embedding: Vec<f32>,
+        region_id: i32,
+        top_k: usize,
+    ) -> Result<Vec<SimilarChunk>, Self::Error>;
+    async fn update_summary_text(
+        &self,
+        summary_id: Uuid,
+        summary_text: &str,
+    ) -> Result<(), Self::Error>;
 }
 
 /// Combined services trait

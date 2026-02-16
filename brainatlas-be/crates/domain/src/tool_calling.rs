@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 
 /// A tool call request from the LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,7 +17,7 @@ pub struct ToolResult {
 }
 
 /// Parsed arguments for the search_embeddings tool
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SearchEmbeddingsArgs {
     pub query: String,
     #[serde(default = "default_top_k")]

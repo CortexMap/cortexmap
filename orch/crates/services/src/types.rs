@@ -37,6 +37,12 @@ pub struct ProcessRegionRequest {
     pub region_id: UuidWrapper,
     pub batch_id: UuidWrapper,
     pub s3_keys: Vec<String>,
+    /// Chat model to use for summarization (e.g., "openai/gpt-4o-mini")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_model: Option<String>,
+    /// Embedding model to use (e.g., "text-embedding-3-small")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

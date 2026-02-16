@@ -299,6 +299,25 @@ where
 
         let region_uuid = batch.region_id;
 
+        // Read model configuration from orch config (with env var fallback)
+        let chat_model = match self.infra.get_env_var("CHAT_MODEL") {
+            Ok(model) => Some(model),
+            Err(_) => self
+                .infra
+                .get_config(database_url, ConfigKey::ChatModel)
+                .await
+                .map_err(ServiceError::InfraError)?,
+        };
+
+        let embedding_model = match self.infra.get_env_var("EMBEDDING_MODEL") {
+            Ok(model) => Some(model),
+            Err(_) => self
+                .infra
+                .get_config(database_url, ConfigKey::EmbeddingModel)
+                .await
+                .map_err(ServiceError::InfraError)?,
+        };
+
         let request = ProcessRegionRequest {
             region_id: UuidWrapper {
                 value: region_uuid.to_string(),
@@ -307,6 +326,8 @@ where
                 value: batch.id.to_string(),
             },
             s3_keys: text_s3_keys.clone(),
+            chat_model,
+            embedding_model,
         };
         
         tracing::debug!(

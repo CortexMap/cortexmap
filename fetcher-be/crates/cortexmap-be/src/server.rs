@@ -5,16 +5,18 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use cortexmap_core::blueprint::connections::{Connections, Database, Fetcher, Postgresql, RetryConfig, S3Info};
 use cortexmap_core::blueprint::Blueprint;
+use cortexmap_core::blueprint::connections::{
+    Connections, Database, Fetcher, Postgresql, RetryConfig, S3Info,
+};
 use cortexmap_fetcher::enqueue_query;
 use cortexmap_infra::{InfraContext, S3Infra, TaskQueueInfra};
-use std_infra::{StdInfra, StdInfraContext};
+use serde::Deserialize;
 use std::sync::Arc;
+use std_infra::{StdInfra, StdInfraContext};
 use tokio::sync::RwLock;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
-use tracing::{error, info, Level};
-use serde::Deserialize;
+use tracing::{Level, error, info};
 
 // ---------------------------------------------------------------------------
 // Shared server state
@@ -85,8 +87,14 @@ impl QueueServer {
             .route("/api/queue/status", get(get_queue_status_handler))
             .route("/api/queue/tasks", get(get_tasks_handler))
             .route("/api/queue/task/{pmc_id}", get(get_task_details_handler))
-            .route("/api/queue/task/{task_id}/components", get(get_task_components_handler))
-            .route("/api/queue/workers/allocate", post(allocate_workers_handler))
+            .route(
+                "/api/queue/task/{task_id}/components",
+                get(get_task_components_handler),
+            )
+            .route(
+                "/api/queue/workers/allocate",
+                post(allocate_workers_handler),
+            )
             .route("/api/queue/workers/stop", post(stop_workers_handler))
             .route("/api/queue/workers/status", get(get_worker_status_handler))
             .layer(
@@ -133,7 +141,10 @@ async fn enqueue_query_handler(
     State(server): State<QueueServer>,
     Json(req): Json<EnqueueRequest>,
 ) -> Result<Json<EnqueueResponse>, AppError> {
-    info!("Enqueuing query: '{}' (page_size: {})", req.query, req.page_size);
+    info!(
+        "Enqueuing query: '{}' (page_size: {})",
+        req.query, req.page_size
+    );
 
     let mut blueprint = server.blueprint_template.clone();
     blueprint.fetcher.query = req.query.clone();
@@ -170,23 +181,28 @@ async fn enqueue_query_handler(
 async fn get_queue_status_handler(
     State(server): State<QueueServer>,
 ) -> Result<Json<StatusResponse>, AppError> {
-    use crate::proto::{TaskBreakdown, ComponentStatistics, WorkerStatistics, RecentTask};
-    
-    let detailed_stats = server.ctx.infra.get_detailed_task_stats().await.map_err(|e| {
-        error!("Failed to get detailed task stats: {}", e);
-        AppError(e.into())
-    })?;
-    
+    use crate::proto::{ComponentStatistics, RecentTask, TaskBreakdown, WorkerStatistics};
+
+    let detailed_stats = server
+        .ctx
+        .infra
+        .get_detailed_task_stats()
+        .await
+        .map_err(|e| {
+            error!("Failed to get detailed task stats: {}", e);
+            AppError(e.into())
+        })?;
+
     let component_stats = server.ctx.infra.get_component_stats().await.map_err(|e| {
         error!("Failed to get component stats: {}", e);
         AppError(e.into())
     })?;
-    
+
     let recent_tasks = server.ctx.infra.get_recent_tasks(10).await.map_err(|e| {
         error!("Failed to get recent tasks: {}", e);
         AppError(e.into())
     })?;
-    
+
     // Concurrently fetch completed summary/abstract content from S3
     let recent_tasks_with_content: Vec<RecentTask> = {
         let infra = &server.ctx.infra;
@@ -229,11 +245,11 @@ async fn get_queue_status_handler(
         });
         futures::future::join_all(futures).await
     };
-    
+
     let worker_manager = server.worker_manager.read().await;
     let active_workers = worker_manager.active_worker_count() as i32;
     let worker_infos = worker_manager.get_worker_info_with_stats().await;
-    
+
     // Calculate worker statistics
     let total_tasks_processed: i64 = worker_infos.iter().map(|w| w.tasks_processed).sum();
     let avg_tasks_per_worker = if active_workers > 0 {
@@ -241,15 +257,16 @@ async fn get_queue_status_handler(
     } else {
         0.0
     };
-    
+
     let (most_productive_worker_id, most_productive_count) = worker_infos
         .iter()
         .max_by_key(|w| w.tasks_processed)
         .map(|w| (w.worker_id.clone(), w.tasks_processed))
         .unwrap_or((String::new(), 0));
-    
+
     // Format oldest pending task age
-    let oldest_pending_age_str = detailed_stats.oldest_pending_task_age_secs
+    let oldest_pending_age_str = detailed_stats
+        .oldest_pending_task_age_secs
         .map(|secs| {
             let hours = secs / 3600;
             let mins = (secs % 3600) / 60;
@@ -260,7 +277,7 @@ async fn get_queue_status_handler(
             }
         })
         .unwrap_or_else(|| "N/A".to_string());
-    
+
     Ok(Json(StatusResponse {
         total_tasks: detailed_stats.basic.total,
         pending_tasks: detailed_stats.basic.pending,
@@ -301,14 +318,19 @@ async fn get_task_details_handler(
     Path(pmc_id): Path<String>,
 ) -> Result<Json<TaskDetailsResponse>, AppError> {
     use crate::proto::ComponentStatus;
-    
+
     info!("Getting task details for PMC {}", pmc_id);
 
-    let task_opt = server.ctx.infra.get_task_by_pmc_id(&pmc_id).await.map_err(|e| {
-        error!("Failed to get task by PMC ID: {}", e);
-        AppError(e.into())
-    })?;
-    
+    let task_opt = server
+        .ctx
+        .infra
+        .get_task_by_pmc_id(&pmc_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get task by PMC ID: {}", e);
+            AppError(e.into())
+        })?;
+
     let task = match task_opt {
         Some(t) => t,
         None => {
@@ -330,23 +352,37 @@ async fn get_task_details_handler(
             }));
         }
     };
-    
-    let components_data = server.ctx.infra.get_task_components(task.id).await.map_err(|e| {
-        error!("Failed to get task components: {}", e);
-        AppError(e.into())
-    })?;
-    
-    let components: Vec<ComponentStatus> = components_data.into_iter().map(|c| ComponentStatus {
-        component_type: c.component_type,
-        status: c.status,
-        attempt_count: c.attempt_count,
-        max_attempts: c.max_attempts,
-        s3_key: c.s3_key.unwrap_or_default(),
-        error_message: c.error_message.unwrap_or_default(),
-        last_attempted_at: c.last_attempted_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
-        completed_at: c.completed_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
-    }).collect();
-    
+
+    let components_data = server
+        .ctx
+        .infra
+        .get_task_components(task.id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get task components: {}", e);
+            AppError(e.into())
+        })?;
+
+    let components: Vec<ComponentStatus> = components_data
+        .into_iter()
+        .map(|c| ComponentStatus {
+            component_type: c.component_type,
+            status: c.status,
+            attempt_count: c.attempt_count,
+            max_attempts: c.max_attempts,
+            s3_key: c.s3_key.unwrap_or_default(),
+            error_message: c.error_message.unwrap_or_default(),
+            last_attempted_at: c
+                .last_attempted_at
+                .map(|dt| dt.and_utc().timestamp())
+                .unwrap_or(0),
+            completed_at: c
+                .completed_at
+                .map(|dt| dt.and_utc().timestamp())
+                .unwrap_or(0),
+        })
+        .collect();
+
     Ok(Json(TaskDetailsResponse {
         found: true,
         pmc_id: task.pmc_id.clone(),
@@ -357,10 +393,19 @@ async fn get_task_details_handler(
         priority: task.priority,
         created_at: task.created_at.and_utc().timestamp(),
         updated_at: task.updated_at.and_utc().timestamp(),
-        started_at: task.started_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
-        completed_at: task.completed_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
+        started_at: task
+            .started_at
+            .map(|dt| dt.and_utc().timestamp())
+            .unwrap_or(0),
+        completed_at: task
+            .completed_at
+            .map(|dt| dt.and_utc().timestamp())
+            .unwrap_or(0),
         worker_id: task.worker_id.unwrap_or_default(),
-        heartbeat_at: task.heartbeat_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
+        heartbeat_at: task
+            .heartbeat_at
+            .map(|dt| dt.and_utc().timestamp())
+            .unwrap_or(0),
         worker_version: task.worker_version.unwrap_or_default(),
     }))
 }
@@ -437,39 +482,58 @@ async fn get_task_components_handler(
     Path(task_id): Path<i64>,
 ) -> Result<Json<TaskComponentsResponse>, AppError> {
     use crate::proto::ComponentStatus;
-    
+
     info!("Getting components for task_id {}", task_id);
-    
+
     // Get the task to retrieve pmc_id and status
-    let task_opt = server.ctx.infra.get_task_by_id(task_id).await.map_err(|e| {
-        error!("Failed to query task by ID: {}", e);
-        AppError(e.into())
-    })?;
-    
+    let task_opt = server
+        .ctx
+        .infra
+        .get_task_by_id(task_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to query task by ID: {}", e);
+            AppError(e.into())
+        })?;
+
     let task = match task_opt {
         Some(t) => t,
         None => {
             return Err(AppError(anyhow::anyhow!("Task not found")));
         }
     };
-    
+
     // Get components
-    let components_data = server.ctx.infra.get_task_components(task_id).await.map_err(|e| {
-        error!("Failed to get task components: {}", e);
-        AppError(e.into())
-    })?;
-    
-    let components: Vec<ComponentStatus> = components_data.into_iter().map(|c| ComponentStatus {
-        component_type: c.component_type,
-        status: c.status,
-        attempt_count: c.attempt_count,
-        max_attempts: c.max_attempts,
-        s3_key: c.s3_key.unwrap_or_default(),
-        error_message: c.error_message.unwrap_or_default(),
-        last_attempted_at: c.last_attempted_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
-        completed_at: c.completed_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
-    }).collect();
-    
+    let components_data = server
+        .ctx
+        .infra
+        .get_task_components(task_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get task components: {}", e);
+            AppError(e.into())
+        })?;
+
+    let components: Vec<ComponentStatus> = components_data
+        .into_iter()
+        .map(|c| ComponentStatus {
+            component_type: c.component_type,
+            status: c.status,
+            attempt_count: c.attempt_count,
+            max_attempts: c.max_attempts,
+            s3_key: c.s3_key.unwrap_or_default(),
+            error_message: c.error_message.unwrap_or_default(),
+            last_attempted_at: c
+                .last_attempted_at
+                .map(|dt| dt.and_utc().timestamp())
+                .unwrap_or(0),
+            completed_at: c
+                .completed_at
+                .map(|dt| dt.and_utc().timestamp())
+                .unwrap_or(0),
+        })
+        .collect();
+
     Ok(Json(TaskComponentsResponse {
         task_id,
         pmc_id: task.pmc_id,
@@ -492,33 +556,50 @@ async fn get_tasks_handler(
 ) -> Result<Json<Vec<TaskDetailsResponse>>, AppError> {
     let status = params.status.unwrap_or_else(|| "completed".to_string());
     let limit = params.limit.unwrap_or(100).min(1000); // Cap at 1000
-    
+
     info!("Getting tasks with status={} limit={}", status, limit);
-    
-    let tasks = server.ctx.infra.get_tasks_by_status(&status, limit).await.map_err(|e| {
-        error!("Failed to get tasks by status: {}", e);
-        AppError(e.into())
-    })?;
-    
+
+    let tasks = server
+        .ctx
+        .infra
+        .get_tasks_by_status(&status, limit)
+        .await
+        .map_err(|e| {
+            error!("Failed to get tasks by status: {}", e);
+            AppError(e.into())
+        })?;
+
     // Convert to TaskDetailsResponse format (without components for efficiency)
-    let response: Vec<TaskDetailsResponse> = tasks.into_iter().map(|task| {
-        TaskDetailsResponse {
-            found: true,
-            pmc_id: task.pmc_id,
-            status: task.status,
-            components: vec![], // Don't fetch components in list view for performance
-            error_message: String::new(),
-            query: task.query,
-            priority: task.priority,
-            created_at: task.created_at.and_utc().timestamp(),
-            updated_at: task.updated_at.and_utc().timestamp(),
-            started_at: task.started_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
-            completed_at: task.completed_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
-            worker_id: task.worker_id.unwrap_or_default(),
-            heartbeat_at: task.heartbeat_at.map(|dt| dt.and_utc().timestamp()).unwrap_or(0),
-            worker_version: task.worker_version.unwrap_or_default(),
-        }
-    }).collect();
-    
+    let response: Vec<TaskDetailsResponse> = tasks
+        .into_iter()
+        .map(|task| {
+            TaskDetailsResponse {
+                found: true,
+                pmc_id: task.pmc_id,
+                status: task.status,
+                components: vec![], // Don't fetch components in list view for performance
+                error_message: String::new(),
+                query: task.query,
+                priority: task.priority,
+                created_at: task.created_at.and_utc().timestamp(),
+                updated_at: task.updated_at.and_utc().timestamp(),
+                started_at: task
+                    .started_at
+                    .map(|dt| dt.and_utc().timestamp())
+                    .unwrap_or(0),
+                completed_at: task
+                    .completed_at
+                    .map(|dt| dt.and_utc().timestamp())
+                    .unwrap_or(0),
+                worker_id: task.worker_id.unwrap_or_default(),
+                heartbeat_at: task
+                    .heartbeat_at
+                    .map(|dt| dt.and_utc().timestamp())
+                    .unwrap_or(0),
+                worker_version: task.worker_version.unwrap_or_default(),
+            }
+        })
+        .collect();
+
     Ok(Json(response))
 }

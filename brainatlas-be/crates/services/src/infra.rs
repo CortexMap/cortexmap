@@ -1,4 +1,4 @@
-use domain::{BrainRegionEntry, ExistingSummary, NewEmbedding, NewRegionSummary, RegionMapping};
+use domain::{BrainRegionEntry, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, SimilarChunk};
 use uuid::Uuid;
 
 /// All queries the service layer can issue against Postgres.
@@ -98,13 +98,15 @@ pub trait EmbeddingGenerator: Send + Sync {
 pub trait LlmClient: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    /// Generate summary from text chunks
-    async fn summarize(
+    /// Send a chat completion request with tool definitions, returning either
+    /// tool calls the LLM wants to make or the final text response.
+    async fn summarize_with_tools(
         &self,
         api_key: &str,
         chat_model: &str,
-        chunks: Vec<&str>,
-    ) -> Result<String, Self::Error>;
+        messages: &[serde_json::Value],
+        tools: &[serde_json::Value],
+    ) -> Result<LlmResponse, Self::Error>;
 
     /// Generate search queries for a brain region
     async fn generate_queries(
@@ -142,4 +144,21 @@ pub trait VectorDatabase: Send + Sync {
         region_id: i32,
         content_hash: &str,
     ) -> Result<Option<ExistingSummary>, Self::Error>;
+
+    /// Search for similar chunks by embedding vector, scoped to a region
+    async fn search_similar(
+        &self,
+        database_url: &str,
+        query_embedding: Vec<f32>,
+        region_id: i32,
+        top_k: usize,
+    ) -> Result<Vec<SimilarChunk>, Self::Error>;
+
+    /// Update the summary text for an existing summary record
+    async fn update_summary_text(
+        &self,
+        database_url: &str,
+        summary_id: Uuid,
+        summary_text: &str,
+    ) -> Result<(), Self::Error>;
 }

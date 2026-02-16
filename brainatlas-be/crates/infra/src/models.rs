@@ -103,4 +103,40 @@ pub struct NewEmbeddingRow {
     pub chunk_index: i32,
     pub chunk_text: String,
     pub embedding: pgvector::Vector,
+    pub source_pmc_id: Option<String>,
+    pub source_uid: Option<String>,
+    pub source_s3_key: Option<String>,
+    pub source_query: Option<String>,
+}
+
+/// Diesel queryable model for `brain_region_embeddings`
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = brain_region_embeddings)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct EmbeddingRow {
+    pub id: Uuid,
+    pub region_id: i32,
+    pub summary_id: Uuid,
+    pub chunk_index: i32,
+    pub chunk_text: String,
+    pub embedding: pgvector::Vector,
+    pub created_at: NaiveDateTime,
+    pub source_pmc_id: Option<String>,
+    pub source_uid: Option<String>,
+    pub source_s3_key: Option<String>,
+    pub source_query: Option<String>,
+}
+
+impl From<EmbeddingRow> for domain::SimilarChunk {
+    fn from(row: EmbeddingRow) -> Self {
+        domain::SimilarChunk {
+            chunk_index: row.chunk_index,
+            chunk_text: row.chunk_text,
+            similarity_score: 0.0, // Set by query with distance calculation
+            source_pmc_id: row.source_pmc_id,
+            source_uid: row.source_uid,
+            source_s3_key: row.source_s3_key,
+            source_query: row.source_query,
+        }
+    }
 }
