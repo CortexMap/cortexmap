@@ -21,11 +21,7 @@ impl BrainAtlasInfra {
         let pg = BrainAtlasPostgresql::new();
         let env = BrainAtlasEnvInfra::new();
         let s3 = BrainAtlasS3::new();
-
-        // FIXME: lazily initialize.
-        let api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
-        let llm = OpenRouterClient::new(api_key);
-
+        let llm = OpenRouterClient::new();
         let vectordb = BrainAtlasVectorDB::new();
 
         Self {
@@ -37,7 +33,6 @@ impl BrainAtlasInfra {
         }
     }
 }
-
 impl EnvInfra for BrainAtlasInfra {
     type Error = InfraError;
     fn get(&self, key: &str) -> Result<String, Self::Error> {
@@ -71,8 +66,13 @@ impl S3Storage for BrainAtlasInfra {
 impl EmbeddingGenerator for BrainAtlasInfra {
     type Error = InfraError;
 
-    async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>, Self::Error> {
-        self.llm.generate_embedding(text).await
+    async fn generate_embedding(
+        &self,
+        api_key: &str,
+        embedding_model: &str,
+        text: &str,
+    ) -> Result<Vec<f32>, Self::Error> {
+        self.llm.generate_embedding(api_key, embedding_model, text).await
     }
 }
 
@@ -80,16 +80,23 @@ impl EmbeddingGenerator for BrainAtlasInfra {
 impl LlmClient for BrainAtlasInfra {
     type Error = InfraError;
 
-    async fn summarize(&self, chunks: Vec<&str>) -> Result<String, Self::Error> {
-        self.llm.summarize(chunks).await
+    async fn summarize(
+        &self,
+        api_key: &str,
+        chat_model: &str,
+        chunks: Vec<&str>,
+    ) -> Result<String, Self::Error> {
+        self.llm.summarize(api_key, chat_model, chunks).await
     }
 
     async fn generate_queries(
         &self,
+        api_key: &str,
+        chat_model: &str,
         region_name: &str,
         count: u32,
     ) -> Result<Vec<String>, Self::Error> {
-        self.llm.generate_queries(region_name, count).await
+        self.llm.generate_queries(api_key, chat_model, region_name, count).await
     }
 }
 

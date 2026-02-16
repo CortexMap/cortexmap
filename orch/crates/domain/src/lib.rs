@@ -24,6 +24,10 @@ pub enum ConfigKey {
     QueryGenerationLimit,
     /// Default number of workers to allocate when tasks are enqueued
     DefaultWorkerCount,
+    /// LLM model for embeddings (e.g., "text-embedding-3-small")
+    EmbeddingModel,
+    /// LLM model for chat/summarization (e.g., "openai/gpt-4o-mini")
+    ChatModel,
 }
 
 /// Result of polling for completed fetch tasks

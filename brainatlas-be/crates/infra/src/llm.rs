@@ -1,7 +1,8 @@
 use crate::error::InfraError;
-use services::infra::{EmbeddingGenerator, LlmClient};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use services::infra::{EmbeddingGenerator, LlmClient};
+use std::sync::OnceLock;
 use tracing::{error, info};
 
 // Load prompt template from file at compile time
@@ -25,18 +26,20 @@ fn render_template(template: &str, vars: &[(&str, &str)]) -> String {
 }
 
 pub struct OpenRouterClient {
-    api_key: String,
     base_url: String,
-    client: Client,
+    client: OnceLock<Client>,
 }
 
 impl OpenRouterClient {
-    pub fn new(api_key: String) -> Self {
+    pub fn new() -> Self {
         Self {
-            api_key,
             base_url: "https://openrouter.ai/api/v1".to_string(),
-            client: Client::new(),
+            client: OnceLock::new(),
         }
+    }
+
+    fn get_client(&self) -> &Client {
+        self.client.get_or_init(|| Client::new())
     }
 }
 
@@ -87,18 +90,23 @@ struct ChatChoice {
 impl EmbeddingGenerator for OpenRouterClient {
     type Error = InfraError;
 
-    async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>, Self::Error> {
+    async fn generate_embedding(
+        &self,
+        api_key: &str,
+        embedding_model: &str,
+        text: &str,
+    ) -> Result<Vec<f32>, Self::Error> {
         info!("Generating embedding for {} characters", text.len());
 
         let request = EmbeddingRequest {
-            model: "text-embedding-3-small".to_string(),
+            model: embedding_model.to_string(),
             input: text.to_string(),
         };
 
         let response = self
-            .client
+            .get_client()
             .post(format!("{}/embeddings", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
@@ -112,7 +120,10 @@ impl EmbeddingGenerator for OpenRouterClient {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
             error!("Embedding API returned error {}: {}", status, error_text);
-            return Err(InfraError::S3(format!("API error {}: {}", status, error_text)));
+            return Err(InfraError::S3(format!(
+                "API error {}: {}",
+                status, error_text
+            )));
         }
 
         let embedding_response: EmbeddingResponse = response.json().await.map_err(|e| {
@@ -139,20 +150,25 @@ impl EmbeddingGenerator for OpenRouterClient {
 impl LlmClient for OpenRouterClient {
     type Error = InfraError;
 
-    async fn summarize(&self, chunks: Vec<&str>) -> Result<String, Self::Error> {
+    async fn summarize(
+        &self,
+        api_key: &str,
+        chat_model: &str,
+        chunks: Vec<&str>,
+    ) -> Result<String, Self::Error> {
         info!("Generating summary from {} chunks", chunks.len());
 
         // Combine all chunks with separators
         let combined_text = chunks.join("\n\n---\n\n");
-        
+
         let system_prompt = load_prompt("summarize_system");
         let user_prompt = render_template(
             load_prompt("summarize_user"),
-            &[("combined_text", &combined_text)]
+            &[("combined_text", &combined_text)],
         );
 
         let request = ChatRequest {
-            model: "openai/gpt-4o-mini".to_string(),
+            model: chat_model.to_string(),
             messages: vec![
                 ChatMessage {
                     role: "system".to_string(),
@@ -164,13 +180,13 @@ impl LlmClient for OpenRouterClient {
                 },
             ],
             temperature: 0.3,
-            max_tokens: Some(2000),
+            max_tokens: None,
         };
 
         let response = self
-            .client
+            .get_client()
             .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
@@ -184,7 +200,10 @@ impl LlmClient for OpenRouterClient {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
             error!("Chat API returned error {}: {}", status, error_text);
-            return Err(InfraError::S3(format!("API error {}: {}", status, error_text)));
+            return Err(InfraError::S3(format!(
+                "API error {}: {}",
+                status, error_text
+            )));
         }
 
         let chat_response: ChatResponse = response.json().await.map_err(|e| {
@@ -207,17 +226,26 @@ impl LlmClient for OpenRouterClient {
         Ok(summary)
     }
 
-    async fn generate_queries(&self, region_name: &str, count: u32) -> Result<Vec<String>, Self::Error> {
-        info!("Generating {} search queries for region: {}", count, region_name);
+    async fn generate_queries(
+        &self,
+        api_key: &str,
+        chat_model: &str,
+        region_name: &str,
+        count: u32,
+    ) -> Result<Vec<String>, Self::Error> {
+        info!(
+            "Generating {} search queries for region: {}",
+            count, region_name
+        );
 
         let system_prompt = load_prompt("generate_queries_system");
         let user_prompt = render_template(
             load_prompt("generate_queries_user"),
-            &[("count", &count.to_string()), ("region_name", region_name)]
+            &[("count", &count.to_string()), ("region_name", region_name)],
         );
 
         let request = ChatRequest {
-            model: "openai/gpt-4o-mini".to_string(),
+            model: chat_model.to_string(),
             messages: vec![
                 ChatMessage {
                     role: "system".to_string(),
@@ -229,13 +257,13 @@ impl LlmClient for OpenRouterClient {
                 },
             ],
             temperature: 0.7,
-            max_tokens: Some(500),
+            max_tokens: None,
         };
 
         let response = self
-            .client
+            .get_client()
             .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
@@ -249,7 +277,10 @@ impl LlmClient for OpenRouterClient {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
             error!("Chat API returned error {}: {}", status, error_text);
-            return Err(InfraError::S3(format!("API error {}: {}", status, error_text)));
+            return Err(InfraError::S3(format!(
+                "API error {}: {}",
+                status, error_text
+            )));
         }
 
         let chat_response: ChatResponse = response.json().await.map_err(|e| {
@@ -276,7 +307,9 @@ impl LlmClient for OpenRouterClient {
                 // Remove numbering if present (e.g., "1. query" -> "query")
                 if !trimmed.is_empty() {
                     let without_number = trimmed
-                        .trim_start_matches(|c: char| c.is_numeric() || c == '.' || c == ')' || c == '-')
+                        .trim_start_matches(|c: char| {
+                            c.is_numeric() || c == '.' || c == ')' || c == '-'
+                        })
                         .trim();
                     if !without_number.is_empty() {
                         Some(without_number.to_string())

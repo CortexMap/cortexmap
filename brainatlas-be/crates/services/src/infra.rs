@@ -85,7 +85,12 @@ pub trait EmbeddingGenerator: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Generate embedding for text chunk
-    async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>, Self::Error>;
+    async fn generate_embedding(
+        &self,
+        api_key: &str,
+        embedding_model: &str,
+        text: &str,
+    ) -> Result<Vec<f32>, Self::Error>;
 }
 
 /// LLM client for text generation
@@ -94,11 +99,18 @@ pub trait LlmClient: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Generate summary from text chunks
-    async fn summarize(&self, chunks: Vec<&str>) -> Result<String, Self::Error>;
+    async fn summarize(
+        &self,
+        api_key: &str,
+        chat_model: &str,
+        chunks: Vec<&str>,
+    ) -> Result<String, Self::Error>;
 
     /// Generate search queries for a brain region
     async fn generate_queries(
         &self,
+        api_key: &str,
+        chat_model: &str,
         region_name: &str,
         count: u32,
     ) -> Result<Vec<String>, Self::Error>;
