@@ -13,7 +13,7 @@ services:
       S3_BUCKET: ${S3_BUCKET}
       FETCHER_HTTP_ADDR: ${FETCHER_HTTP_ADDR:-0.0.0.0:8082}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/fetcher-be/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8082/fetcher-be/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -63,7 +63,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
       ORCH_HTTP_ADDR: ${ORCH_HTTP_ADDR:-0.0.0.0:8080}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/orch/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/orch/health"]
       interval: 30s
       timeout: 5s
       retries: 3
