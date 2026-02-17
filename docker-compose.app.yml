@@ -11,7 +11,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET}
-      FETCHER_HTTP_ADDR: ${FETCHER_HTTP_ADDR:-0.0.0.0:8080}
+      FETCHER_HTTP_ADDR: ${FETCHER_HTTP_ADDR:-0.0.0.0:8082}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/fetcher-be/health"]
       interval: 30s
@@ -61,7 +61,7 @@ services:
       FETCHER_HTTP_ADDR: ${FETCHER_HTTP_ADDR:-http://cortexmap-be:8080}
       BRAINATLAS_HTTP_ADDR: ${BRAINATLAS_HTTP_ADDR:-http://brainatlas-be:8081}
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
-      ORCH_HTTP_ADDR: ${ORCH_HTTP_ADDR:-0.0.0.0:8082}
+      ORCH_HTTP_ADDR: ${ORCH_HTTP_ADDR:-0.0.0.0:8080}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082/orch/health"]
       interval: 30s
