@@ -1,0 +1,18 @@
+[package]
+name = "services"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+domain.workspace = true
+app.workspace = true
+chrono.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
+backon.workspace = true
+

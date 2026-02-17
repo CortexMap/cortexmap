@@ -1,5 +1,5 @@
 ### Enqueue a query (minimal)
-POST https://capstone.ssdd.dev/fetcher-be/api/queue/enqueue
+POST http://0.0.0.0:8082/fetcher-be/api/queue/enqueue
 Content-Type: application/json
 
 {

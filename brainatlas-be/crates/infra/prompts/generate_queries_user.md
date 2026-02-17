@@ -1,0 +1,1 @@
+Generate exactly {count} distinct search queries (one per line) to find research papers about the brain region: {region_name}. Each query should target different aspects (anatomy, function, connectivity, disorders, etc.).

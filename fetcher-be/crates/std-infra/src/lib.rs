@@ -20,12 +20,10 @@ pub struct StdInfraContext {
 }
 
 impl StdInfraContext {
-    // maybe consume self?
+    // Note: Creates a new InfraContext on each call.
+    // Currently simple but could be optimized to use a singleton pattern
+    // to ensure only one instance is created across the application.
     pub fn get(&self) -> Result<InfraContext<StdInfra>, InfraError> {
-        // TODO: ideally this function should only be called ones
-        // but it's easy to make mistakes here,
-        // so maybe we could initiate this statically
-        // and always return the same instance.
         Ok(InfraContext {
             infra: Arc::new(StdInfra::new(
                 &self.database_url,

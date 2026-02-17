@@ -32,12 +32,14 @@ message BrainRegionList {
 
 message BrainRegionEntry {
   RegionID region_id = 1;
-  string description = 2;
-  google.protobuf.Timestamp created_at = 10;  // Unix timestamp in milliseconds
+  string name        = 2;
+  string acronym     = 3;
+  string summary     = 4;
+  string created_at  = 10; // ISO 8601 UTC timestamp, e.g. "2026-02-14T12:00:00Z"
 }
 
 message SearchBrainRegionResponse {
-  BrainRegionEntry entry = 1;
+  repeated BrainRegionEntry entries = 1;
 }
 
 enum Status {
@@ -80,6 +82,68 @@ message StatusResponse {
   Status status = 1;
 }
 
+// Called by orch when a fetch task completes.
+// Brainatlas will chunk, embed, and summarize the files at the given S3 keys,
+// then append a new row to region_summary.
+message ProcessRegionRequest {
+  // UUID from region_mapping — identifies which region these files belong to.
+  Uuid region_id       = 1;
+  // S3 object keys for the files to process (PDF, abstract, etc.).
+  repeated string s3_keys = 2;
+  // UUID of the batch that triggered this processing
+  Uuid batch_id = 3;
+  // Optional: LLM model for chat/summarization (e.g., "openai/gpt-4o-mini").
+  // If empty, falls back to CHAT_MODEL env var or default.
+  optional string chat_model = 4;
+  // Optional: LLM model for embeddings (e.g., "text-embedding-3-small").
+  // If empty, falls back to EMBEDDING_MODEL env var or default.
+  optional string embedding_model = 5;
+  // Paper metadata for source attribution
+  repeated PaperMetadata paper_metadata = 6;
+}
+
+// Metadata for a single paper fetched from PubMed
+message PaperMetadata {
+  string s3_key = 1;                    // S3 key that matches an entry in s3_keys
+  optional string pmc_id = 2;           // PubMed Central ID (e.g., "PMC12345")
+  optional string uid = 3;              // PubMed UID for linking
+  optional string query = 4;            // The PubMed query that found this paper
+}
+
+message ProcessRegionResponse {
+  Uuid   region_id = 1;
+  // Human-readable summary of what was written (e.g. "stored 1 summary for region 42").
+  string detail    = 2;
+}
+
+// Called by orch to generate search queries for a brain region using LLM.
+// This allows orch to get intelligent, context-aware queries instead of using templates.
+message GenerateQueriesRequest {
+  string region_name = 1;  // Name of the brain region (e.g., "hippocampus")
+  uint32 count = 2;        // Number of queries to generate (typically 3-5)
+}
+
+message GenerateQueriesResponse {
+  repeated string queries = 1;  // LLM-generated search queries
+}
+
+// Request to resolve a chunk ID to its source file and character range
+message GetChunkSourceRequest {
+  string chunk_id = 1;  // UUID of the brain_region_embedding row
+}
+
+// Full source details for a chunk
+message ChunkSourceResponse {
+  string chunk_id = 1;
+  string chunk_text = 2;
+  optional string source_s3_key = 3;
+  optional string source_pmc_id = 4;
+  optional string source_uid = 5;
+  optional string source_query = 6;
+  optional int32 char_start = 7;
+  optional int32 char_end = 8;
+}
+
 service BrainRegionService {
   // Search for a specific brain region entry by query
   rpc SearchBrainRegion(SearchBrainRegionRequest) returns (SearchBrainRegionResponse) {
@@ -96,12 +160,40 @@ service BrainRegionService {
     };
   }
 
-  // Check the status of a specific brain region entry by ID,
-  // which can be used to track the progress of fetching, indexing, and generating the data for that region.
+  // DEPRECATED: pipeline status is owned by orch. Will be removed in a future version.
+  // Check the status of a specific brain region entry by ID.
   rpc Status(StatusRequest) returns (StatusResponse) {
     option (google.api.http) = {
       post: "/api/status"
       body: "*"
+    };
+  }
+
+  // Called by orch once a fetch task completes.
+  // Triggers chunking, embedding, and summary generation for the given S3 files,
+  // then persists the result to region_summary.
+  rpc ProcessRegion(ProcessRegionRequest) returns (ProcessRegionResponse) {
+    option (google.api.http) = {
+      post: "/api/process"
+      body: "*"
+    };
+  }
+
+  // Generate search queries for a brain region using LLM.
+  // Called by orch when creating a new batch to get intelligent queries
+  // instead of using hardcoded templates.
+  rpc GenerateQueries(GenerateQueriesRequest) returns (GenerateQueriesResponse) {
+    option (google.api.http) = {
+      post: "/api/generate-queries"
+      body: "*"
+    };
+  }
+
+  // Resolve a chunk UUID to its full source details (file, character range, etc.).
+  // Called by orch on behalf of the client when they click a citation.
+  rpc GetChunkSource(GetChunkSourceRequest) returns (ChunkSourceResponse) {
+    option (google.api.http) = {
+      get: "/api/chunks/{chunk_id}/source"
     };
   }
 }

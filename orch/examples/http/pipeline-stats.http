@@ -1,0 +1,18 @@
+### Get pipeline statistics across all regions
+GET http://localhost:8080/orch/api/pipeline/stats
+
+### Get pipeline stats (localhost)
+# GET http://localhost:8081/orch/api/pipeline/stats
+
+### Expected response:
+# {
+#   "total_regions": 1000,
+#   "not_started": 750,
+#   "fetch_queued": 50,
+#   "fetching": 50,
+#   "fetch_failed": 10,
+#   "llm_queued": 30,
+#   "processing": 20,
+#   "done": 90,
+#   "invalidated": 0
+# }

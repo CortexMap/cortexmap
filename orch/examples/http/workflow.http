@@ -1,0 +1,128 @@
+### Complete Workflow: Search for a Brain Region
+### This file demonstrates the full end-to-end flow
+
+### STEP 1: Health Check
+### Verify the service is running
+GET http://localhost:8080/orch/health
+
+###
+
+### STEP 2: Get Pipeline Stats
+### See overall system state
+GET http://localhost:8080/orch/api/pipeline/stats
+
+###
+
+### STEP 3: Search for Hippocampus Region
+### Replace this UUID with actual region UUID from your database
+### Query: SELECT id, name FROM region_mapping WHERE name ILIKE '%hippocampus%';
+@region_id = 00000000-0000-0000-0000-000000000001
+
+POST http://localhost:8080/orch/api/regions/{{region_id}}/search
+
+### If this is the first search, you'll get:
+# {
+#   "status": "FetchQueued",
+#   "summaries": []
+# }
+
+###
+
+### STEP 4: Check Status (poll every few seconds)
+### Wait for the pipeline to complete
+GET http://localhost:8080/orch/api/regions/{{region_id}}/status
+
+### Status progression:
+# NotStarted → FetchQueued → Fetching → LlmQueued → Processing → Done
+
+###
+
+### STEP 5: Search Again (once status is "Done")
+### Now you'll get the summaries
+POST http://localhost:8080/orch/api/regions/{{region_id}}/search
+
+### Expected response:
+# {
+#   "status": "Done",
+#   "summaries": [
+#     {
+#       "summary": "The hippocampus is a critical brain structure...",
+#       "created_at": "2026-02-15T12:34:56Z"
+#     }
+#   ]
+# }
+
+###
+
+### STEP 6 (Optional): Invalidate to Refresh Data
+### Force a re-fetch with latest papers
+POST http://localhost:8080/orch/api/regions/{{region_id}}/invalidate
+
+###
+
+### STEP 7 (Optional): Update Configuration
+### Adjust polling interval or other settings
+PATCH http://localhost:8080/orch/api/config
+Content-Type: application/json
+
+[
+  {
+    "key": "completion_poll_interval_secs",
+    "value": "15"
+  }
+]
+
+###
+
+### ============================================================================
+### LOCALHOST WORKFLOW (for development)
+### ============================================================================
+
+### 1. Health Check (localhost)
+# GET http://localhost:8081/orch/health
+
+###
+
+### 2. Pipeline Stats (localhost)
+# GET http://localhost:8081/orch/api/pipeline/stats
+
+###
+
+### 3. Search Region (localhost)
+# @region_id_local = 123e4567-e89b-12d3-a456-426614174000
+# POST http://localhost:8081/orch/api/regions/{{region_id_local}}/search
+
+###
+
+### 4. Check Status (localhost)
+# GET http://localhost:8081/orch/api/regions/{{region_id_local}}/status
+
+###
+
+### 5. Get Summaries (localhost)
+# POST http://localhost:8081/orch/api/regions/{{region_id_local}}/search
+
+###
+
+### ============================================================================
+### TROUBLESHOOTING
+### ============================================================================
+
+### If you get "region not found" error:
+### 1. Check that region_id exists in region_mapping table
+### 2. Ensure migrations have run: diesel migration run
+
+### If batch stays in "Fetching" state:
+### 1. Check fetcher service is running
+### 2. Check FETCHER_URL config: GET /orch/api/config
+### 3. Check fetch task status in fetcher: GET fetcher-be/api/queue/stats
+
+### If batch stays in "LlmQueued" state:
+### 1. Check that orch background watcher is running (logs should show polling)
+### 2. Check completion_poll_interval_secs config
+### 3. Look for errors in orch service logs
+
+### If batch stays in "Processing" state:
+### 1. Check brainatlas service is running
+### 2. Check BRAINATLAS_URL config: GET /orch/api/config
+### 3. Check brainatlas service logs for errors

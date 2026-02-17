@@ -175,6 +175,14 @@ impl TaskQueueInfra for StdInfra {
         self.task_queue.get_task_by_pmc_id(pmc_id).await
     }
     
+    async fn get_task_by_id(&self, task_id: i64) -> Result<Option<FetchTask>, InfraError> {
+        self.task_queue.get_task_by_id(task_id).await
+    }
+    
+    async fn get_tasks_by_status(&self, status: &str, limit: i32) -> Result<Vec<FetchTask>, InfraError> {
+        self.task_queue.get_tasks_by_status(status, limit).await
+    }
+    
     async fn get_task_components(&self, task_id: i64) -> Result<Vec<FetchTaskComponent>, InfraError> {
         self.task_queue.get_task_components(task_id).await
     }

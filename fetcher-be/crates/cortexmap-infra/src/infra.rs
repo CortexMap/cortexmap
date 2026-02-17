@@ -34,7 +34,8 @@ impl Display for ContentType {
 
 #[async_trait::async_trait]
 pub trait HttpInfra {
-    // TODO: add some wrapper instead of using reqwest::Response
+    // Note: Currently returns reqwest::Response directly.
+    // Could be wrapped in a custom type for better abstraction if needed.
     async fn get(&self, url: &str) -> Result<Response, InfraError>;
     async fn post(&self, url: &str, body: Option<Bytes>) -> Result<Response, InfraError>;
 }
@@ -179,6 +180,12 @@ pub trait TaskQueueInfra {
     
     /// Get task details by PMC ID
     async fn get_task_by_pmc_id(&self, pmc_id: &str) -> Result<Option<FetchTask>, InfraError>;
+    
+    /// Get task details by task ID
+    async fn get_task_by_id(&self, task_id: i64) -> Result<Option<FetchTask>, InfraError>;
+    
+    /// Get tasks by status with limit
+    async fn get_tasks_by_status(&self, status: &str, limit: i32) -> Result<Vec<FetchTask>, InfraError>;
     
     /// Get components for a specific task
     async fn get_task_components(&self, task_id: i64) -> Result<Vec<FetchTaskComponent>, InfraError>;

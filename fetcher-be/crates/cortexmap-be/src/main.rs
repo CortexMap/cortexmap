@@ -10,7 +10,7 @@ async fn main() -> Result<()> {
         .with_max_level(Level::INFO)
         .init();
 
-    let addr: SocketAddr = std::env::var("HTTP_ADDR")
+    let addr: SocketAddr = std::env::var("FETCHER_HTTP_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
         .parse()?;
 

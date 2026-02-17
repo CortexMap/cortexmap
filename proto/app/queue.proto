@@ -51,6 +51,14 @@ service QueueService {
     };
   }
 
+  // Get all components (and their S3 keys) for a completed fetch task.
+  // Called by orch to retrieve the S3 keys to pass to brainatlas /api/process.
+  rpc GetTaskComponents(TaskComponentsRequest) returns (TaskComponentsResponse) {
+    option (google.api.http) = {
+      get: "/api/queue/task/{task_id}/components"
+    };
+  }
+
   // Stream queue status updates (for real-time monitoring)
   rpc StreamQueueStatus(StreamStatusRequest) returns (stream StatusResponse) {
     option (google.api.http) = {
@@ -72,6 +80,7 @@ message EnqueueResponse {
   uint32 tasks_enqueued = 2;
   repeated string pmc_ids = 3;
   string error_message = 4;
+  repeated int64 task_ids = 5;  // Task IDs corresponding to pmc_ids (for batch linking)
 }
 
 // Request for queue status
@@ -227,4 +236,17 @@ message WorkerInfo {
 // Request for streaming status
 message StreamStatusRequest {
   uint32 interval_seconds = 1; // Update interval (default: 5 seconds)
+}
+
+// Request for all components of a specific fetch task.
+message TaskComponentsRequest {
+  int64 task_id = 1;
+}
+
+// All components belonging to a fetch task, including their S3 keys.
+message TaskComponentsResponse {
+  int64              task_id    = 1;
+  string             pmc_id     = 2;
+  string             task_status = 3;
+  repeated ComponentStatus components = 4;
 }

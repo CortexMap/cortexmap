@@ -5,4 +5,10 @@ pub enum AppError<E: std::error::Error + Send + Sync + 'static> {
     
     #[error("Invalid query result")]
     InvalidResult,
+    
+    #[error("not found")]
+    NotFound,
+
+    #[error("LLM exceeded maximum tool call iterations ({0})")]
+    MaxToolCallsExceeded(usize),
 }

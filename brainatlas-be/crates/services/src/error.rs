@@ -5,4 +5,7 @@ pub enum ServiceError<E: std::error::Error + Send + Sync + 'static> {
 
     #[error("Invalid query result")]
     InvalidResult,
+
+    #[error("region not found")]
+    NotFound,
 }

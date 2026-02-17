@@ -223,11 +223,11 @@ async fn main() -> Result<()> {
             println!("📋 Enqueueing tasks for query: '{}'", args.query);
             
             match cortexmap_fetcher::enqueue_query(&blueprint, ctx).await {
-                Ok(pmc_ids) => {
-                    println!("✓ Successfully enqueued {} tasks", pmc_ids.len());
-                    for pmc_id in &pmc_ids {
+                Ok(results) => {
+                    println!("✓ Successfully enqueued {} tasks", results.len());
+                    for (pmc_id, task_id) in &results {
                         // pmc_id already has "PMC" prefix from enqueue_query
-                        println!("  - {}", pmc_id);
+                        println!("  - {} (task_id: {})", pmc_id, task_id);
                     }
                     Ok(())
                 }

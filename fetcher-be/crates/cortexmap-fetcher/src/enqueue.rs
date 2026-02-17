@@ -8,11 +8,11 @@ use cortexmap_infra::{HttpInfra, InfraContext, TaskQueueInfra};
 /// 1. Queries NCBI ESearch to get PMC IDs for the query
 /// 2. For each PMC ID, creates a fetch task in the database
 /// 3. For each task, creates three component records (summary, abstract, pdf)
-/// 4. Returns the list of enqueued PMC IDs
+/// 4. Returns the list of (pmc_id, task_id) tuples
 pub async fn enqueue_query<I>(
     blueprint: &Blueprint,
     ctx: InfraContext<I>,
-) -> Result<Vec<String>, FetchError>
+) -> Result<Vec<(String, i64)>, FetchError>
 where
     I: HttpInfra + TaskQueueInfra + Send + Sync + 'static,
 {
@@ -68,7 +68,7 @@ where
                     pmc_id,
                     max_attempts
                 );
-                enqueued.push(pmc_id);
+                enqueued.push((pmc_id, task.id));
             }
             Err(e) => {
                 tracing::warn!("Failed to enqueue task for PMC {}: {}", pmc_id, e);

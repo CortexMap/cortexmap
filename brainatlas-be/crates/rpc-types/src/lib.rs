@@ -10,7 +10,8 @@ pub use prost_types;
 pub use proto::{
     brain_region_service_client::BrainRegionServiceClient,
     brain_region_service_server::{BrainRegionService, BrainRegionServiceServer},
-    Acronym, BrainRegionEntry, BrainRegionList, BrainRegionListResponse, RegionId,
-    RegionMapping, Rgb, SearchBrainRegionRequest, SearchBrainRegionResponse, Status,
-    StatusRequest, StatusResponse, Uuid,
+    Acronym, BrainRegionEntry, BrainRegionList, BrainRegionListResponse, PaperMetadata,
+    ProcessRegionRequest, ProcessRegionResponse, RegionId, RegionMapping, Rgb,
+    SearchBrainRegionRequest, SearchBrainRegionResponse, Status, StatusRequest, StatusResponse,
+    Uuid, GenerateQueriesRequest, GenerateQueriesResponse,
 };

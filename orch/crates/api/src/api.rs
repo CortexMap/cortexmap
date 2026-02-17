@@ -1,0 +1,52 @@
+use domain::{
+    BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult,
+    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult,
+};
+use uuid::Uuid;
+
+/// Main API trait for the Orch service
+/// All methods correspond to RPC endpoints defined in orch.proto
+#[async_trait::async_trait]
+pub trait OrchApi: Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
+    
+    /// Initialize the orchestrator
+    /// Spawns background tasks (completion watcher loop)
+    async fn init(&self) -> Result<(), Self::Error>;
+    
+    /// List all summaries for a region (just returns summaries with metadata)
+    async fn list_summaries(&self, region_id: Uuid) -> Result<SearchRegionResult, Self::Error>;
+    
+    /// Generate a new summary for a region
+    /// Creates a new batch, generates queries, enqueues tasks
+    /// Returns batch_id immediately for tracking progress
+    async fn generate_summary(&self, region_id: Uuid) -> Result<GenerateSummaryResult, Self::Error>;
+    
+    /// Get the status of a specific batch
+    async fn get_batch_status(&self, batch_id: Uuid) -> Result<BatchStatusResult, Self::Error>;
+    
+    /// Get the end-to-end pipeline status for a single region
+    async fn get_region_status(&self, region_id: Uuid) -> Result<RegionStatusResult, Self::Error>;
+    
+    /// Get high-level count breakdown across all regions
+    async fn get_pipeline_stats(&self) -> Result<PipelineStatsResult, Self::Error>;
+    
+    /// Read current orch configuration
+    async fn get_config(&self) -> Result<Vec<ConfigEntry>, Self::Error>;
+    
+    /// Update one or more config entries at runtime without restart
+    async fn update_config(&self, entries: Vec<ConfigEntryUpdate>) -> Result<Vec<ConfigEntry>, Self::Error>;
+    
+    /// Get all brain regions from region_mapping table
+    async fn get_all_regions(&self) -> Result<Vec<Region>, Self::Error>;
+    
+    /// Health check for fetcher service
+    async fn fetcher_health(&self) -> Result<(), Self::Error>;
+    
+    /// Health check for brainatlas service
+    async fn brainatlas_health(&self) -> Result<(), Self::Error>;
+
+    /// Resolve a chunk UUID to its full source details
+    /// Forwards to brainatlas-be: GET /brainatlas-be/api/chunks/{chunk_id}/source
+    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error>;
+}

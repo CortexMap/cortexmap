@@ -1,0 +1,43 @@
+### Get all brain regions
+GET http://localhost:8080/orch/api/regions
+
+### Get all regions (localhost)
+# GET http://localhost:8081/orch/api/regions
+
+### Expected response:
+# [
+#   {
+#     "id": "123e4567-e89b-12d3-a456-426614174001",
+#     "region_id": 1,
+#     "name": "Hippocampus",
+#     "acronym": "HIP",
+#     "color": {
+#       "red": 255,
+#       "green": 100,
+#       "blue": 50
+#     },
+#     "structure_order": 100,
+#     "parent_region_id": 10,
+#     "parent_acronym": "MTL"
+#   },
+#   {
+#     "id": "123e4567-e89b-12d3-a456-426614174002",
+#     "region_id": 2,
+#     "name": "Amygdala",
+#     "acronym": "AMY",
+#     "color": {
+#       "red": 150,
+#       "green": 200,
+#       "blue": 100
+#     },
+#     "structure_order": 200,
+#     "parent_region_id": 10,
+#     "parent_acronym": "MTL"
+#   }
+# ]
+#
+# Notes:
+# - Regions are ordered alphabetically by name
+# - Color field is optional (null if RGB values not set)
+# - Use the "id" (UUID) field for search/status/invalidate endpoints
+# - The "region_id" is the legacy integer ID from original data
