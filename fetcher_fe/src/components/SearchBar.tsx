@@ -8,7 +8,7 @@ interface SearchBarProps {
 
 const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isSearching }) => {
   const [query, setQuery] = useState('');
-  const [pageSize, setPageSize] = useState(3);
+  const [pageSize, setPageSize] = useState(10);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,7 +33,7 @@ const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isSearching }) => {
           id="page-size"
           type="number"
           value={pageSize}
-          onChange={(e) => setPageSize(Math.max(1, Math.min(20, parseInt(e.target.value) || 3)))}
+          onChange={(e) => setPageSize(Math.max(1, Math.min(20, parseInt(e.target.value) || 10)))}
           min="1"
           max="20"
           className="page-size-input"

@@ -46,3 +46,102 @@
   margin: 1rem 0;
   border: 1px solid #6d2f2f;
 }
+
+.recent-papers {
+  margin: 2rem 0;
+  padding: 1.5rem;
+  background: #2d2d2d;
+  border: 1px solid #404040;
+  border-radius: 8px;
+}
+
+.recent-papers h3 {
+  margin: 0 0 1rem 0;
+  color: #e0e0e0;
+  font-size: 1.2rem;
+}
+
+.recent-papers-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.recent-paper-card {
+  background: #252525;
+  border: 1px solid #404040;
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.paper-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.pmc-id {
+  font-family: monospace;
+  font-weight: 600;
+  color: #667eea;
+  font-size: 1rem;
+}
+
+.status-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.pending {
+  background: #3d2f00;
+  color: #ffa500;
+}
+
+.status-badge.in_progress {
+  background: #002d4d;
+  color: #4fc3f7;
+}
+
+.status-badge.completed {
+  background: #1b3d1b;
+  color: #66bb6a;
+}
+
+.status-badge.failed {
+  background: #4d1f1f;
+  color: #ef5350;
+}
+
+.paper-progress {
+  margin-bottom: 0.5rem;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background: #1e1e1e;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea, #764ba2);
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.85rem;
+  color: #999;
+}
+
+.worker-id {
+  font-size: 0.8rem;
+  color: #666;
+  margin-top: 0.5rem;
+}
