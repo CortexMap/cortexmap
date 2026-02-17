@@ -1,4 +1,4 @@
-use domain::{BrainRegionEntry, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, SimilarChunk};
+use domain::{BrainRegionEntry, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, SimilarChunk, ChunkSource};
 use uuid::Uuid;
 
 /// All queries the service layer can issue against Postgres.
@@ -161,4 +161,11 @@ pub trait VectorDatabase: Send + Sync {
         summary_id: Uuid,
         summary_text: &str,
     ) -> Result<(), Self::Error>;
+
+    /// Get full source details for a chunk by its UUID
+    async fn get_chunk_source(
+        &self,
+        database_url: &str,
+        chunk_id: Uuid,
+    ) -> Result<Option<ChunkSource>, Self::Error>;
 }

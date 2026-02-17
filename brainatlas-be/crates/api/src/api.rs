@@ -1,4 +1,5 @@
 use domain::rpc_types::{BrainRegionListResponse, ProcessRegionResponse, SearchBrainRegionResponse, StatusResponse, GenerateQueriesResponse, PaperMetadata};
+use domain::ChunkSource;
 use uuid::Uuid;
 
 #[async_trait::async_trait]
@@ -34,4 +35,8 @@ pub trait BrainRegionApi: Send + Sync {
     /// Generate search queries for a brain region using LLM.
     /// POST /api/generate-queries — called by orch when creating a new batch
     async fn generate_queries(&self, region_name: String, count: u32) -> Result<GenerateQueriesResponse, Self::Error>;
+
+    /// Resolve a chunk UUID to its full source details.
+    /// GET /api/chunks/{chunk_id}/source
+    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<Option<ChunkSource>, Self::Error>;
 }

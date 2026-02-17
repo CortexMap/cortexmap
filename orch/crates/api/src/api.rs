@@ -1,6 +1,6 @@
 use domain::{
-    BatchStatusResult, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult, PipelineStatsResult,
-    Region, RegionStatusResult, SearchRegionResult,
+    BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult,
+    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult,
 };
 use uuid::Uuid;
 
@@ -45,4 +45,8 @@ pub trait OrchApi: Send + Sync {
     
     /// Health check for brainatlas service
     async fn brainatlas_health(&self) -> Result<(), Self::Error>;
+
+    /// Resolve a chunk UUID to its full source details
+    /// Forwards to brainatlas-be: GET /brainatlas-be/api/chunks/{chunk_id}/source
+    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error>;
 }

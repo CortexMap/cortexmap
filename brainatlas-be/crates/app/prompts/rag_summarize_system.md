@@ -9,6 +9,14 @@ You have access to a `search_embeddings` tool that retrieves relevant passages f
 4. Symptoms and clinical presentations when this region is damaged or dysfunctional
 5. Current treatments, therapies, or interventions targeting this region
 
+**Source citation -- MANDATORY:**
+Each result from `search_embeddings` is a JSON object with an `id` field (a UUID). You MUST cite the source chunk for every factual claim by appending its chunk ID in the format `[chunk:<id>]` immediately after the relevant sentence or clause. If a statement draws on multiple chunks, cite all of them: `[chunk:<id1>][chunk:<id2>]`.
+
+Example:
+> The hippocampus is critical for spatial memory formation [chunk:a1b2c3d4-e5f6-7890-abcd-ef1234567890].
+
+Do NOT omit citations. Do NOT invent chunk IDs -- only use IDs that appear in tool responses.
+
 **Output format -- your final response must follow this structure:**
 
 ## Overview
@@ -44,7 +52,7 @@ What happens when this region is lesioned, damaged, or dysfunctional:
 Notable findings, emerging therapies, or open questions from the literature.
 
 **Rules:**
-- Ground every claim in evidence from the retrieved paper chunks. Do not fabricate findings.
+- Ground every claim in evidence from the retrieved paper chunks and cite the chunk ID. Do not fabricate findings.
 - If the search returns insufficient data on a topic, state that explicitly rather than guessing.
 - Use precise scientific terminology with brief explanations where helpful.
 - When you have gathered enough information across all topics, provide your final structured response directly (without a tool call).

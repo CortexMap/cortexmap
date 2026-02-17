@@ -3,7 +3,7 @@ use crate::models::*;
 use crate::schema;
 use diesel::prelude::*;
 use diesel::sql_types::{Float8, Int4, Text};
-use domain::{ExistingSummary, NewEmbedding, NewRegionSummary, SimilarChunk};
+use domain::{ExistingSummary, NewEmbedding, NewRegionSummary, SimilarChunk, ChunkSource};
 use services::infra::VectorDatabase;
 use std::sync::{Arc, Mutex, OnceLock};
 use uuid::Uuid;
@@ -75,6 +75,8 @@ impl VectorDatabase for BrainAtlasVectorDB {
                     source_uid: e.source_uid,
                     source_s3_key: e.source_s3_key,
                     source_query: e.source_query,
+                    source_char_start: e.source_char_start,
+                    source_char_end: e.source_char_end,
                 })
                 .collect();
 
@@ -158,6 +160,8 @@ impl VectorDatabase for BrainAtlasVectorDB {
 
         #[derive(QueryableByName)]
         struct SimilarChunkRow {
+            #[diesel(sql_type = diesel::sql_types::Uuid)]
+            id: uuid::Uuid,
             #[diesel(sql_type = Int4)]
             chunk_index: i32,
             #[diesel(sql_type = Text)]
@@ -172,13 +176,18 @@ impl VectorDatabase for BrainAtlasVectorDB {
             source_s3_key: Option<String>,
             #[diesel(sql_type = diesel::sql_types::Nullable<Text>)]
             source_query: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<Int4>)]
+            source_char_start: Option<i32>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<Int4>)]
+            source_char_end: Option<i32>,
         }
 
         self.run_blocking(database_url, move |conn| {
             let rows = diesel::sql_query(
-                "SELECT chunk_index, chunk_text, \
+                "SELECT id, chunk_index, chunk_text, \
                  1.0 - (embedding <=> $1::vector) AS similarity_score, \
-                 source_pmc_id, source_uid, source_s3_key, source_query \
+                 source_pmc_id, source_uid, source_s3_key, source_query, \
+                 source_char_start, source_char_end \
                  FROM brain_region_embeddings \
                  WHERE region_id = $2 \
                  ORDER BY embedding <=> $1::vector \
@@ -192,6 +201,7 @@ impl VectorDatabase for BrainAtlasVectorDB {
             Ok(rows
                 .into_iter()
                 .map(|r| SimilarChunk {
+                    id: r.id,
                     chunk_index: r.chunk_index,
                     chunk_text: r.chunk_text,
                     similarity_score: r.similarity_score,
@@ -199,6 +209,8 @@ impl VectorDatabase for BrainAtlasVectorDB {
                     source_uid: r.source_uid,
                     source_s3_key: r.source_s3_key,
                     source_query: r.source_query,
+                    source_char_start: r.source_char_start,
+                    source_char_end: r.source_char_end,
                 })
                 .collect())
         })
@@ -220,6 +232,33 @@ impl VectorDatabase for BrainAtlasVectorDB {
                 .execute(conn)?;
 
             Ok(())
+        })
+        .await
+    }
+
+    async fn get_chunk_source(
+        &self,
+        database_url: &str,
+        chunk_id: Uuid,
+    ) -> Result<Option<ChunkSource>, Self::Error> {
+        self.run_blocking(database_url, move |conn| {
+            use schema::brain_region_embeddings;
+
+            let row = brain_region_embeddings::table
+                .find(chunk_id)
+                .first::<EmbeddingRow>(conn)
+                .optional()?;
+
+            Ok(row.map(|r| ChunkSource {
+                chunk_id: r.id,
+                chunk_text: r.chunk_text,
+                source_s3_key: r.source_s3_key,
+                source_pmc_id: r.source_pmc_id,
+                source_uid: r.source_uid,
+                source_query: r.source_query,
+                char_start: r.source_char_start,
+                char_end: r.source_char_end,
+            }))
         })
         .await
     }

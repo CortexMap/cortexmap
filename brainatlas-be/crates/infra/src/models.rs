@@ -107,6 +107,8 @@ pub struct NewEmbeddingRow {
     pub source_uid: Option<String>,
     pub source_s3_key: Option<String>,
     pub source_query: Option<String>,
+    pub source_char_start: Option<i32>,
+    pub source_char_end: Option<i32>,
 }
 
 /// Diesel queryable model for `brain_region_embeddings`
@@ -125,11 +127,14 @@ pub struct EmbeddingRow {
     pub source_uid: Option<String>,
     pub source_s3_key: Option<String>,
     pub source_query: Option<String>,
+    pub source_char_start: Option<i32>,
+    pub source_char_end: Option<i32>,
 }
 
 impl From<EmbeddingRow> for domain::SimilarChunk {
     fn from(row: EmbeddingRow) -> Self {
         domain::SimilarChunk {
+            id: row.id,
             chunk_index: row.chunk_index,
             chunk_text: row.chunk_text,
             similarity_score: 0.0, // Set by query with distance calculation
@@ -137,6 +142,8 @@ impl From<EmbeddingRow> for domain::SimilarChunk {
             source_uid: row.source_uid,
             source_s3_key: row.source_s3_key,
             source_query: row.source_query,
+            source_char_start: row.source_char_start,
+            source_char_end: row.source_char_end,
         }
     }
 }

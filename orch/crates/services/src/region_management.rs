@@ -1,6 +1,6 @@
 use crate::{BatchManagement, EnvInfra, HttpClient, ServiceError, GenerateQueriesRequest, GenerateQueriesResponse};
 use app::RegionManagement;
-use domain::{BatchStatus, ConfigKey, ProcessingBatch, RegionQuery, RegionSummary};
+use domain::{BatchStatus, ChunkSourceResponse, ConfigKey, ProcessingBatch, RegionQuery, RegionSummary, SummarySource};
 use std::error::Error;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -44,18 +44,35 @@ where
             .await
             .map_err(ServiceError::InfraError)?;
 
-        // Convert to domain::RegionSummary
-        Ok(summaries
-            .into_iter()
-            .map(|s| RegionSummary {
+        // For each summary, fetch its source chunks
+        let mut result = Vec::with_capacity(summaries.len());
+        for s in summaries {
+            let sources = self
+                .infra
+                .get_summary_sources(&database_url, s.id)
+                .await
+                .map_err(ServiceError::InfraError)?;
+
+            result.push(RegionSummary {
                 summary: s.summary.unwrap_or_default(),
                 created_at: chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
                     s.created_at,
                     chrono::Utc,
                 ),
-                batch_id: s.batch_id, // Now tracked from database
-            })
-            .collect())
+                batch_id: s.batch_id,
+                sources: sources
+                    .into_iter()
+                    .map(|src| SummarySource {
+                        chunk_id: src.id,
+                        pmc_id: src.source_pmc_id,
+                        uid: src.source_uid,
+                        source_query: src.source_query,
+                    })
+                    .collect(),
+            });
+        }
+
+        Ok(result)
     }
 
     async fn get_active_batch(
@@ -298,6 +315,49 @@ where
 
         self.infra
             .delete_queries(&database_url, region_id)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+
+    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error> {
+        // Normalize URL helper
+        fn normalize_url(addr: &str) -> String {
+            if addr.starts_with("http://") || addr.starts_with("https://") {
+                addr.to_string()
+            } else {
+                let replaced = addr.replace("0.0.0.0", "localhost");
+                format!("http://{}", replaced)
+            }
+        }
+
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let brainatlas_url = match self.infra.get_env_var("BRAINATLAS_HTTP_ADDR") {
+            Ok(addr) => normalize_url(&addr),
+            Err(_) => {
+                self.infra
+                    .get_config(&database_url, ConfigKey::BrainatlasBaseUrl)
+                    .await
+                    .map_err(ServiceError::InfraError)?
+                    .ok_or_else(|| ServiceError::ConfigNotFound {
+                        key: "brainatlas_base_url".to_string(),
+                    })?
+            }
+        };
+
+        let url = format!(
+            "{}/brainatlas-be/api/chunks/{}/source",
+            brainatlas_url.trim_end_matches('/'),
+            chunk_id
+        );
+
+        tracing::info!(url = %url, %chunk_id, "Forwarding chunk source request to brainatlas");
+
+        self.infra
+            .get::<ChunkSourceResponse>(&url)
             .await
             .map_err(ServiceError::InfraError)
     }

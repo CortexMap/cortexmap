@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Embedding to insert into database
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewEmbedding {
     pub region_id: i32,
@@ -14,6 +15,9 @@ pub struct NewEmbedding {
     pub source_uid: Option<String>,
     pub source_s3_key: Option<String>,
     pub source_query: Option<String>,
+    // Character offsets within the source S3 file
+    pub source_char_start: Option<i32>,
+    pub source_char_end: Option<i32>,
 }
 
 /// Summary to insert into database
@@ -46,6 +50,8 @@ pub struct ProcessResult {
 /// A chunk returned from vector similarity search
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimilarChunk {
+    /// Unique identifier for this chunk (brain_region_embeddings PK)
+    pub id: Uuid,
     pub chunk_index: i32,
     pub chunk_text: String,
     pub similarity_score: f64,
@@ -54,4 +60,19 @@ pub struct SimilarChunk {
     pub source_uid: Option<String>,
     pub source_s3_key: Option<String>,
     pub source_query: Option<String>,
+    pub source_char_start: Option<i32>,
+    pub source_char_end: Option<i32>,
+}
+
+/// Full source details for a single chunk (returned by chunk source resolution endpoint)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkSource {
+    pub chunk_id: Uuid,
+    pub chunk_text: String,
+    pub source_s3_key: Option<String>,
+    pub source_pmc_id: Option<String>,
+    pub source_uid: Option<String>,
+    pub source_query: Option<String>,
+    pub char_start: Option<i32>,
+    pub char_end: Option<i32>,
 }

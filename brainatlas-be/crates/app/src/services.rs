@@ -1,4 +1,4 @@
-use domain::{BrainRegionEntry, RegionMapping, NewEmbedding, NewRegionSummary, ExistingSummary, SimilarChunk, LlmResponse};
+use domain::{BrainRegionEntry, RegionMapping, NewEmbedding, NewRegionSummary, ExistingSummary, SimilarChunk, ChunkSource, LlmResponse};
 use uuid::Uuid;
 use std::error::Error;
 
@@ -79,6 +79,10 @@ pub trait VectorDatabase: Send + Sync {
         summary_id: Uuid,
         summary_text: &str,
     ) -> Result<(), Self::Error>;
+    async fn get_chunk_source(
+        &self,
+        chunk_id: Uuid,
+    ) -> Result<Option<ChunkSource>, Self::Error>;
 }
 
 /// Combined services trait

@@ -1,4 +1,4 @@
-use domain::{ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary};
+use domain::{ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary};
 use std::error::Error;
 use uuid::Uuid;
 
@@ -64,6 +64,9 @@ pub trait RegionManagement: Send + Sync {
     
     /// Delete all queries for a region (used for invalidation)
     async fn delete_queries(&self, region_id: Uuid) -> Result<(), Self::Error>;
+
+    /// Resolve a chunk UUID to its full source details via brainatlas-be
+    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error>;
 }
 
 /// Trait for managing batches and fetcher integration

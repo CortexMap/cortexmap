@@ -1,8 +1,8 @@
 use crate::{ApiError, OrchApi};
 use app::{AppError, OrchApp, Services};
 use domain::{
-    BatchStatusResult, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult, PipelineStatsResult,
-    Region, RegionStatusResult, SearchRegionResult,
+    BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult,
+    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -107,6 +107,13 @@ where
     async fn brainatlas_health(&self) -> Result<(), Self::Error> {
         self.services
             .brainatlas_health()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error> {
+        self.services
+            .get_chunk_source(chunk_id)
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }

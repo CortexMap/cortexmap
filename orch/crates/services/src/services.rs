@@ -150,6 +150,10 @@ where
     async fn delete_queries(&self, region_id: Uuid) -> Result<(), Self::Error> {
         self.region_management.delete_queries(region_id).await
     }
+
+    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<domain::ChunkSourceResponse, Self::Error> {
+        self.region_management.get_chunk_source(chunk_id).await
+    }
 }
 
 #[async_trait::async_trait]

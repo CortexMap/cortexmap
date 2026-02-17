@@ -80,6 +80,15 @@ message SearchRegionResponse {
 message RegionSummary {
   string                   summary    = 1;
   google.protobuf.Timestamp created_at = 2;
+  string                   batch_id   = 3;
+  repeated SummarySource   sources    = 4;
+}
+
+message SummarySource {
+  string           chunk_id     = 1;
+  optional string  pmc_id       = 2;
+  optional string  uid          = 3;
+  optional string  source_query = 4;
 }
 
 // ─────────────────────────────────────────────

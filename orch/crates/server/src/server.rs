@@ -64,6 +64,7 @@ impl OrchServer {
             .route("/api/pipeline/stats", get(get_pipeline_stats_handler))
             .route("/api/config", get(get_config_handler))
             .route("/api/config", patch(update_config_handler))
+            .route("/api/chunks/{chunk_id}/source", get(get_chunk_source_handler))
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
@@ -155,5 +156,13 @@ async fn get_all_regions_handler(
     State(server): State<OrchServer>,
 ) -> Result<impl IntoResponse, ServerError> {
     let result = server.api.get_all_regions().await?;
+    Ok(Json(result))
+}
+
+async fn get_chunk_source_handler(
+    State(server): State<OrchServer>,
+    Path(chunk_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_chunk_source(chunk_id).await?;
     Ok(Json(result))
 }

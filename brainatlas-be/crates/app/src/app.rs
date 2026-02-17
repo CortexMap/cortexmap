@@ -1,6 +1,6 @@
 use crate::{AppError, Services};
 use domain::{
-    BrainRegionEntry, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping,
+    BrainRegionEntry, ChunkSource, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping,
     SearchEmbeddingsArgs, compute_hash, rpc_types::PaperMetadata,
 };
 use futures::future::join_all;
@@ -69,9 +69,14 @@ where
             .collect();
 
         // 1. Download all S3 files and track which S3 key each chunk came from
+        //    Also track character offsets within each file for source attribution
         let mut chunks_with_source: Vec<(String, usize, usize)> = Vec::new(); // (s3_key, start_idx, end_idx)
         let mut all_chunks = Vec::new();
+        let mut chunk_char_offsets: Vec<(i32, i32)> = Vec::new(); // (char_start, char_end) within the source file
         let mut full_text = String::new();
+
+        let chunk_size: usize = 1000;
+        let chunk_overlap: usize = 200;
 
         for key in &s3_keys {
             let content = self
@@ -81,7 +86,22 @@ where
                 .map_err(AppError::ServiceError)?;
             
             let start_idx = all_chunks.len();
-            let key_chunks = self.services.chunk(&content, 1000, 200);
+            let key_chunks = self.services.chunk(&content, chunk_size, chunk_overlap);
+
+            // Compute character offsets for each chunk within this file
+            let content_len = content.len();
+            let step = chunk_size.saturating_sub(chunk_overlap).max(1);
+            let mut offset = 0usize;
+            for _ in 0..key_chunks.len() {
+                let char_start = offset;
+                let char_end = (offset + chunk_size).min(content_len);
+                chunk_char_offsets.push((char_start as i32, char_end as i32));
+                if char_end >= content_len {
+                    break;
+                }
+                offset += step;
+            }
+
             all_chunks.extend(key_chunks);
             let end_idx = all_chunks.len();
             chunks_with_source.push((key.clone(), start_idx, end_idx));
@@ -127,6 +147,12 @@ where
                         (key.clone(), meta)
                     })
                     .unwrap_or_else(|| (String::new(), None));
+
+                // Get character offsets for this chunk within its source file
+                let (char_start, char_end) = chunk_char_offsets
+                    .get(idx)
+                    .copied()
+                    .unwrap_or((0, 0));
                 
                 Ok(NewEmbedding {
                     region_id: region.region_id,
@@ -138,6 +164,8 @@ where
                     source_pmc_id: metadata.and_then(|m| m.pmc_id.clone()),
                     source_uid: metadata.and_then(|m| m.uid.clone()),
                     source_query: metadata.and_then(|m| m.query.clone()),
+                    source_char_start: Some(char_start),
+                    source_char_end: Some(char_end),
                 })
             })
             .collect::<Result<Vec<_>, AppError<E>>>()?;
@@ -339,6 +367,17 @@ where
     ) -> Result<Vec<String>, AppError<E>> {
         self.services
             .generate_queries(region_name, count)
+            .await
+            .map_err(AppError::ServiceError)
+    }
+
+    /// Resolve a chunk UUID to its full source details
+    pub async fn get_chunk_source(
+        &self,
+        chunk_id: Uuid,
+    ) -> Result<Option<ChunkSource>, AppError<E>> {
+        self.services
+            .get_chunk_source(chunk_id)
             .await
             .map_err(AppError::ServiceError)
     }

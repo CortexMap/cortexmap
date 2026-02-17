@@ -33,10 +33,24 @@ pub struct UuidWrapper {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaperMetadataEntry {
+    pub s3_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pmc_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessRegionRequest {
     pub region_id: UuidWrapper,
     pub batch_id: UuidWrapper,
     pub s3_keys: Vec<String>,
+    /// Paper metadata for source attribution (s3_key -> pmc_id, uid, query)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paper_metadata: Vec<PaperMetadataEntry>,
     /// Chat model to use for summarization (e.g., "openai/gpt-4o-mini")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_model: Option<String>,

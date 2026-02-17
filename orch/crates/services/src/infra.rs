@@ -179,6 +179,14 @@ pub trait BatchManagement: Send + Sync {
         database_url: &str,
         task_ids: &[i64],
     ) -> Result<Vec<String>, Self::Error>;
+
+    /// Get paper metadata for fetch tasks (s3_key -> pmc_id, uid, query)
+    /// JOINs fetch_tasks with fetch_task_components (and papers for uid)
+    async fn get_task_paper_metadata(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<Vec<crate::PaperMetadataRecord>, Self::Error>;
     
     /// Update batch status
     async fn update_batch_status(
@@ -235,6 +243,24 @@ pub struct RegionSummaryRecord {
     pub batch_id: Uuid,
 }
 
+/// Source chunk metadata from brain_region_embeddings
+#[derive(Debug, Clone)]
+pub struct ChunkSourceRecord {
+    pub id: Uuid,
+    pub source_pmc_id: Option<String>,
+    pub source_uid: Option<String>,
+    pub source_query: Option<String>,
+}
+
+/// Paper metadata record derived from fetch_tasks + fetch_task_components
+#[derive(Debug, Clone)]
+pub struct PaperMetadataRecord {
+    pub s3_key: String,
+    pub pmc_id: Option<String>,
+    pub uid: Option<String>,
+    pub query: Option<String>,
+}
+
 #[async_trait::async_trait]
 pub trait RegionMappingQueries: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -270,6 +296,13 @@ pub trait RegionMappingQueries: Send + Sync {
         database_url: &str,
         region_id: i32,
     ) -> Result<Vec<RegionSummaryRecord>, Self::Error>;
+
+    /// Get distinct source chunks for a given summary_id
+    async fn get_summary_sources(
+        &self,
+        database_url: &str,
+        summary_id: Uuid,
+    ) -> Result<Vec<ChunkSourceRecord>, Self::Error>;
 }
 
 /// Blanket: any `T: OrchDatabase + EnvInfra + HttpClient + BatchManagement + RegionMappingQueries` automatically satisfies `Infra`.

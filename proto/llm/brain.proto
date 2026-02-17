@@ -127,6 +127,23 @@ message GenerateQueriesResponse {
   repeated string queries = 1;  // LLM-generated search queries
 }
 
+// Request to resolve a chunk ID to its source file and character range
+message GetChunkSourceRequest {
+  string chunk_id = 1;  // UUID of the brain_region_embedding row
+}
+
+// Full source details for a chunk
+message ChunkSourceResponse {
+  string chunk_id = 1;
+  string chunk_text = 2;
+  optional string source_s3_key = 3;
+  optional string source_pmc_id = 4;
+  optional string source_uid = 5;
+  optional string source_query = 6;
+  optional int32 char_start = 7;
+  optional int32 char_end = 8;
+}
+
 service BrainRegionService {
   // Search for a specific brain region entry by query
   rpc SearchBrainRegion(SearchBrainRegionRequest) returns (SearchBrainRegionResponse) {
@@ -169,6 +186,14 @@ service BrainRegionService {
     option (google.api.http) = {
       post: "/api/generate-queries"
       body: "*"
+    };
+  }
+
+  // Resolve a chunk UUID to its full source details (file, character range, etc.).
+  // Called by orch on behalf of the client when they click a citation.
+  rpc GetChunkSource(GetChunkSourceRequest) returns (ChunkSourceResponse) {
+    option (google.api.http) = {
+      get: "/api/chunks/{chunk_id}/source"
     };
   }
 }

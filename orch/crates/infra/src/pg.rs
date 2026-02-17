@@ -1,8 +1,8 @@
 use crate::InfraError;
 use crate::models::{
     NewProcessedFetchTask as DbNewProcessedFetchTask, NewProcessingBatch, NewRegionQuery,
-    OrchConfig as DbOrchConfig, ProcessedFetchTask as DbProcessedFetchTask, ProcessingBatchRow,
-    RegionQueryRow, RegionSummaryRow, UpdateOrchConfig,
+    OrchConfig as DbOrchConfig, PaperMetadataRow, ProcessedFetchTask as DbProcessedFetchTask,
+    ProcessingBatchRow, RegionQueryRow, RegionSummaryRow, UpdateOrchConfig,
 };
 use crate::schema::region_summary;
 use deadpool_diesel::Runtime;
@@ -537,6 +537,46 @@ impl BatchManagement for OrchPostgresql {
 
         Ok(s3_keys.into_iter().flatten().collect())
     }
+
+    async fn get_task_paper_metadata(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<Vec<services::PaperMetadataRecord>, Self::Error> {
+        let task_ids_vec = task_ids.to_vec();
+        let conn = self.pool(database_url).await?.get().await?;
+
+        // Use raw SQL to JOIN fetch_tasks, fetch_task_components, and papers
+        // to get s3_key -> (pmc_id, uid, query)
+        let rows = conn
+            .interact(move |c| {
+                diesel::sql_query(
+                    "SELECT DISTINCT
+                        ftc.s3_key,
+                        ft.pmc_id,
+                        p.uid,
+                        ft.query
+                     FROM fetch_task_components ftc
+                     INNER JOIN fetch_tasks ft ON ft.id = ftc.task_id
+                     LEFT JOIN papers p ON p.pmc_id = ft.pmc_id
+                     WHERE ftc.task_id = ANY($1)
+                       AND ftc.s3_key IS NOT NULL"
+                )
+                .bind::<diesel::sql_types::Array<diesel::sql_types::BigInt>, _>(&task_ids_vec)
+                .load::<PaperMetadataRow>(c)
+            })
+            .await??;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| services::PaperMetadataRecord {
+                s3_key: r.s3_key,
+                pmc_id: Some(r.pmc_id),
+                uid: r.uid,
+                query: Some(r.query),
+            })
+            .collect())
+    }
 }
 
 #[async_trait::async_trait]
@@ -630,5 +670,26 @@ impl services::RegionMappingQueries for OrchPostgresql {
             .await??;
 
         Ok(summaries.into_iter().map(Into::into).collect())
+    }
+
+    async fn get_summary_sources(
+        &self,
+        database_url: &str,
+        summary_id: Uuid,
+    ) -> Result<Vec<services::ChunkSourceRecord>, Self::Error> {
+        use crate::models::ChunkSourceRow;
+        use crate::schema::brain_region_embeddings;
+
+        let conn = self.pool(database_url).await?.get().await?;
+        let rows = conn
+            .interact(move |c| {
+                brain_region_embeddings::table
+                    .filter(brain_region_embeddings::summary_id.eq(summary_id))
+                    .select(ChunkSourceRow::as_select())
+                    .load::<ChunkSourceRow>(c)
+            })
+            .await??;
+
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 }

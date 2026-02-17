@@ -18,6 +18,8 @@ diesel::table! {
         source_uid -> Nullable<Varchar>,
         source_s3_key -> Nullable<Text>,
         source_query -> Nullable<Text>,
+        source_char_start -> Nullable<Int4>,
+        source_char_end -> Nullable<Int4>,
     }
 }
 

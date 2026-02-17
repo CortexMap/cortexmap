@@ -34,6 +34,19 @@ pub enum RegionPipelineStatus {
     Invalidated,  // New cycle queued on top of existing summaries
 }
 
+/// Source chunk referenced by a summary (lightweight metadata for client)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummarySource {
+    /// UUID of the brain_region_embeddings row (chunk identifier)
+    pub chunk_id: Uuid,
+    /// PMC ID of the source paper, if available
+    pub pmc_id: Option<String>,
+    /// UID of the source paper, if available
+    pub uid: Option<String>,
+    /// Query that led to fetching this source
+    pub source_query: Option<String>,
+}
+
 /// A single region summary entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegionSummary {
@@ -41,6 +54,8 @@ pub struct RegionSummary {
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// The batch that generated this summary
     pub batch_id: Uuid,
+    /// Source chunks used to generate this summary
+    pub sources: Vec<SummarySource>,
 }
 
 /// Result of searching/listing summaries for a region
@@ -140,6 +155,19 @@ pub struct Region {
     pub structure_order: Option<i32>,
     pub parent_region_id: Option<i32>,
     pub parent_acronym: Option<String>,
+}
+
+/// Full source details for a chunk (returned by chunk source resolution endpoint)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkSourceResponse {
+    pub chunk_id: Uuid,
+    pub chunk_text: String,
+    pub source_s3_key: Option<String>,
+    pub source_pmc_id: Option<String>,
+    pub source_uid: Option<String>,
+    pub source_query: Option<String>,
+    pub char_start: Option<i32>,
+    pub char_end: Option<i32>,
 }
 
 /// RGB color representation

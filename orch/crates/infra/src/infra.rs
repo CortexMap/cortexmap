@@ -238,6 +238,14 @@ impl BatchManagement for OrchInfra {
     ) -> Result<Vec<String>, Self::Error> {
         self.pg.get_task_s3_keys(database_url, task_ids).await
     }
+
+    async fn get_task_paper_metadata(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<Vec<services::PaperMetadataRecord>, Self::Error> {
+        self.pg.get_task_paper_metadata(database_url, task_ids).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -279,5 +287,13 @@ impl services::RegionMappingQueries for OrchInfra {
         region_id: i32,
     ) -> Result<Vec<services::RegionSummaryRecord>, Self::Error> {
         self.pg.get_region_summaries(database_url, region_id).await
+    }
+
+    async fn get_summary_sources(
+        &self,
+        database_url: &str,
+        summary_id: Uuid,
+    ) -> Result<Vec<services::ChunkSourceRecord>, Self::Error> {
+        self.pg.get_summary_sources(database_url, summary_id).await
     }
 }

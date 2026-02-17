@@ -201,11 +201,7 @@ where
         let summaries = self.services.get_summaries(region_id).await?;
         
         Ok(SearchRegionResult {
-            summaries: summaries.into_iter().map(|s| domain::RegionSummary {
-                summary: s.summary,
-                created_at: s.created_at,
-                batch_id: s.batch_id, // Batch ID is now always tracked
-            }).collect(),
+            summaries,
         })
     }
 
@@ -242,11 +238,19 @@ where
         // Step 5: Save queries
         self.services.store_queries(region_id, queries.clone()).await?;
         
-        // Step 6: Enqueue fetch tasks for each query
+        // Step 6: Enqueue fetch tasks for each query.
+        //
+        // We do NOT use `?` inside this loop. A single failed enqueue must not
+        // abort the entire loop and leave the batch with an empty fetch_task_ids
+        // array — that would cause a zombie batch stuck in `collecting` forever.
+        // Instead we log the error and continue with whatever task IDs we did
+        // collect, then call add_tasks_to_batch / mark failed below.
         let mut task_ids = Vec::new();
         for query in &queries {
-            let query_task_ids = self.services.enqueue_fetch_task(query.clone(), region_id, domain::Priority::UserRequested.as_i32()).await?;
-            task_ids.extend(query_task_ids);
+            match self.services.enqueue_fetch_task(query.clone(), region_id, domain::Priority::UserRequested.as_i32()).await {
+                Ok(query_task_ids) => task_ids.extend(query_task_ids),
+                Err(e) => tracing::warn!(?region_id, ?batch_id, query, error = %e, "Failed to enqueue fetch task for query, skipping"),
+            }
         }
         
         let task_count = task_ids.len();

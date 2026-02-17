@@ -5,6 +5,7 @@ use domain::rpc_types::{
     BrainRegionListResponse, ProcessRegionResponse, SearchBrainRegionResponse, StatusResponse,
     GenerateQueriesResponse, PaperMetadata,
 };
+use domain::ChunkSource;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -95,5 +96,12 @@ where
             .map_err(ApiError::AppError)?;
 
         Ok(GenerateQueriesResponse { queries })
+    }
+
+    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<Option<ChunkSource>, Self::Error> {
+        self.app()
+            .get_chunk_source(chunk_id)
+            .await
+            .map_err(ApiError::AppError)
     }
 }

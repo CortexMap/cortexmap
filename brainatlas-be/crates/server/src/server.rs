@@ -1,6 +1,6 @@
 use api::{ApiError, BrainAtlasApi, BrainRegionApi};
 use app::AppError;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -62,6 +62,7 @@ impl BrainAtlasServer {
             .route("/api/status", post(status_handler))
             .route("/api/process", post(process_region_handler))
             .route("/api/generate-queries", post(generate_queries_handler))
+            .route("/api/chunks/{chunk_id}/source", get(get_chunk_source_handler))
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
@@ -167,4 +168,20 @@ async fn generate_queries_handler(
         .await
         .map_err(ServerError)?;
     Ok(Json(resp))
+}
+
+/// GET /brainatlas-be/api/chunks/{chunk_id}/source
+async fn get_chunk_source_handler(
+    State(server): State<BrainAtlasServer>,
+    Path(chunk_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError> {
+    let resp = server
+        .api
+        .get_chunk_source(chunk_id)
+        .await
+        .map_err(ServerError)?;
+    match resp {
+        Some(source) => Ok(Json(serde_json::json!(source))),
+        None => Err(ServerError(Error::MissingOrInvalidId)),
+    }
 }

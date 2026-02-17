@@ -1,6 +1,6 @@
 use crate::{
-    BatchManagement, EnvInfra, HttpClient, OrchDatabase, ProcessRegionRequest,
-    ProcessRegionResponse, ServiceError, UuidWrapper,
+    BatchManagement, EnvInfra, HttpClient, OrchDatabase, PaperMetadataEntry,
+    ProcessRegionRequest, ProcessRegionResponse, ServiceError, UuidWrapper,
 };
 use app::CompletionOrchestrator;
 use backon::{ExponentialBuilder, Retryable};
@@ -207,12 +207,22 @@ where
         + Send
         + Sync,
 {
-    /// Check if all fetch tasks in a batch are complete
+    /// Check if all fetch tasks in a batch are complete.
+    ///
+    /// Returns `false` when `task_ids` is empty — an empty batch must never be
+    /// promoted to `ready`, it should be caught upstream and marked `failed`.
     async fn check_all_tasks_complete(
         &self,
         task_ids: &[i64],
         database_url: &str,
     ) -> Result<bool, ServiceError<E>> {
+        // Guard: a batch with no tasks is not "complete" — it is broken.
+        // Without this guard, 0 == 0 would be vacuously true and the watcher
+        // would immediately promote the batch to `ready` with nothing to process.
+        if task_ids.is_empty() {
+            return Ok(false);
+        }
+
         let completed_count = self
             .infra
             .count_completed_tasks(database_url, task_ids)
@@ -253,6 +263,26 @@ where
             .await
             .map_err(ServiceError::InfraError)?;
 
+        // Detect zombie batches: no fetch tasks were ever assigned.
+        // This is distinct from "tasks exist but produced only PDFs".
+        if batch.fetch_task_ids.is_empty() {
+            tracing::error!(
+                batch_id = %batch.id,
+                region_id = %batch.region_id,
+                "Zombie batch: fetch_task_ids is empty — no tasks were ever assigned. Marking failed."
+            );
+            self.infra
+                .update_batch_status(
+                    database_url,
+                    batch.id,
+                    BatchStatus::Failed,
+                    Some("No fetch tasks were ever assigned to this batch".to_string()),
+                )
+                .await
+                .map_err(ServiceError::InfraError)?;
+            return Err(ServiceError::NoS3Keys);
+        }
+
         // Get S3 keys directly from database instead of calling fetcher API
         let all_s3_keys = self.infra
             .get_task_s3_keys(database_url, &batch.fetch_task_ids)
@@ -275,7 +305,10 @@ where
                     database_url,
                     batch.id,
                     BatchStatus::Failed,
-                    Some("No text files found in batch (only PDFs)".to_string()),
+                    Some(format!(
+                        "No text files found in batch ({} S3 keys were all PDFs or unavailable)",
+                        all_s3_keys.len()
+                    )),
                 )
                 .await
                 .map_err(ServiceError::InfraError)?;
@@ -288,6 +321,32 @@ where
             text_keys = text_s3_keys.len(),
             "Filtered S3 keys (excluding PDFs)"
         );
+
+        // Get paper metadata for source attribution
+        let paper_metadata_records = self
+            .infra
+            .get_task_paper_metadata(database_url, &batch.fetch_task_ids)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        // Build paper_metadata entries, filtering to only text S3 keys
+        let paper_metadata: Vec<PaperMetadataEntry> = paper_metadata_records
+            .into_iter()
+            .filter(|r| text_s3_keys.contains(&r.s3_key))
+            .map(|r| PaperMetadataEntry {
+                s3_key: r.s3_key,
+                pmc_id: r.pmc_id,
+                uid: r.uid,
+                query: r.query,
+            })
+            .collect();
+
+        tracing::info!(
+            batch_id = %batch.id,
+            paper_metadata_count = paper_metadata.len(),
+            "Collected paper metadata for source attribution"
+        );
+
         // Call brainatlas /process with retry logic
         let process_url = format!("{}/brainatlas-be/api/process", brainatlas_url);
         
@@ -326,6 +385,7 @@ where
                 value: batch.id.to_string(),
             },
             s3_keys: text_s3_keys.clone(),
+            paper_metadata,
             chat_model,
             embedding_model,
         };

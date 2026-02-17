@@ -5,7 +5,7 @@ use crate::llm_service::BrainAtlasLlmService;
 use crate::embedding_service::BrainAtlasEmbeddingService;
 use crate::{Infra, ServiceError};
 use app::{BrainRegionInfo, ListBrainRegions, Chunker, LlmService, EmbeddingService, S3Storage, VectorDatabase};
-use domain::{BrainRegionEntry, RegionMapping, NewEmbedding, NewRegionSummary, ExistingSummary, SimilarChunk, LlmResponse};
+use domain::{BrainRegionEntry, RegionMapping, NewEmbedding, NewRegionSummary, ExistingSummary, SimilarChunk, ChunkSource, LlmResponse};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -197,6 +197,21 @@ where
 
         self.infra
             .update_summary_text(&database_url, summary_id, summary_text)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+
+    async fn get_chunk_source(
+        &self,
+        chunk_id: Uuid,
+    ) -> Result<Option<ChunkSource>, Self::Error> {
+        let database_url = self
+            .infra
+            .get("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .get_chunk_source(&database_url, chunk_id)
             .await
             .map_err(ServiceError::InfraError)
     }

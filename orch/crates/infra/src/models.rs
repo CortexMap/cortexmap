@@ -231,3 +231,40 @@ impl From<RegionSummaryRow> for services::RegionSummaryRecord {
         }
     }
 }
+
+// Chunk Source Models (for source attribution)
+
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = crate::schema::brain_region_embeddings)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct ChunkSourceRow {
+    pub id: Uuid,
+    pub source_pmc_id: Option<String>,
+    pub source_uid: Option<String>,
+    pub source_query: Option<String>,
+}
+
+impl From<ChunkSourceRow> for services::ChunkSourceRecord {
+    fn from(row: ChunkSourceRow) -> Self {
+        Self {
+            id: row.id,
+            source_pmc_id: row.source_pmc_id,
+            source_uid: row.source_uid,
+            source_query: row.source_query,
+        }
+    }
+}
+
+// Paper Metadata Models (for source attribution in process requests)
+
+#[derive(QueryableByName, Debug, Clone)]
+pub struct PaperMetadataRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub s3_key: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub pmc_id: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub uid: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub query: String,
+}
