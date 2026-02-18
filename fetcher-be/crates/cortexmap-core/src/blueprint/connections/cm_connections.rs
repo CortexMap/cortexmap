@@ -4,6 +4,14 @@ pub struct Connections {
     pub s3_info: S3Info,
 }
 
+impl Connections {
+    pub fn db_url(&self) -> &str {
+        match &self.db {
+            Database::Postgresql(pg) => &pg.url,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Database {
     Postgresql(Postgresql),

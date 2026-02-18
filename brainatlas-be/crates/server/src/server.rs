@@ -52,8 +52,8 @@ impl BrainAtlasServer {
         Self { api }
     }
 
-    pub fn into_router(self) -> Router {
-        let cors = cors_layer();
+    pub fn into_router(self, cors_origin: Option<String>) -> Router {
+        let cors = cors_layer(cors_origin);
 
         let api_routes = Router::new()
             .route("/health", get(health_handler))
@@ -75,13 +75,13 @@ impl BrainAtlasServer {
     }
 }
 
-fn cors_layer() -> CorsLayer {
+fn cors_layer(cors_origin: Option<String>) -> CorsLayer {
     let layer = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(tower_http::cors::Any);
 
-    match std::env::var("CORS_ORIGIN") {
-        Ok(origins) if origins != "*" => {
+    match cors_origin {
+        Some(origins) if origins != "*" => {
             let allowed: Vec<HeaderValue> = origins
                 .split(',')
                 .filter_map(|o| o.trim().parse::<HeaderValue>().ok())

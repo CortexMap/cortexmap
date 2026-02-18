@@ -1,6 +1,6 @@
 use crate::InfraError;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use services::HttpClient as HttpClientTrait;
 
 pub struct OrchHttpClient {
@@ -18,13 +18,17 @@ impl OrchHttpClient {
 #[async_trait::async_trait]
 impl HttpClientTrait for OrchHttpClient {
     type Error = InfraError;
-    
+
     async fn get<T: DeserializeOwned + Send>(&self, url: &str) -> Result<T, Self::Error> {
+        tracing::debug!(url = url, "HTTP GET");
         let response = self.client.get(url).send().await?;
-        
+
         let status = response.status();
         if !status.is_success() {
-            let error_body = response.text().await.unwrap_or_else(|_| "(could not read response)".to_string());
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "(could not read response)".to_string());
             tracing::error!(
                 url = url,
                 status = %status,
@@ -36,20 +40,24 @@ impl HttpClientTrait for OrchHttpClient {
                 body: error_body,
             });
         }
-        
+
         Ok(response.json().await?)
     }
-    
+
     async fn post<Req: Serialize + Send + Sync, Res: DeserializeOwned + Send + Sync>(
         &self,
         url: &str,
         body: &Req,
     ) -> Result<Res, Self::Error> {
+        tracing::debug!(url = url, "HTTP POST");
         let response = self.client.post(url).json(body).send().await?;
-        
+
         let status = response.status();
         if !status.is_success() {
-            let error_body = response.text().await.unwrap_or_else(|_| "(could not read response)".to_string());
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "(could not read response)".to_string());
             tracing::error!(
                 url = url,
                 status = %status,
@@ -61,14 +69,15 @@ impl HttpClientTrait for OrchHttpClient {
                 body: error_body,
             });
         }
-        
+
         Ok(response.json().await?)
     }
-    
+
     async fn check_health(&self, base_url: &str, service_name: &str) -> Result<(), Self::Error> {
         let url = format!("{}/health", base_url);
-        
-        let response = self.client
+
+        let response = self
+            .client
             .get(&url)
             .timeout(std::time::Duration::from_secs(5))
             .send()
@@ -82,7 +91,7 @@ impl HttpClientTrait for OrchHttpClient {
                 );
                 InfraError::from(e)
             })?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
@@ -95,13 +104,13 @@ impl HttpClientTrait for OrchHttpClient {
             );
             return Err(InfraError::NotFound);
         }
-        
+
         tracing::info!(
             service = service_name,
             base_url = base_url,
             "Health check passed"
         );
-        
+
         Ok(())
     }
 }

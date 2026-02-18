@@ -30,21 +30,15 @@ pub struct QueueServer {
 }
 
 impl QueueServer {
-    pub async fn new(
-        database_url: String,
-        s3_endpoint: String,
-        s3_access_key: String,
-        s3_secret_key: String,
-        s3_bucket: String,
-    ) -> Result<Self, anyhow::Error> {
-        let infra_ctx = StdInfraContext {
-            database_url: database_url.clone(),
-            endpoint: s3_endpoint.clone(),
-            access_key: s3_access_key.clone(),
-            secret_key: s3_secret_key.clone(),
-            bucket: s3_bucket.clone(),
-        };
+    /// Create from runtime environment variables (collected once, reused).
+    pub async fn from_env() -> Result<Self, anyhow::Error> {
+        let infra_ctx = StdInfraContext::from_env()?;
+        Self::new(infra_ctx).await
+    }
 
+    pub async fn new(
+        infra_ctx: StdInfraContext,
+    ) -> Result<Self, anyhow::Error> {
         let ctx = infra_ctx.get()?;
 
         let blueprint_template = Blueprint {
@@ -59,16 +53,23 @@ impl QueueServer {
             },
             connections: Connections {
                 db: Database::Postgresql(Postgresql {
-                    url: database_url,
+                    url: infra_ctx.database_url,
                 }),
                 s3_info: S3Info {
-                    endpoint: s3_endpoint,
-                    access_key: s3_access_key,
-                    secret_key: s3_secret_key,
-                    bucket: s3_bucket,
+                    endpoint: infra_ctx.endpoint,
+                    access_key: infra_ctx.access_key,
+                    secret_key: infra_ctx.secret_key,
+                    bucket: infra_ctx.bucket,
                 },
             },
         };
+
+        info!(
+            "Database: {}",
+            blueprint_template.connections.db_url()
+                .split('@').last().unwrap_or("unknown")
+        );
+        info!("S3 Bucket: {}", blueprint_template.connections.s3_info.bucket);
 
         let worker_manager = Arc::new(RwLock::new(WorkerManager::new()));
 

@@ -6,6 +6,11 @@ use futures::Stream;
 use reqwest::Response;
 use std::pin::Pin;
 
+/// Environment variable access — collect vars once at startup and reuse.
+pub trait EnvInfra: Send + Sync {
+    fn get_env_var(&self, key: &str) -> Result<String, InfraError>;
+}
+
 pub enum ContentType {
     Text,
     Pdf,

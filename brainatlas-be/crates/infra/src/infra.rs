@@ -18,9 +18,16 @@ pub struct BrainAtlasInfra {
 
 impl BrainAtlasInfra {
     pub fn new() -> Self {
-        let pg = BrainAtlasPostgresql::new();
         let env = BrainAtlasEnvInfra::new();
-        let s3 = BrainAtlasS3::new();
+
+        // Read S3 config from env once at startup
+        let s3_endpoint = env.get("S3_ENDPOINT").unwrap_or_default();
+        let s3_access_key = env.get("S3_ACCESS_KEY").unwrap_or_default();
+        let s3_secret_key = env.get("S3_SECRET_KEY").unwrap_or_default();
+        let s3_bucket = env.get("S3_BUCKET").unwrap_or_default();
+
+        let pg = BrainAtlasPostgresql::new();
+        let s3 = BrainAtlasS3::new(s3_endpoint, s3_access_key, s3_secret_key, s3_bucket);
         let llm = OpenRouterClient::new();
         let vectordb = BrainAtlasVectorDB::new();
 

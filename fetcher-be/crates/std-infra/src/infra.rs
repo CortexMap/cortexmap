@@ -1,11 +1,12 @@
 use crate::StdDatabaseInfra;
 use crate::database::DbPool;
+use crate::env::FetcherEnvInfra;
 use crate::http::StdHttpInfra;
 use crate::s3::StdS3Infra;
 use crate::task_queue::StdTaskQueue;
 use bytes::Bytes;
 use cortexmap_infra::{
-    ComponentType, ContentType, DatabaseInfra, FetchTask, FetchTaskComponent, HttpInfra,
+    ComponentType, ContentType, DatabaseInfra, EnvInfra, FetchTask, FetchTaskComponent, HttpInfra,
     InfraError, NewFetchTaskLog, NewPaper, Paper, S3Infra,
     TaskQueueInfra, TaskStats, TaskStatus,
 };
@@ -14,6 +15,7 @@ use reqwest::Response;
 use std::pin::Pin;
 
 pub struct StdInfra {
+    env_infra: FetcherEnvInfra,
     http_infra: StdHttpInfra,
     db_infra: StdDatabaseInfra,
     s3_infra: StdS3Infra,
@@ -28,6 +30,7 @@ impl StdInfra {
         secret_key: &str,
         bucket: &str,
     ) -> Result<Self, InfraError> {
+        let env_infra = FetcherEnvInfra::new();
         let http_infra = StdHttpInfra::new();
         let db_infra = StdDatabaseInfra::new(database_url)?;
         let s3_infra = StdS3Infra::new(endpoint, access_key, secret_key, bucket);
@@ -36,6 +39,7 @@ impl StdInfra {
         let task_queue = StdTaskQueue::new(db_infra.pool.clone());
         
         Ok(Self {
+            env_infra,
             http_infra,
             db_infra,
             s3_infra,
@@ -46,6 +50,12 @@ impl StdInfra {
     /// Get the database connection pool for direct queries
     pub fn db_pool(&self) -> &DbPool {
         &self.db_infra.pool
+    }
+}
+
+impl EnvInfra for StdInfra {
+    fn get_env_var(&self, key: &str) -> Result<String, InfraError> {
+        self.env_infra.get_env_var(key)
     }
 }
 

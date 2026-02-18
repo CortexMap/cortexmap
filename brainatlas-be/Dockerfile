@@ -10,17 +10,16 @@
 #     | docker login --username AWS --password-stdin \
 #         285560394698.dkr.ecr.us-east-1.amazonaws.com
 #
-# 2. Build (no secrets needed — DATABASE_URL is supplied at runtime only):
+# 2. Build (no build args needed -- all config is runtime):
 #    NOTE: Must be run from repo root to access both brainatlas-be/ and proto/
 #   docker build \
-#     --build-arg CORS_ORIGIN \
 #     -f brainatlas-be/Dockerfile \
 #     -t 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/brainatlas-be:latest .
 #
 # 3. Push to ECR:
 #   docker push 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/brainatlas-be:latest
 #
-# 4. Run (inject secrets at runtime via --env-file or -e):
+# 4. Run (inject all config at runtime via --env-file or -e):
 #   docker run --env-file .env -p 8081:8081 \
 #     285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/brainatlas-be:latest
 #
@@ -28,6 +27,10 @@
 #   docker run \
 #     -e DATABASE_URL=postgresql://... \
 #     -e CORS_ORIGIN=https://your-frontend.example.com \
+#     -e S3_ENDPOINT=http://minio:9000 \
+#     -e S3_ACCESS_KEY=... \
+#     -e S3_SECRET_KEY=... \
+#     -e S3_BUCKET=... \
 #     -p 8081:8081 \
 #     285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/brainatlas-be:latest
 #
@@ -66,14 +69,9 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# All runtime vars (DATABASE_URL, CORS_ORIGIN, HTTP_ADDR) are supplied via
-# --env-file or -e at `docker run` time. Only CORS_ORIGIN and HTTP_ADDR
-# have build-time defaults as a convenience.
-ARG CORS_ORIGIN=*
-ARG HTTP_ADDR=0.0.0.0:8081
-
-ENV CORS_ORIGIN=${CORS_ORIGIN}
-ENV HTTP_ADDR=${HTTP_ADDR}
+# No ARG/ENV baking -- all config (DATABASE_URL, CORS_ORIGIN, S3_*,
+# BRAINATLAS_HTTP_ADDR, etc.) is supplied at container runtime via
+# docker-compose environment:, --env-file, or -e flags.
 
 COPY --from=builder /app/target/release/server /usr/local/bin/brainatlas-be
 

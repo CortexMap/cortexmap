@@ -26,4 +26,7 @@ pub enum InfraError {
 
     #[error("S3 error: {0}")]
     S3Error(String),
+
+    #[error("env var not found: {0}")]
+    EnvVarNotFound(String),
 }
