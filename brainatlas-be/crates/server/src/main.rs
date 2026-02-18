@@ -3,7 +3,7 @@ mod server;
 use api::BrainAtlasApi;
 use infra::BrainAtlasInfra;
 use server::BrainAtlasServer;
-use services::BrainAtlasServices;
+use services::{BrainAtlasServices, EnvInfra};
 use std::sync::Arc;
 use tracing::info;
 
@@ -13,17 +13,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let addr: std::net::SocketAddr = std::env::var("BRAINATLAS_HTTP_ADDR")
+    // Wire infra → services → api → server
+    let infra = Arc::new(BrainAtlasInfra::new());
+
+    let addr: std::net::SocketAddr = infra
+        .get("BRAINATLAS_HTTP_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8081".to_string())
         .parse()?;
 
-    // Wire infra → services → api → server
-    let infra = Arc::new(BrainAtlasInfra::new());
+    let cors_origin = infra.get("CORS_ORIGIN").ok();
+
     let services = Arc::new(BrainAtlasServices::new(infra));
     let api = Arc::new(BrainAtlasApi::new(services));
     let brain_atlas_server = BrainAtlasServer::new(api);
 
-    let router = brain_atlas_server.into_router();
+    let router = brain_atlas_server.into_router(cors_origin);
 
     info!("brainatlas-be listening on {addr}");
 

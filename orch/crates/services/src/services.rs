@@ -146,12 +146,15 @@ where
     async fn get_all_regions(&self) -> Result<Vec<domain::Region>, Self::Error> {
         self.region_management.get_all_regions().await
     }
-    
+
     async fn delete_queries(&self, region_id: Uuid) -> Result<(), Self::Error> {
         self.region_management.delete_queries(region_id).await
     }
 
-    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<domain::ChunkSourceResponse, Self::Error> {
+    async fn get_chunk_source(
+        &self,
+        chunk_id: Uuid,
+    ) -> Result<domain::ChunkSourceResponse, Self::Error> {
         self.region_management.get_chunk_source(chunk_id).await
     }
 }
@@ -215,22 +218,25 @@ where
             .await
     }
 
-    async fn update_batch_expected_count(&self, batch_id: Uuid, count: i32) -> Result<(), Self::Error> {
+    async fn update_batch_expected_count(
+        &self,
+        batch_id: Uuid,
+        count: i32,
+    ) -> Result<(), Self::Error> {
         self.batch_orchestration
             .update_batch_expected_count(batch_id, count)
             .await
     }
 
-    async fn get_batch_by_id(&self, batch_id: Uuid) -> Result<Option<domain::ProcessingBatch>, Self::Error> {
-        self.batch_orchestration
-            .get_batch_by_id(batch_id)
-            .await
+    async fn get_batch_by_id(
+        &self,
+        batch_id: Uuid,
+    ) -> Result<Option<domain::ProcessingBatch>, Self::Error> {
+        self.batch_orchestration.get_batch_by_id(batch_id).await
     }
 
     async fn ensure_workers_allocated(&self) -> Result<(), Self::Error> {
-        self.batch_orchestration
-            .ensure_workers_allocated()
-            .await
+        self.batch_orchestration.ensure_workers_allocated().await
     }
 }
 
@@ -259,7 +265,11 @@ where
             }
         })?;
 
+        tracing::debug!("Fetcher HTTP address: {}", fetcher_addr);
+
         let fetcher_url = format!("{}/fetcher-be", normalize_url(&fetcher_addr));
+
+        tracing::debug!("Fetcher URL: {}", fetcher_url);
 
         self.infra
             .check_health(&fetcher_url, "fetcher")

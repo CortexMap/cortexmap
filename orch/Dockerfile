@@ -69,6 +69,7 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y \
     libpq5 \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # All runtime vars (DATABASE_URL, FETCHER_HTTP_ADDR, BRAINATLAS_HTTP_ADDR) are

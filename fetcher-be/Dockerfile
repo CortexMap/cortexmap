@@ -10,26 +10,26 @@
 #     | docker login --username AWS --password-stdin \
 #         285560394698.dkr.ecr.us-east-1.amazonaws.com
 #
-# 2. Build (non-secret config only — secrets are never baked into the image):
+# 2. Build (no config/secrets baked in — everything is injected at runtime):
 #    NOTE: Must be run from repo root to access both fetcher-be/ and proto/
 #   docker build \
-#     --build-arg DATABASE_URL \
-#     --build-arg S3_ENDPOINT \
-#     --build-arg S3_BUCKET \
 #     -f fetcher-be/Dockerfile \
 #     -t 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest .
 #
 # 3. Push to ECR:
 #   docker push 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest
 #
-# 4. Run (inject secrets at runtime via --env-file or -e):
+# 4. Run (inject all config at runtime via --env-file or -e):
 #   docker run --env-file .env -p 8080:8080 \
 #     285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest
 #
 #   Or individually:
 #   docker run \
+#     -e DATABASE_URL=postgres://... \
+#     -e S3_ENDPOINT=http://... \
 #     -e S3_ACCESS_KEY=... \
 #     -e S3_SECRET_KEY=... \
+#     -e S3_BUCKET=cortexmap \
 #     -p 8080:8080 \
 #     285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest
 #
@@ -66,20 +66,12 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y \
     libpq5 \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-secret config can be baked in at build time via --build-arg.
-# Secrets (S3_ACCESS_KEY, S3_SECRET_KEY) must never appear in ARG/ENV —
-# supply them exclusively at `docker run` time via --env-file or -e.
-ARG DATABASE_URL
-ARG S3_ENDPOINT
-ARG S3_BUCKET
-ARG HTTP_ADDR=0.0.0.0:8080
-
-ENV DATABASE_URL=${DATABASE_URL}
-ENV S3_ENDPOINT=${S3_ENDPOINT}
-ENV S3_BUCKET=${S3_BUCKET}
-ENV HTTP_ADDR=${HTTP_ADDR}
+# All configuration is injected at container runtime via environment variables.
+# Required: DATABASE_URL, S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET
+# Optional: FETCHER_HTTP_ADDR (defaults to 0.0.0.0:8080)
 
 COPY --from=builder /app/target/release/cortexmap-be /usr/local/bin/cortexmap-be
 
