@@ -1,4 +1,4 @@
-use domain::{ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary};
+use domain::{AllocateWorkersRequest, AllocateWorkersResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary, StopWorkersRequest, StopWorkersResult, WorkerStatusResult};
 use std::error::Error;
 use uuid::Uuid;
 
@@ -119,12 +119,28 @@ pub trait HealthCheck: Send + Sync {
     async fn brainatlas_health(&self) -> Result<(), Self::Error>;
 }
 
+/// Trait for managing fetcher workers
+#[async_trait::async_trait]
+pub trait WorkerManagement: Send + Sync {
+    type Error: Error + Send + Sync;
+
+    /// Get the current status of all workers in the fetcher service
+    async fn get_worker_status(&self) -> Result<WorkerStatusResult, Self::Error>;
+
+    /// Allocate new workers in the fetcher service
+    async fn allocate_workers(&self, request: AllocateWorkersRequest) -> Result<AllocateWorkersResult, Self::Error>;
+
+    /// Stop workers in the fetcher service (empty worker_ids = stop all)
+    async fn stop_workers(&self, request: StopWorkersRequest) -> Result<StopWorkersResult, Self::Error>;
+}
+
 pub trait Services: 
     CompletionOrchestrator<Error = <Self as Services>::Error>
     + RegionManagement<Error = <Self as Services>::Error>
     + BatchOrchestration<Error = <Self as Services>::Error>
     + ConfigManagement<Error = <Self as Services>::Error>
     + HealthCheck<Error = <Self as Services>::Error>
+    + WorkerManagement<Error = <Self as Services>::Error>
 {
     type Error: Error + Send + Sync;
 }
@@ -135,7 +151,8 @@ where
         + RegionManagement<Error = E>
         + BatchOrchestration<Error = E>
         + ConfigManagement<Error = E>
-        + HealthCheck<Error = E>,
+        + HealthCheck<Error = E>
+        + WorkerManagement<Error = E>,
     E: Error + Send + Sync,
 {
     type Error = E;
