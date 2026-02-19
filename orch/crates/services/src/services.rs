@@ -2,13 +2,16 @@ use crate::batch_orchestration::OrchBatchOrchestration;
 use crate::completion_watcher::CompletionWatcher;
 use crate::config_management::OrchConfigManagement;
 use crate::region_management::OrchRegionManagement;
+use crate::worker_management::OrchWorkerManagement;
 use crate::{Infra, ServiceError};
 use app::{
     BatchOrchestration, CompletionOrchestrator, ConfigManagement, HealthCheck, RegionManagement,
+    WorkerManagement,
 };
 use domain::{
-    ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult,
-    ProcessingBatch, RegionQuery, RegionSummary,
+    AllocateWorkersRequest, AllocateWorkersResult, ConfigEntry, ConfigEntryUpdate, ConfigKey,
+    PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary,
+    StopWorkersRequest, StopWorkersResult, WorkerStatusResult,
 };
 use std::error::Error;
 use std::sync::Arc;
@@ -19,6 +22,7 @@ pub struct OrchServices<I> {
     region_management: OrchRegionManagement<I>,
     batch_orchestration: OrchBatchOrchestration<I>,
     config_management: OrchConfigManagement<I>,
+    worker_management: OrchWorkerManagement<I>,
     infra: Arc<I>,
 }
 
@@ -28,11 +32,13 @@ impl<I: Infra> OrchServices<I> {
         let region_management = OrchRegionManagement::new(infra.clone());
         let batch_orchestration = OrchBatchOrchestration::new(infra.clone());
         let config_management = OrchConfigManagement::new(infra.clone());
+        let worker_management = OrchWorkerManagement::new(infra.clone());
         Self {
             completion_watcher,
             region_management,
             batch_orchestration,
             config_management,
+            worker_management,
             infra,
         }
     }
@@ -301,5 +307,32 @@ where
             .check_health(&brainatlas_url, "brainatlas")
             .await
             .map_err(ServiceError::InfraError)
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> WorkerManagement for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn get_worker_status(&self) -> Result<WorkerStatusResult, Self::Error> {
+        self.worker_management.get_worker_status().await
+    }
+
+    async fn allocate_workers(
+        &self,
+        request: AllocateWorkersRequest,
+    ) -> Result<AllocateWorkersResult, Self::Error> {
+        self.worker_management.allocate_workers(request).await
+    }
+
+    async fn stop_workers(
+        &self,
+        request: StopWorkersRequest,
+    ) -> Result<StopWorkersResult, Self::Error> {
+        self.worker_management.stop_workers(request).await
     }
 }

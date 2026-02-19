@@ -1,8 +1,10 @@
 use crate::{ApiError, OrchApi};
 use app::{AppError, OrchApp, Services};
 use domain::{
-    BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult,
-    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult,
+    AllocateWorkersRequest, AllocateWorkersResult, BatchStatusResult, ChunkSourceResponse,
+    ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult, PipelineStatsResult, Region,
+    RegionStatusResult, SearchRegionResult, StopWorkersRequest, StopWorkersResult,
+    WorkerStatusResult,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -114,6 +116,33 @@ where
     async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error> {
         self.services
             .get_chunk_source(chunk_id)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_worker_status(&self) -> Result<WorkerStatusResult, Self::Error> {
+        self.services
+            .get_worker_status()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn allocate_workers(
+        &self,
+        request: AllocateWorkersRequest,
+    ) -> Result<AllocateWorkersResult, Self::Error> {
+        self.services
+            .allocate_workers(request)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn stop_workers(
+        &self,
+        request: StopWorkersRequest,
+    ) -> Result<StopWorkersResult, Self::Error> {
+        self.services
+            .stop_workers(request)
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
