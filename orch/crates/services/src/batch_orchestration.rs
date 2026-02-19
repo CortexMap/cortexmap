@@ -1,6 +1,6 @@
 use crate::{BatchManagement, EnvInfra, HttpClient, ServiceError};
 use app::BatchOrchestration;
-use domain::ConfigKey;
+use domain::{AllocateWorkersRequest, AllocateWorkersResult, ConfigKey, WorkerStatusResult};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::sync::Arc;
@@ -41,32 +41,6 @@ struct EnqueueResponse {
     pmc_ids: Vec<String>,
     task_ids: Vec<i64>,
     error_message: String,
-}
-
-#[derive(Debug, Serialize)]
-struct AllocateWorkersRequest {
-    worker_count: u32,
-    task_timeout_secs: u64,
-    max_retry_attempts: u32,
-}
-
-#[derive(Debug, Deserialize)]
-struct AllocateWorkersResponse {
-    success: bool,
-    worker_ids: Vec<String>,
-    error_message: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct WorkerStatusResponse {
-    workers: Vec<WorkerInfo>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct WorkerInfo {
-    worker_id: String,
-    status: String,
 }
 
 
@@ -210,7 +184,7 @@ where
         
         tracing::debug!(url = %worker_status_url, "Checking worker status");
         
-        let worker_status: WorkerStatusResponse = self
+        let worker_status: WorkerStatusResult = self
             .infra
             .get(&worker_status_url)
             .await
@@ -247,7 +221,7 @@ where
                 max_retry_attempts: 3,
             };
 
-            let response: AllocateWorkersResponse = self
+            let response: AllocateWorkersResult = self
                 .infra
                 .post(&allocate_url, &request)
                 .await
