@@ -1,8 +1,6 @@
 use domain::{
-    AllocateWorkersRequest, AllocateWorkersResult, BatchStatusResult, ChunkSourceResponse,
-    ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult, PipelineStatsResult, Region,
-    RegionStatusResult, SearchRegionResult, StopWorkersRequest, StopWorkersResult,
-    WorkerStatusResult,
+    BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult,
+    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult,
 };
 use uuid::Uuid;
 
@@ -51,18 +49,4 @@ pub trait OrchApi: Send + Sync {
     /// Resolve a chunk UUID to its full source details
     /// Forwards to brainatlas-be: GET /brainatlas-be/api/chunks/{chunk_id}/source
     async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error>;
-
-    // ── Worker management (forwarded to fetcher-be) ───────────────────────────
-
-    /// Get the current status of all fetcher workers
-    /// Forwards to fetcher-be: GET /fetcher-be/api/queue/workers/status
-    async fn get_worker_status(&self) -> Result<WorkerStatusResult, Self::Error>;
-
-    /// Allocate new fetcher workers
-    /// Forwards to fetcher-be: POST /fetcher-be/api/queue/workers/allocate
-    async fn allocate_workers(&self, request: AllocateWorkersRequest) -> Result<AllocateWorkersResult, Self::Error>;
-
-    /// Stop fetcher workers (empty worker_ids = stop all)
-    /// Forwards to fetcher-be: POST /fetcher-be/api/queue/workers/stop
-    async fn stop_workers(&self, request: StopWorkersRequest) -> Result<StopWorkersResult, Self::Error>;
 }
