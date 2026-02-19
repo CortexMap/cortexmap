@@ -43,7 +43,7 @@ impl services::CacheClient for OrchRedis {
 
     async fn cache_set(&self, key: &str, value: &str, ttl_secs: u64) -> Result<(), Self::Error> {
         let mut conn = self.conn().await?;
-        conn.set_ex(key, value, ttl_secs).await?;
+        let () = conn.set_ex(key, value, ttl_secs).await?;
         Ok(())
     }
 

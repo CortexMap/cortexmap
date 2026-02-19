@@ -1,7 +1,8 @@
 use crate::{
-    BatchManagement, EnvInfra, HttpClient, OrchDatabase, PaperMetadataEntry,
+    BatchManagement, CacheClient, EnvInfra, HttpClient, OrchDatabase, PaperMetadataEntry,
     ProcessRegionRequest, ProcessRegionResponse, ServiceError, UuidWrapper,
 };
+use crate::cache_keys::{self, invalidate, invalidate_pattern};
 use app::CompletionOrchestrator;
 use backon::{ExponentialBuilder, Retryable};
 use domain::{
@@ -17,7 +18,7 @@ pub struct CompletionWatcher<I> {
 
 impl<I> CompletionWatcher<I>
 where
-    I: OrchDatabase + EnvInfra + HttpClient + BatchManagement,
+    I: OrchDatabase + EnvInfra + HttpClient + BatchManagement + CacheClient,
 {
     pub fn new(infra: Arc<I>) -> Self {
         Self { infra }
@@ -45,6 +46,7 @@ where
         + EnvInfra<Error = E>
         + HttpClient<Error = E>
         + BatchManagement<Error = E>
+        + CacheClient<Error = E>
         + Send
         + Sync,
 {
@@ -77,6 +79,11 @@ where
                     .update_batch_status(&database_url, batch.id, BatchStatus::Ready, None)
                     .await
                     .map_err(ServiceError::InfraError)?;
+
+                // Invalidate caches affected by batch status change
+                invalidate(self.infra.as_ref(), &cache_keys::batch_status(batch.id)).await;
+                invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
+                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern()).await;
 
                 tracing::info!(
                     batch_id = %batch.id,
@@ -204,6 +211,7 @@ where
         + EnvInfra<Error = E>
         + HttpClient<Error = E>
         + BatchManagement<Error = E>
+        + CacheClient<Error = E>
         + Send
         + Sync,
 {
@@ -262,6 +270,11 @@ where
             .update_batch_status(database_url, batch.id, BatchStatus::Processing, None)
             .await
             .map_err(ServiceError::InfraError)?;
+
+        // Invalidate caches affected by batch status change
+        invalidate(self.infra.as_ref(), &cache_keys::batch_status(batch.id)).await;
+        invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
+        invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern()).await;
 
         // Detect zombie batches: no fetch tasks were ever assigned.
         // This is distinct from "tasks exist but produced only PDFs".
@@ -426,6 +439,15 @@ where
                     .await
                     .map_err(ServiceError::InfraError)?;
 
+                // Invalidate caches affected by batch completion
+                let region_id = batch.region_id;
+                invalidate(self.infra.as_ref(), &cache_keys::region_summaries(region_id)).await;
+                invalidate(self.infra.as_ref(), &cache_keys::region_status(region_id)).await;
+                invalidate(self.infra.as_ref(), &cache_keys::batch_status(batch.id)).await;
+                invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
+                invalidate(self.infra.as_ref(), &cache_keys::all_regions()).await;
+                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern()).await;
+
                 tracing::info!(
                     batch_id = %batch.id,
                     detail = %response.detail,
@@ -450,6 +472,11 @@ where
                     )
                     .await
                     .map_err(ServiceError::InfraError)?;
+
+                // Invalidate caches affected by batch failure
+                invalidate(self.infra.as_ref(), &cache_keys::batch_status(batch.id)).await;
+                invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
+                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern()).await;
 
                 Err(ServiceError::InfraError(e))
             }

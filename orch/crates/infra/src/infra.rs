@@ -2,11 +2,12 @@ use crate::InfraError;
 use crate::env::OrchEnvInfra;
 use crate::http::OrchHttpClient;
 use crate::pg::OrchPostgresql;
+use crate::redis::OrchRedis;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use services::{
     EnvInfra, HttpClient, NewProcessedFetchTask, OrchConfig, OrchDatabase, ProcessedFetchTask,
-    BatchManagement,
+    BatchManagement, CacheClient,
 };
 use domain::{RegionQuery, ProcessingBatch, BatchStatus};
 use uuid::Uuid;
@@ -15,6 +16,7 @@ pub struct OrchInfra {
     env: OrchEnvInfra,
     pg: OrchPostgresql,
     http: OrchHttpClient,
+    redis: OrchRedis,
 }
 
 impl Default for OrchInfra {
@@ -29,6 +31,7 @@ impl OrchInfra {
             env: OrchEnvInfra::new(),
             pg: OrchPostgresql::new(),
             http: OrchHttpClient::new(),
+            redis: OrchRedis::new(),
         }
     }
 }
@@ -295,5 +298,26 @@ impl services::RegionMappingQueries for OrchInfra {
         summary_id: Uuid,
     ) -> Result<Vec<services::ChunkSourceRecord>, Self::Error> {
         self.pg.get_summary_sources(database_url, summary_id).await
+    }
+}
+
+#[async_trait::async_trait]
+impl CacheClient for OrchInfra {
+    type Error = InfraError;
+
+    async fn cache_get(&self, key: &str) -> Result<Option<String>, Self::Error> {
+        self.redis.cache_get(key).await
+    }
+
+    async fn cache_set(&self, key: &str, value: &str, ttl_secs: u64) -> Result<(), Self::Error> {
+        self.redis.cache_set(key, value, ttl_secs).await
+    }
+
+    async fn cache_del(&self, key: &str) -> Result<(), Self::Error> {
+        self.redis.cache_del(key).await
+    }
+
+    async fn cache_del_pattern(&self, pattern: &str) -> Result<u64, Self::Error> {
+        self.redis.cache_del_pattern(pattern).await
     }
 }
