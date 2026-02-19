@@ -1,5 +1,5 @@
 ### Allocate workers with standard configuration
-POST http://localhost:8080/orch/api/workers/allocate
+POST https://capstone.ssdd.dev/orch/api/workers/allocate
 Content-Type: application/json
 
 {
