@@ -1,0 +1,7 @@
+### Get chunk source data
+@chunk_id = 00000000-0000-0000-0000-000000000001
+GET http://localhost:8080/orch/api/chunks/{{chunk_id}}/source
+
+### Get chunk source data (localhost)
+# @chunk_id_local = 123e4567-e89b-12d3-a456-426614174000
+# GET http://localhost:8081/orch/api/chunks/{{chunk_id_local}}/source
