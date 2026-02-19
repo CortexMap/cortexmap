@@ -5,10 +5,12 @@ use crate::region_management::OrchRegionManagement;
 use crate::{Infra, ServiceError};
 use app::{
     BatchOrchestration, CompletionOrchestrator, ConfigManagement, HealthCheck, RegionManagement,
+    WorkerManagement,
 };
 use domain::{
-    ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult,
-    ProcessingBatch, RegionQuery, RegionSummary,
+    AllocateWorkersRequest, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult,
+    ProcessingBatch, RegionQuery, RegionSummary, StopWorkersRequest, WorkerAllocationResponse,
+    WorkerStatus, WorkerStopResponse,
 };
 use std::error::Error;
 use std::sync::Arc;
@@ -301,5 +303,26 @@ where
             .check_health(&brainatlas_url, "brainatlas")
             .await
             .map_err(ServiceError::InfraError)
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> WorkerManagement for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn get_worker_status(&self) -> Result<Vec<WorkerStatus>, Self::Error> {
+        self.batch_orchestration.get_worker_status().await
+    }
+
+    async fn allocate_workers(&self, req: AllocateWorkersRequest) -> Result<WorkerAllocationResponse, Self::Error> {
+        self.batch_orchestration.allocate_workers(req).await
+    }
+
+    async fn stop_workers(&self, req: StopWorkersRequest) -> Result<WorkerStopResponse, Self::Error> {
+        self.batch_orchestration.stop_workers(req).await
     }
 }

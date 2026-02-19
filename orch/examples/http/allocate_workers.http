@@ -1,0 +1,39 @@
+### Allocate workers with standard configuration
+POST https://capstone.ssdd.dev/orch/api/workers/allocate
+Content-Type: application/json
+
+{
+  "worker_count": 5,
+  "task_timeout_secs": 300,
+  "max_retry_attempts": 3
+}
+
+### Allocate single worker
+POST http://localhost:8080/orch/api/workers/allocate
+Content-Type: application/json
+
+{
+  "worker_count": 1,
+  "task_timeout_secs": 180,
+  "max_retry_attempts": 2
+}
+
+### Allocate workers for high performance
+POST http://localhost:8080/orch/api/workers/allocate
+Content-Type: application/json
+
+{
+  "worker_count": 10,
+  "task_timeout_secs": 600,
+  "max_retry_attempts": 5
+}
+
+### Allocate workers (localhost)
+# POST http://localhost:8081/orch/api/workers/allocate
+# Content-Type: application/json
+#
+# {
+#   "worker_count": 2,
+#   "task_timeout_secs": 300,
+#   "max_retry_attempts": 3
+# }

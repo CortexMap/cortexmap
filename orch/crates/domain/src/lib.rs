@@ -4,9 +4,11 @@ use strum::{Display, EnumString, IntoStaticStr};
 
 mod api_types;
 mod batch_types;
+mod worker_types;
 
 pub use api_types::*;
 pub use batch_types::*;
+pub use worker_types::*;
 
 /// Configuration keys for orch_config table
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, IntoStaticStr)]

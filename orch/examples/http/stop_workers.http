@@ -1,0 +1,23 @@
+### Stop all workers
+POST http://localhost:8080/orch/api/workers/stop
+Content-Type: application/json
+
+{
+  "worker_ids": []
+}
+
+### Stop specific workers by ID
+POST http://localhost:8080/orch/api/workers/stop
+Content-Type: application/json
+
+{
+  "worker_ids": ["worker-abc123", "worker-def456"]
+}
+
+### Stop all workers (localhost)
+# POST http://localhost:8081/orch/api/workers/stop
+# Content-Type: application/json
+#
+# {
+#   "worker_ids": []
+# }

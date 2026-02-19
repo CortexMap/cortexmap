@@ -1,4 +1,4 @@
-use domain::{ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary};
+use domain::{AllocateWorkersRequest, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult, ProcessingBatch, RegionQuery, RegionSummary, StopWorkersRequest, WorkerAllocationResponse, WorkerStatus, WorkerStopResponse};
 use std::error::Error;
 use uuid::Uuid;
 
@@ -107,6 +107,21 @@ pub trait ConfigManagement: Send + Sync {
     async fn update_config(&self, entries: Vec<ConfigEntryUpdate>) -> Result<Vec<ConfigEntry>, Self::Error>;
 }
 
+/// Trait for worker management operations
+#[async_trait::async_trait]
+pub trait WorkerManagement: Send + Sync {
+    type Error: Error + Send + Sync;
+    
+    /// Get worker status and statistics
+    async fn get_worker_status(&self) -> Result<Vec<WorkerStatus>, Self::Error>;
+    
+    /// Allocate workers in the fetcher service
+    async fn allocate_workers(&self, req: AllocateWorkersRequest) -> Result<WorkerAllocationResponse, Self::Error>;
+    
+    /// Stop workers in the fetcher service
+    async fn stop_workers(&self, req: StopWorkersRequest) -> Result<WorkerStopResponse, Self::Error>;
+}
+
 /// Trait for service health checks
 #[async_trait::async_trait]
 pub trait HealthCheck: Send + Sync {
@@ -124,6 +139,7 @@ pub trait Services:
     + RegionManagement<Error = <Self as Services>::Error>
     + BatchOrchestration<Error = <Self as Services>::Error>
     + ConfigManagement<Error = <Self as Services>::Error>
+    + WorkerManagement<Error = <Self as Services>::Error>
     + HealthCheck<Error = <Self as Services>::Error>
 {
     type Error: Error + Send + Sync;
@@ -135,6 +151,7 @@ where
         + RegionManagement<Error = E>
         + BatchOrchestration<Error = E>
         + ConfigManagement<Error = E>
+        + WorkerManagement<Error = E>
         + HealthCheck<Error = E>,
     E: Error + Send + Sync,
 {

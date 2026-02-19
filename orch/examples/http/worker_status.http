@@ -1,0 +1,5 @@
+### Get status of all workers
+GET http://localhost:8080/orch/api/workers/status
+
+### Get status of all workers (localhost)
+# GET http://localhost:8081/orch/api/workers/status
