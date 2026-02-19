@@ -63,10 +63,25 @@ struct WorkerStatusResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct WorkerInfo {
     worker_id: String,
     status: String,
+    #[serde(default)]
+    current_task: Option<String>,
+    #[serde(default)]
+    tasks_processed: i64,
+    #[serde(default)]
+    started_at: i64,
+    #[serde(default)]
+    worker_version: Option<String>,
+    #[serde(default)]
+    last_heartbeat_at: Option<i64>,
+    #[serde(default)]
+    uptime_seconds: f64,
+    #[serde(default)]
+    tasks_failed: i64,
+    #[serde(default)]
+    success_rate: f64,
 }
 
 
@@ -269,5 +284,202 @@ where
         }
 
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> app::WorkerManagement for OrchBatchOrchestration<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: EnvInfra<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + crate::OrchDatabase<Error = E> + Send + Sync,
+{
+    type Error = ServiceError<E>;
+
+    async fn get_worker_status(&self) -> Result<Vec<domain::WorkerStatus>, Self::Error> {
+        // Get fetcher URL
+        let fetcher_url = match self.infra.get_env_var("FETCHER_HTTP_ADDR") {
+            Ok(addr) => Self::normalize_url(&addr),
+            Err(_) => {
+                let database_url = self
+                    .infra
+                    .get_env_var("DATABASE_URL")
+                    .map_err(ServiceError::InfraError)?;
+                
+                self.infra
+                    .get_config(&database_url, ConfigKey::FetcherBaseUrl)
+                    .await
+                    .map_err(ServiceError::InfraError)?
+                    .ok_or_else(|| ServiceError::ConfigNotFound {
+                        key: "fetcher_base_url".to_string(),
+                    })?
+            }
+        };
+
+        let url = format!("{}/fetcher-be/api/queue/workers/status", fetcher_url.trim_end_matches('/'));
+        
+        tracing::debug!(url = %url, "Getting worker status");
+        
+        let response: WorkerStatusResponse = self
+            .infra
+            .get(&url)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        // Transform proto-style response to domain types
+        let workers = response.workers.into_iter().map(|w| {
+            domain::WorkerStatus {
+                worker_id: w.worker_id,
+                status: w.status,
+                current_task: w.current_task,
+                tasks_processed: w.tasks_processed,
+                started_at: w.started_at,
+                worker_version: w.worker_version,
+                last_heartbeat_at: w.last_heartbeat_at,
+                uptime_seconds: w.uptime_seconds,
+                tasks_failed: w.tasks_failed,
+                success_rate: w.success_rate,
+            }
+        }).collect();
+
+        Ok(workers)
+    }
+
+    async fn allocate_workers(&self, req: domain::AllocateWorkersRequest) -> Result<domain::WorkerAllocationResponse, Self::Error> {
+        // Validate request
+        if req.worker_count == 0 {
+            return Err(ServiceError::InvalidInput {
+                message: "worker_count must be greater than 0".to_string(),
+            });
+        }
+
+        if req.task_timeout_secs == 0 {
+            return Err(ServiceError::InvalidInput {
+                message: "task_timeout_secs must be greater than 0".to_string(),
+            });
+        }
+
+        // Get fetcher URL
+        let fetcher_url = match self.infra.get_env_var("FETCHER_HTTP_ADDR") {
+            Ok(addr) => Self::normalize_url(&addr),
+            Err(_) => {
+                let database_url = self
+                    .infra
+                    .get_env_var("DATABASE_URL")
+                    .map_err(ServiceError::InfraError)?;
+                
+                self.infra
+                    .get_config(&database_url, ConfigKey::FetcherBaseUrl)
+                    .await
+                    .map_err(ServiceError::InfraError)?
+                    .ok_or_else(|| ServiceError::ConfigNotFound {
+                        key: "fetcher_base_url".to_string(),
+                    })?
+            }
+        };
+
+        let url = format!("{}/fetcher-be/api/queue/workers/allocate", fetcher_url.trim_end_matches('/'));
+        
+        let request = AllocateWorkersRequest {
+            worker_count: req.worker_count,
+            task_timeout_secs: req.task_timeout_secs,
+            max_retry_attempts: req.max_retry_attempts,
+        };
+
+        tracing::info!(
+            url = %url,
+            worker_count = req.worker_count,
+            timeout_secs = req.task_timeout_secs,
+            "Allocating workers"
+        );
+
+        let response: AllocateWorkersResponse = self
+            .infra
+            .post(&url, &request)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        tracing::info!(
+            success = response.success,
+            worker_ids = ?response.worker_ids,
+            "Worker allocation response"
+        );
+
+        Ok(domain::WorkerAllocationResponse {
+            success: response.success,
+            worker_ids: response.worker_ids,
+            error_message: if response.error_message.is_empty() {
+                None
+            } else {
+                Some(response.error_message)
+            },
+        })
+    }
+
+    async fn stop_workers(&self, req: domain::StopWorkersRequest) -> Result<domain::WorkerStopResponse, Self::Error> {
+        // Get fetcher URL
+        let fetcher_url = match self.infra.get_env_var("FETCHER_HTTP_ADDR") {
+            Ok(addr) => Self::normalize_url(&addr),
+            Err(_) => {
+                let database_url = self
+                    .infra
+                    .get_env_var("DATABASE_URL")
+                    .map_err(ServiceError::InfraError)?;
+                
+                self.infra
+                    .get_config(&database_url, ConfigKey::FetcherBaseUrl)
+                    .await
+                    .map_err(ServiceError::InfraError)?
+                    .ok_or_else(|| ServiceError::ConfigNotFound {
+                        key: "fetcher_base_url".to_string(),
+                    })?
+            }
+        };
+
+        let url = format!("{}/fetcher-be/api/queue/workers/stop", fetcher_url.trim_end_matches('/'));
+        
+        #[derive(Serialize)]
+        struct StopWorkersRequest {
+            worker_ids: Vec<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct StopWorkersResponse {
+            success: bool,
+            workers_stopped: u32,
+            error_message: String,
+        }
+
+        let request = StopWorkersRequest {
+            worker_ids: req.worker_ids.clone(),
+        };
+
+        tracing::info!(
+            url = %url,
+            worker_ids = ?req.worker_ids,
+            stop_all = req.worker_ids.is_empty(),
+            "Stopping workers"
+        );
+
+        let response: StopWorkersResponse = self
+            .infra
+            .post(&url, &request)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        tracing::info!(
+            success = response.success,
+            workers_stopped = response.workers_stopped,
+            "Worker stop response"
+        );
+
+        Ok(domain::WorkerStopResponse {
+            success: response.success,
+            workers_stopped: response.workers_stopped,
+            error_message: if response.error_message.is_empty() {
+                None
+            } else {
+                Some(response.error_message)
+            },
+        })
     }
 }

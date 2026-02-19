@@ -65,6 +65,9 @@ impl OrchServer {
             .route("/api/config", get(get_config_handler))
             .route("/api/config", patch(update_config_handler))
             .route("/api/chunks/{chunk_id}/source", get(get_chunk_source_handler))
+            .route("/api/workers/status", get(get_worker_status_handler))
+            .route("/api/workers/allocate", post(allocate_workers_handler))
+            .route("/api/workers/stop", post(stop_workers_handler))
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
@@ -164,5 +167,28 @@ async fn get_chunk_source_handler(
     Path(chunk_id): Path<uuid::Uuid>,
 ) -> Result<impl IntoResponse, ServerError> {
     let result = server.api.get_chunk_source(chunk_id).await?;
+    Ok(Json(result))
+}
+
+async fn get_worker_status_handler(
+    State(server): State<OrchServer>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_worker_status().await?;
+    Ok(Json(result))
+}
+
+async fn allocate_workers_handler(
+    State(server): State<OrchServer>,
+    Json(body): Json<domain::AllocateWorkersRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.allocate_workers(body).await?;
+    Ok(Json(result))
+}
+
+async fn stop_workers_handler(
+    State(server): State<OrchServer>,
+    Json(body): Json<domain::StopWorkersRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.stop_workers(body).await?;
     Ok(Json(result))
 }

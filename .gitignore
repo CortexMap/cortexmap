@@ -27,3 +27,6 @@ plans/
 *.pb
 
 **/*.log
+**/.diesel_lock
+*-dump.json
+*-dump.html
