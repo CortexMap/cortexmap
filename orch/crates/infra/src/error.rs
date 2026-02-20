@@ -33,6 +33,8 @@ pub enum InfraError {
     Http(#[from] reqwest::Error),
     #[error("HTTP {status}: {body}")]
     HttpStatus { status: u16, body: String },
+    #[error("Redis error: {0}")]
+    Redis(#[from] redis::RedisError),
 }
 
 impl From<deadpool_diesel::InteractError> for InfraError {

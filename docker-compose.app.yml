@@ -1,4 +1,18 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - infra-net
+
   cortexmap-be:
     image: 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/fetcher:latest
     container_name: cortexmap-be
@@ -54,6 +68,8 @@ services:
         condition: service_healthy
       brainatlas-be:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file: ".env.orch"
     environment:
       # Hardcoded network addresses — always correct on this Docker network.
@@ -63,6 +79,7 @@ services:
       FETCHER_HTTP_ADDR: http://cortexmap-be:8080
       BRAINATLAS_HTTP_ADDR: http://brainatlas-be:8081
       ORCH_HTTP_ADDR: 0.0.0.0:8082
+      REDIS_URL: redis://redis:6379
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082/orch/health"]
       interval: 30s

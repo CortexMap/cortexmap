@@ -305,20 +305,41 @@ pub trait RegionMappingQueries: Send + Sync {
     ) -> Result<Vec<ChunkSourceRecord>, Self::Error>;
 }
 
-/// Blanket: any `T: OrchDatabase + EnvInfra + HttpClient + BatchManagement + RegionMappingQueries` automatically satisfies `Infra`.
+/// Cache client for Redis-backed read-through caching and invalidation.
+#[async_trait::async_trait]
+pub trait CacheClient: Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Fetch a cached value by key. Returns `None` on miss or connection failure.
+    async fn cache_get(&self, key: &str) -> Result<Option<String>, Self::Error>;
+
+    /// Store a value with a TTL (seconds). Fire-and-forget semantics — callers
+    /// should swallow errors.
+    async fn cache_set(&self, key: &str, value: &str, ttl_secs: u64) -> Result<(), Self::Error>;
+
+    /// Delete a single cached key.
+    async fn cache_del(&self, key: &str) -> Result<(), Self::Error>;
+
+    /// Delete all keys matching a glob pattern (e.g. `orch:region:*:status`).
+    /// Returns the number of keys deleted.
+    async fn cache_del_pattern(&self, pattern: &str) -> Result<u64, Self::Error>;
+}
+
+/// Blanket: any `T: OrchDatabase + EnvInfra + HttpClient + BatchManagement + RegionMappingQueries + CacheClient` automatically satisfies `Infra`.
 pub trait Infra:
    EnvInfra<Error = <Self as Infra>::Error>
    + OrchDatabase<Error = <Self as Infra>::Error>
    + HttpClient<Error = <Self as Infra>::Error>
    + BatchManagement<Error = <Self as Infra>::Error>
    + RegionMappingQueries<Error = <Self as Infra>::Error>
+   + CacheClient<Error = <Self as Infra>::Error>
 {
     type Error: std::error::Error + Send + Sync + 'static;
 }
 
 impl<E, T> Infra for T
 where
-    T: EnvInfra<Error = E> + OrchDatabase<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + RegionMappingQueries<Error = E>,
+    T: EnvInfra<Error = E> + OrchDatabase<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + RegionMappingQueries<Error = E> + CacheClient<Error = E>,
     E: std::error::Error + Send + Sync + 'static,
 {
     type Error = E;
