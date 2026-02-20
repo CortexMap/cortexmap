@@ -1,17 +1,16 @@
-/target
 **/target
 **/.env*
 !**/.env.example
 /.idea
-/llm_layer/.venv
-/llm_layer/data_md
-/llm_layer/pubmed_pdfs
-/llm_layer/chroma
+**/.venv
+**/data_md
+**/pubmed_pdfs
+**/chroma
 :**/node_modules
 
 plans/
 
-/llm_layer/.env
+**/.env
 
 # Python cache files
 **/__pycache__/
@@ -30,3 +29,28 @@ plans/
 **/.diesel_lock
 *-dump.json
 *-dump.html
+
+# Dependencies
+**/node_modules/
+**/.pnp
+**/.pnp.js
+
+# Testing
+/coverage
+
+# Production
+**/build
+**/dist
+
+# Misc
+**/.DS_Store
+
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
