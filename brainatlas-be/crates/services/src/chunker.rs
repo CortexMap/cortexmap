@@ -35,7 +35,13 @@ impl TextChunker {
         let text_len = text.len();
 
         while start < text_len {
-            let end = (start + chunk_size).min(text_len);
+            let mut end = (start + chunk_size).min(text_len);
+            
+            // Ensure we don't split in the middle of a UTF-8 character
+            while end < text_len && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            
             let chunk = &text[start..end];
             chunks.push(chunk.to_string());
 
@@ -43,8 +49,12 @@ impl TextChunker {
                 break;
             }
 
-            // Move start forward by (chunk_size - overlap)
-            start += chunk_size - overlap;
+            // Move start forward by (chunk_size - overlap), ensuring char boundary
+            let mut next_start = start + chunk_size - overlap;
+            while next_start < text_len && !text.is_char_boundary(next_start) {
+                next_start += 1;
+            }
+            start = next_start;
         }
 
         chunks
@@ -58,7 +68,7 @@ mod tests {
     #[test]
     fn test_empty_text() {
         let chunker = TextChunker::new();
-        let chunks = chunker.chunk("", 100, 20).unwrap();
+        let chunks = chunker.chunk("", 100, 20);
         assert_eq!(chunks.len(), 0);
     }
 
@@ -66,7 +76,7 @@ mod tests {
     fn test_text_smaller_than_chunk_size() {
         let chunker = TextChunker::new();
         let text = "Hello world";
-        let chunks = chunker.chunk(text, 100, 20).unwrap();
+        let chunks = chunker.chunk(text, 100, 20);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0], "Hello world");
     }
@@ -75,7 +85,7 @@ mod tests {
     fn test_exact_chunk_size() {
         let chunker = TextChunker::new();
         let text = "12345678901234567890"; // 20 chars
-        let chunks = chunker.chunk(text, 20, 0).unwrap();
+        let chunks = chunker.chunk(text, 20, 0);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0], text);
     }
@@ -84,7 +94,7 @@ mod tests {
     fn test_multiple_chunks_no_overlap() {
         let chunker = TextChunker::new();
         let text = "12345678901234567890ABCDEFGHIJ"; // 30 chars
-        let chunks = chunker.chunk(text, 10, 0).unwrap();
+        let chunks = chunker.chunk(text, 10, 0);
         assert_eq!(chunks.len(), 3);
         assert_eq!(chunks[0], "1234567890");
         assert_eq!(chunks[1], "1234567890");
@@ -95,7 +105,7 @@ mod tests {
     fn test_multiple_chunks_with_overlap() {
         let chunker = TextChunker::new();
         let text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; // 26 chars
-        let chunks = chunker.chunk(text, 10, 3).unwrap();
+        let chunks = chunker.chunk(text, 10, 3);
         assert_eq!(chunks.len(), 4);
         assert_eq!(chunks[0], "ABCDEFGHIJ");
         assert_eq!(chunks[1], "HIJKLMNOPQ"); // overlaps HIJ
@@ -108,7 +118,7 @@ mod tests {
         let chunker = TextChunker::new();
         // Should fallback to no overlap
         let text = "ABCDEFGHIJKLMNOP";
-        let chunks = chunker.chunk(text, 5, 10).unwrap();
+        let chunks = chunker.chunk(text, 5, 10);
         assert_eq!(chunks.len(), 4);
         assert_eq!(chunks[0], "ABCDE");
         assert_eq!(chunks[1], "FGHIJ");
@@ -118,7 +128,7 @@ mod tests {
     fn test_zero_chunk_size() {
         let chunker = TextChunker::new();
         let text = "Hello world";
-        let chunks = chunker.chunk(text, 0, 5).unwrap();
+        let chunks = chunker.chunk(text, 0, 5);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0], "Hello world");
     }
@@ -130,7 +140,7 @@ mod tests {
                     It plays a vital role in memory formation. \
                     Research shows it's particularly important for spatial navigation.";
         
-        let chunks = chunker.chunk(text, 50, 10).unwrap();
+        let chunks = chunker.chunk(text, 50, 10);
         
         // Should create overlapping chunks
         assert!(chunks.len() > 1);
