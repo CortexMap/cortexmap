@@ -30,3 +30,6 @@ plans/
 **/.diesel_lock
 *-dump.json
 *-dump.html
+
+brainatlas-fe/node_modules/
+brainatlas-fe/dist/
