@@ -32,4 +32,4 @@ plans/
 *-dump.html
 
 # JS Files
-/node_modules
+**/node_modules
