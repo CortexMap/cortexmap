@@ -33,3 +33,13 @@ plans/
 
 # JS Files
 **/node_modules
+
+# output
+out
+dist
+*.tgz
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
