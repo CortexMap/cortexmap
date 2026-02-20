@@ -3,11 +3,11 @@ use cortexmap_core::blueprint::Blueprint;
 use cortexmap_infra::{HttpInfra, InfraContext};
 use serde::{Deserialize, Serialize};
 
-const ESEARCH_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pmc&term={query}&retmode=json&retmax={pageSize}";
-const ESUMMARY_URL: &str =
-    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pmc&id={ids}&retmode=json";
-const EFETCH_URL: &str =
-    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={id}&retmode=xml";
+// FIXME: don't hardcode API key
+
+const ESEARCH_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pmc&term={query}&retmode=json&retmax={pageSize}&api_key=f07493e9dd1f62fa5c734b4e208a3b45ab08";
+const ESUMMARY_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pmc&id={ids}&retmode=json&api_key=f07493e9dd1f62fa5c734b4e208a3b45ab08";
+const EFETCH_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={id}&retmode=xml&api_key=f07493e9dd1f62fa5c734b4e208a3b45ab08";
 
 /// Strip "PMC" prefix from PMC ID if present
 /// NCBI API expects numeric IDs without the "PMC" prefix
@@ -164,7 +164,7 @@ pub async fn fetch_summary<I: HttpInfra>(
 ) -> Result<ArticleMetadata, FetchError> {
     // Strip "PMC" prefix for API call (NCBI expects numeric IDs)
     let numeric_id = strip_pmc_prefix(pmc_uid);
-    
+
     // ESummary for a single ID
     let summary_url = ESUMMARY_URL.replace("{ids}", numeric_id);
 
@@ -180,7 +180,7 @@ pub async fn fetch_summary<I: HttpInfra>(
             return Ok(metadata);
         }
     }
-    
+
     Err(FetchError::NotFound(format!(
         "Summary not found for PMC {}",
         pmc_uid

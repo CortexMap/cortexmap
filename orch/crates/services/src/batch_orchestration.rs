@@ -1,4 +1,5 @@
-use crate::{BatchManagement, EnvInfra, HttpClient, ServiceError};
+use crate::{BatchManagement, CacheClient, EnvInfra, HttpClient, ServiceError};
+use crate::cache_keys::{self, cached_or_fetch, invalidate, invalidate_pattern};
 use app::BatchOrchestration;
 use domain::ConfigKey;
 use serde::{Deserialize, Serialize};
@@ -89,7 +90,7 @@ struct WorkerInfo {
 impl<E, I> BatchOrchestration for OrchBatchOrchestration<I>
 where
     E: Error + Send + Sync + 'static,
-    I: EnvInfra<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + crate::OrchDatabase<Error = E> + Send + Sync,
+    I: EnvInfra<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + crate::OrchDatabase<Error = E> + CacheClient<Error = E> + Send + Sync,
 {
     type Error = ServiceError<E>;
 
@@ -99,10 +100,17 @@ where
             .get_env_var("DATABASE_URL")
             .map_err(ServiceError::InfraError)?;
 
-        self.infra
+        let batch_id = self.infra
             .create_batch(&database_url, region_id, expected_count as i32)
             .await
-            .map_err(ServiceError::InfraError)
+            .map_err(ServiceError::InfraError)?;
+
+        // Invalidate pipeline stats and per-status caches
+        invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
+        invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern()).await;
+        invalidate(self.infra.as_ref(), &cache_keys::region_status(region_id)).await;
+
+        Ok(batch_id)
     }
 
     async fn enqueue_fetch_task(
@@ -189,15 +197,23 @@ where
     }
 
     async fn get_batch_by_id(&self, batch_id: Uuid) -> Result<Option<domain::ProcessingBatch>, Self::Error> {
-        let database_url = self
-            .infra
-            .get_env_var("DATABASE_URL")
-            .map_err(ServiceError::InfraError)?;
+        let infra = &self.infra;
+        cached_or_fetch(
+            infra.as_ref(),
+            &cache_keys::batch_status(batch_id),
+            cache_keys::TTL_SHORT,
+            || async {
+                let database_url = infra
+                    .get_env_var("DATABASE_URL")
+                    .map_err(ServiceError::InfraError)?;
 
-        self.infra
-            .get_batch_by_id(&database_url, batch_id)
-            .await
-            .map_err(ServiceError::InfraError)
+                infra
+                    .get_batch_by_id(&database_url, batch_id)
+                    .await
+                    .map_err(ServiceError::InfraError)
+            },
+        )
+        .await
     }
 
     async fn ensure_workers_allocated(&self) -> Result<(), Self::Error> {
@@ -291,7 +307,7 @@ where
 impl<E, I> app::WorkerManagement for OrchBatchOrchestration<I>
 where
     E: Error + Send + Sync + 'static,
-    I: EnvInfra<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + crate::OrchDatabase<Error = E> + Send + Sync,
+    I: EnvInfra<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + crate::OrchDatabase<Error = E> + CacheClient<Error = E> + Send + Sync,
 {
     type Error = ServiceError<E>;
 

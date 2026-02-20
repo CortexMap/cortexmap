@@ -6,6 +6,7 @@ mod types;
 mod region_management;
 mod batch_orchestration;
 mod config_management;
+pub mod cache_keys;
 
 pub use error::*;
 pub use infra::*;

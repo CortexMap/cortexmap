@@ -13,3 +13,8 @@
 - [x] Modify system prompts to show better results, currently, it's summarizing the chunks, instead, it should use the
   chunks
   and generate a summary, potential diseases in the region, regions affected with that diseases, symptoms, etc.
+
+### Common
+
+- [x] Redis cache
+- [ ] Move to gRPC for inter-service communication 
