@@ -105,21 +105,28 @@ function LatestSummary({ summary, formatDate }) {
           );
 
           const results = await Promise.all(chunkRequests);
-          logger.apiSuccess('Batch chunk fetch', 'Multiple chunk sources', { count: results.length });
+          logger.apiSuccess('Batch chunk fetch', 'Multiple chunk sources', { 
+            count: results.length,
+            successful: results.filter(r => r.data).length
+          });
 
           // Merge fetched data into chunk map
           const updatedMap = { ...initialMap };
           results.forEach(({ chunkId, data }) => {
             if (data) {
+              logger.debug(`Chunk ${chunkId}: PMC ${data.source_pmc_id}`);
               updatedMap[chunkId] = {
                 chunk_id: chunkId,
                 pmc_id: data.source_pmc_id,  // API returns source_pmc_id
                 source_query: data.source_query,
                 uid: data.source_uid
               };
+            } else {
+              logger.debug(`Chunk ${chunkId}: No data received`);
             }
           });
 
+          logger.info(`Chunk map now has ${Object.keys(updatedMap).length} entries`);
           setChunkMap(updatedMap);
         } catch (err) {
           logger.error('Error fetching chunk sources:', err);
