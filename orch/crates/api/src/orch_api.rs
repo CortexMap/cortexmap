@@ -60,6 +60,13 @@ where
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
+    async fn get_active_batch(&self, region_id: Uuid) -> Result<Option<Uuid>, Self::Error> {
+        self.app()
+            .get_active_batch_id(region_id)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
     async fn get_region_status(&self, region_id: Uuid) -> Result<RegionStatusResult, Self::Error> {
         self.app()
             .get_region_status(region_id)
