@@ -110,6 +110,17 @@ message GetRegionStatusResponse {
   Priority                  current_priority = 6;
 }
 
+message GetActiveBatchRequest {
+  RegionId region_id = 1;
+}
+
+message GetActiveBatchResponse {
+  RegionId region_id = 1;
+  // UUID of the active batch (collecting, ready, or processing).
+  // Returns null if no active batch exists.
+  optional string active_batch_id = 2;
+}
+
 // ─────────────────────────────────────────────
 // Invalidation
 // ─────────────────────────────────────────────
@@ -166,6 +177,15 @@ service OrchService {
   rpc GetRegionStatus(GetRegionStatusRequest) returns (GetRegionStatusResponse) {
     option (google.api.http) = {
       get: "/api/regions/{region_id.value}/status"
+    };
+  }
+
+  // Get the active batch ID for a region (if one exists).
+  // Returns the batch ID if there's an active batch (collecting, ready, or processing).
+  // Returns null if no active batch exists.
+  rpc GetActiveBatch(GetActiveBatchRequest) returns (GetActiveBatchResponse) {
+    option (google.api.http) = {
+      get: "/api/regions/{region_id.value}/active-batch"
     };
   }
 
