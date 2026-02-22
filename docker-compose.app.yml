@@ -89,6 +89,22 @@ services:
     networks:
       - infra-net
 
+  brainatlas-fe:
+    image: 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/brainatlas-fe:latest
+    container_name: brainatlas-fe
+    restart: unless-stopped
+    depends_on:
+      orch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - infra-net
+
 networks:
   infra-net:
     external: true
