@@ -26,6 +26,11 @@ pub trait OrchApi: Send + Sync {
     /// Get the status of a specific batch
     async fn get_batch_status(&self, batch_id: Uuid) -> Result<BatchStatusResult, Self::Error>;
     
+    /// Get the active batch for a region (if one is in progress)
+    /// Returns the batch ID if there's an active batch (collecting, ready, or processing)
+    /// Returns None if no active batch exists
+    async fn get_active_batch(&self, region_id: Uuid) -> Result<Option<Uuid>, Self::Error>;
+    
     /// Get the end-to-end pipeline status for a single region
     async fn get_region_status(&self, region_id: Uuid) -> Result<RegionStatusResult, Self::Error>;
     
