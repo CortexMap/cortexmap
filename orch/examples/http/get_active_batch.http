@@ -1,0 +1,17 @@
+### Get active batch for a region
+GET https://capstone.ssdd.dev/orch/api/regions/00000000-0000-0000-0000-000000000001/active-batch
+
+### Get active batch for a region (localhost)
+# GET http://localhost:8082/orch/api/regions/00000000-0000-0000-0000-000000000001/active-batch
+
+### Expected response:
+# {
+#   "region_id": "00000000-0000-0000-0000-000000000001",
+#   "active_batch_id": "550e8400-e29b-41d4-a716-446655440000"
+# }
+#
+# OR if no active batch:
+# {
+#   "region_id": "00000000-0000-0000-0000-000000000001",
+#   "active_batch_id": null
+# }
