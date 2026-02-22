@@ -59,6 +59,7 @@ impl OrchServer {
             .route("/api/regions", get(get_all_regions_handler))
             .route("/api/regions/{id}/summaries", get(list_summaries_handler))
             .route("/api/regions/{id}/generate", post(generate_summary_handler))
+            .route("/api/regions/{id}/active-batch", get(get_active_batch_handler))
             .route("/api/batches/{id}/status", get(get_batch_status_handler))
             .route("/api/regions/{id}/status", get(get_region_status_handler))
             .route("/api/pipeline/stats", get(get_pipeline_stats_handler))
@@ -123,6 +124,17 @@ async fn get_batch_status_handler(
 ) -> Result<impl IntoResponse, ServerError> {
     let result = server.api.get_batch_status(id).await?;
     Ok(Json(result))
+}
+
+async fn get_active_batch_handler(
+    State(server): State<OrchServer>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_active_batch(id).await?;
+    Ok(Json(serde_json::json!({
+        "region_id": id,
+        "active_batch_id": result,
+    })))
 }
 
 async fn get_region_status_handler(

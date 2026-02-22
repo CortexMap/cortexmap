@@ -206,13 +206,30 @@ where
     }
 
     /// Generate a new summary for a region (creates batch, enqueues tasks)
+    /// If there's already an active batch, returns that batch's info instead
     pub async fn generate_summary(&self, region_id: Uuid) -> Result<GenerateSummaryResult, E> {
         tracing::info!(?region_id, "Generating new summary for region");
         
-        // Step 1: Get region name
+        // Step 1: Check if there's already an active batch for this region
+        if let Some(active_batch) = self.services.get_active_batch(region_id).await? {
+            tracing::warn!(
+                ?region_id, 
+                batch_id = ?active_batch.id, 
+                status = ?active_batch.status,
+                "Batch already in progress, returning existing batch info"
+            );
+            return Ok(GenerateSummaryResult {
+                batch_id: active_batch.id,
+                query_count: 0, // We don't track this for existing batches
+                task_count: active_batch.fetch_task_ids.len(),
+                already_in_progress: true,
+            });
+        }
+        
+        // Step 2: Get region name
         let region_name = self.services.get_region_name(region_id).await?;
         
-        // Step 2: Get query count from config (default to 3)
+        // Step 3: Get query count from config (default to 3)
         let query_count = self.services.get_query_generation_limit().await?
             .unwrap_or(3);
         
@@ -226,6 +243,7 @@ where
                 batch_id: Uuid::nil(),
                 query_count: 0,
                 task_count: 0,
+                already_in_progress: false,
             });
         }
         
@@ -280,6 +298,7 @@ where
             batch_id,
             query_count: queries.len(),
             task_count,
+            already_in_progress: false,
         })
     }
 
@@ -320,5 +339,14 @@ where
             completed_tasks: None, // TODO: Query fetcher for completion count
             created_at: batch.created_at,
         })
+    }
+
+    /// Get the active batch ID for a region (if one exists)
+    /// Returns None if no active batch is in progress
+    pub async fn get_active_batch_id(&self, region_id: Uuid) -> Result<Option<Uuid>, E> {
+        tracing::info!(?region_id, "Getting active batch ID for region");
+        
+        let active_batch = self.services.get_active_batch(region_id).await?;
+        Ok(active_batch.map(|batch| batch.id))
     }
 }

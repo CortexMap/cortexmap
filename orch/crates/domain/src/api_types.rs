@@ -68,12 +68,14 @@ pub struct SearchRegionResult {
 /// Result of creating a new summary generation batch
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateSummaryResult {
-    /// The newly created batch ID
+    /// The newly created batch ID (or existing active batch ID if already in progress)
     pub batch_id: Uuid,
     /// Number of queries generated
     pub query_count: usize,
     /// Number of fetch tasks enqueued
     pub task_count: usize,
+    /// Whether a new batch was created or an existing one was returned
+    pub already_in_progress: bool,
 }
 
 /// Current status of a batch
