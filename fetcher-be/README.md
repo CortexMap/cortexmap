@@ -1,187 +1,229 @@
-# CortexMap
+# Fetcher Backend
 
-A Rust-based brain atlas data management and query system designed for neuroscience research. CortexMap provides a powerful query engine for searching and retrieving neuroscientific data from various sources.
+> High-performance PubMed paper fetching service with distributed worker pool architecture
 
-## Features
+The Fetcher Backend is a Rust-based service that manages a sophisticated task queue for downloading academic papers from PubMed Central (PMC). It features a scalable worker pool, component-based processing with intelligent retry mechanisms, and S3 storage integration.
 
-- **Advanced Query System**: Comprehensive boolean query support with nested logic
-- **YAML Configuration**: Declarative configuration for complex queries
-- **Modular Architecture**: Clean separation between core logic and data fetching
-- **Serde Integration**: Full serialization/deserialization support
-- **PubMed Integration**: Built-in support for fetching neuroscience literature
+For comprehensive documentation and the main project overview, see the [main README](../README.md).
+
+## Quick Links
+
+- [Main Project README](../README.md) - Project overview and architecture
+- [BrainAtlas Backend](../brainatlas-be/README.md) - LLM processing service
+- [Orchestrator](../orch/README.md) - Pipeline coordination
+- [Frontend](../brainatlas-fe/README.md) - User interface
+
+## Purpose
+
+This service:
+
+1. **Accepts queries** for neuroscience papers from PubMed
+2. **Enqueues tasks** with priority-based scheduling
+3. **Manages workers** that process tasks concurrently
+4. **Fetches components**: PDF, abstract, and AI-generated summary
+5. **Stores results** in S3-compatible storage
+6. **Handles failures** with sophisticated retry logic
 
 ## Architecture
 
-CortexMap is organized as a Rust workspace with the following crates:
+### Distributed Task Queue System
 
-### Core Components
-
-#### `cortexmap-core`
-The core library providing:
-- Configuration management (`config`)
-- Query engine with boolean operations (`BooleanQuery`)
-- Blueprint definitions for data fetching (`blueprint`)
-
-#### `cortexmap-fetcher`
-Data fetching functionality:
-- PubMed/EUtils integration (`fetch/metadata`)
-- Error handling with `thiserror`
-- Extensible fetcher architecture
-
-## Query System
-
-CortexMap supports sophisticated boolean queries including:
-
-- **Term Queries**: Simple text search
-- **Phrase Queries**: Exact phrase matching
-- **Field Queries**: Search in specific fields with optional boost
-- **Wildcard Queries**: Pattern matching with `*` and `?`
-- **Boolean Operations**: AND, OR, NOT with nested logic
-- **Range Queries**: Numeric and date range filtering
-- **Boost Queries**: Relevance scoring adjustment
-
-### Example Configuration
-
-```yaml
-query: !and
-  - !or
-    - !term "rust"
-    - !term "go"
-  - !field
-    name: "category"
-    value: "programming"
-  - !not
-    query: !or
-      - !term "deprecated"
-      - !term "legacy"
-  - !boost
-    query: !phrase "best practices"
-    factor: 2.5
 ```
+┌─────────────────────────────────────────────────────────┐
+│                 HTTP API (Axum)                         │
+│  Enqueue, Status, Workers, Task Details                │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────────┐
+│              WorkerManager                              │
+│  Allocate, Stop, Monitor Workers                        │
+└──────────┬─────────────────────┬────────────────────────┘
+           │                     │
+    ┌──────▼──────┐       ┌──────▼──────┐
+    │  Worker 1   │  ...  │  Worker N   │
+    │ (Tokio Task)│       │ (Tokio Task)│
+    └──────┬──────┘       └──────┬──────┘
+           │                     │
+┌──────────▼─────────────────────▼────────────────────────┐
+│           PostgreSQL Task Queue                         │
+│  Tasks: pending → in_progress → completed/failed        │
+│  Components: summary, abstract, pdf (independent retry) │
+└─────────────────────────────────────────────────────────┘
+           │
+           │  Upload
+           ▼
+┌─────────────────────────────────────────────────────────┐
+│                S3 Storage                               │
+│  papers/{pmc_id}/{component}                            │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Crate Organization
+
+| Crate | Purpose |
+|-------|---------|
+| **cortexmap-be** | Main server, HTTP API, worker management |
+| **cortexmap-infra** | Infrastructure trait definitions |
+| **std-infra** | Concrete implementations (PostgreSQL, S3, HTTP) |
+| **cortexmap-fetcher** | PubMed fetching logic (metadata, PDF, abstracts) |
+| **cortexmap-database** | Diesel models and schema |
+| **cortexmap-cli** | Command-line tools for debugging |
 
 ## Getting Started
 
-### Prerequisites
+See the [main README](../README.md#quick-start) for setup instructions.
 
-- Rust 2024 edition or later
-- Cargo package manager
+### Quick Setup
 
-### Installation
+1. **Install Diesel CLI**: `cargo install diesel_cli --no-default-features --features postgres`
+2. **Run migrations**: `diesel migration run`
+3. **Configure environment** (see Configuration section below)
+4. **Build**: `cargo build --release`
+5. **Run**: `cargo run --bin cortexmap-be`
+6. **Allocate workers**:
+   ```bash
+   curl -X POST http://localhost:8080/api/queue/workers/allocate \
+     -H "Content-Type: application/json" \
+     -d '{"worker_count": 2, "task_timeout_secs": 300, "max_retry_attempts": 3}'
+   ```
 
-Clone the repository and build the project:
+## Configuration
 
-```bash
-git clone <repository-url>
-cd cortexmap
-cargo build --all
-```
+### Environment Variables
 
-### Running Tests
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | Required |
+| `S3_ENDPOINT` | S3 endpoint URL | Required |
+| `S3_ACCESS_KEY` | S3 access key | Required |
+| `S3_SECRET_KEY` | S3 secret key | Required |
+| `S3_BUCKET` | S3 bucket name | Required |
+| `FETCHER_HTTP_ADDR` | HTTP bind address | `0.0.0.0:8080` |
+| `RUST_LOG` | Logging level | `info` |
 
-```bash
-cargo test
-```
+## Key Features
 
-Note: Some test fixtures may need to be created for full test coverage.
+### Component-Based Processing
 
-## Usage
+Each task fetches three independent components:
+- **Summary**: PubMed abstract
+- **Abstract**: Extracted from XML
+- **PDF**: Full paper from Open Access
 
-### Basic Query Example
+Each component has independent retry logic, allowing partial success.
 
-```rust
-use cortexmap_core::config::{Config, BooleanQuery};
+### Worker Pool Management
 
-// Create a simple term query
-let query = BooleanQuery::term("neuroscience");
+- Dynamic worker allocation via HTTP API
+- Graceful shutdown using cancellation tokens
+- Worker statistics with database query integration
+- Each worker runs in separate Tokio task
 
-// Create a complex nested query
-let complex_query = BooleanQuery::and(vec![
-    BooleanQuery::or(vec![
-        BooleanQuery::term("fMRI"),
-        BooleanQuery::term("optogenetics")
-    ]),
-    BooleanQuery::field("species", "mouse"),
-    BooleanQuery::not(BooleanQuery::term("review"))
-]);
+### Intelligent Retry Mechanisms
 
-// Convert to query string
-let query_string = complex_query.to_string();
-```
+**Component-Level Retry**:
+- Default: 3 attempts per component
+- Timeout-based delays prevent API flooding
+- Heartbeat mechanism detects crashed workers
 
-### Configuration from YAML
+**Retry Decision Matrix**:
+- Network timeout: Retry
+- HTTP 503: Retry
+- HTTP 500: Retry
+- HTTP 404: No retry (paper doesn't exist)
+- HTTP 403: No retry (access denied)
 
-```rust
-use cortexmap_core::config::Config;
+## API Endpoints
 
-let yaml_config = r#"
-query: !and
-  - !term "motor cortex"
-  - !field
-    name: "species"
-    value: "human"
-"#;
+### Queue Management
+- `POST /api/queue/enqueue` - Enqueue PubMed query
+- `GET /api/queue/status` - Queue statistics
+- `GET /api/queue/task/{pmc_id}` - Task details
+- `GET /api/queue/task/{task_id}/components` - Component status
 
-let config = Config::from_yaml(yaml_config)?;
-```
+### Worker Management
+- `POST /api/queue/workers/allocate` - Spawn workers
+- `POST /api/queue/workers/stop` - Stop workers
+- `GET /api/queue/workers/status` - Worker statistics
 
-## Development Status
-
-This is an active development project. Current status:
-
-- ✅ Core query engine with comprehensive boolean operations
-- ✅ YAML configuration system with extensive test coverage
-- ✅ Modular architecture with clear separation of concerns
-- 🚧 PubMed fetcher implementation (in progress)
-- 🚧 Error handling improvements
-- 📋 Documentation and examples
+### Health
+- `GET /fetcher-be/health` - Health check
 
 ## Testing
 
-The project includes comprehensive tests for the query system:
-
 ```bash
-# Run all tests
+# Unit tests
 cargo test
 
-# Run tests for specific crate
-cargo test -p cortexmap-core
-
-# Run with output
-cargo test -- --nocapture
+# Integration tests (requires test infrastructure)
+docker-compose -f ../docker-compose.test.yml up -d postgres minio
+cargo test --features integration
+docker-compose -f ../docker-compose.test.yml down -v
 ```
 
-Test fixtures are located in `crates/cortexmap-core/src/fixtures/` and cover various query patterns including:
-- Simple term and phrase queries
-- Complex nested boolean operations
-- Field-specific queries with boost factors
-- Range queries and wildcard patterns
+## Troubleshooting
 
-## Contributing
+### Workers Not Processing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
+**Check**:
+```bash
+curl http://localhost:8080/api/queue/workers/status
+```
 
-## License
+**Solutions**:
+1. Allocate workers if none exist
+2. Check logs: `grep ERROR /tmp/cortexmap-be.log`
+3. Verify database connectivity
 
-This project is part of the Brain Atlas Capstone project.
+### Components Failing
 
-## Dependencies
+**Investigate**:
+```sql
+-- Find failed components
+SELECT tc.task_id, tc.component_type, tc.error_message, tc.attempt_count
+FROM fetch_task_components tc
+WHERE tc.status = 'failed';
+```
 
-- **serde**: Serialization/deserialization framework
-- **serde_yaml**: YAML support for configuration
-- **thiserror**: Error handling
-- **urlencoding**: URL encoding for web requests
+**Common Causes**:
+- Paper not in Open Access (PDF unavailable)
+- PMC ID invalid or retracted
+- S3 credentials invalid
 
-## Future Roadmap
+## Performance Optimization
 
-- [ ] Complete PubMed/EUtils fetcher implementation
-- [ ] Add support for additional data sources
-- [ ] Implement caching mechanisms
-- [ ] Add async/await support for data fetching
-- [ ] Create CLI interface
-- [ ] Add visualization capabilities
-- [ ] Performance optimization for large datasets
+### Worker Scaling
+
+Optimal worker count:
+```
+workers = min(
+  CPU cores × 2,
+  NCBI rate limit / avg_task_duration,
+  database connection pool size
+)
+```
+
+### Database Tuning
+
+- Ensure `idx_fetch_tasks_queue` index exists
+- Monitor slow queries with `pg_stat_statements`
+- Consider partitioning for large task volumes
+
+## Deployment
+
+See [main README](../README.md#production-deployment) for production deployment instructions.
+
+### Docker Build
+
+```bash
+docker build -t fetcher-be:latest -f Dockerfile .
+
+docker run -p 8080:8080 \
+  -e DATABASE_URL="..." \
+  -e S3_ENDPOINT="..." \
+  fetcher-be:latest
+```
+
+---
+
+**Fetcher Backend** - Reliable, scalable paper acquisition for neuroscience research
