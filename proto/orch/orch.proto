@@ -159,6 +159,43 @@ message GetPipelineStatsResponse {
 }
 
 // ─────────────────────────────────────────────
+// Reverse search (natural language → regions)
+// ─────────────────────────────────────────────
+
+message ReverseSearchRequest {
+  // Natural language query string (e.g. "hippocampus", "motor cortex",
+  // "dopamine receptors"). Searched against region names, acronyms,
+  // and the latest summary text.
+  string query = 1;
+}
+
+message ReverseSearchResultItem {
+  // UUID from region_mapping
+  string region_id         = 1;
+  // Integer region_id from region_mapping
+  int32  region_numeric_id = 2;
+  // Full region name
+  string name              = 3;
+  // Region acronym / shortform (e.g. "CA1", "VIS")
+  optional string acronym  = 4;
+  // First ~200 chars of the matching summary, if the match was on summary text
+  optional string summary_snippet = 5;
+  // Which field matched: "name", "acronym", or "summary"
+  string match_source      = 6;
+  // Relevance score (1.0 = exact match, lower = weaker match)
+  double rank              = 7;
+}
+
+message ReverseSearchResponse {
+  // Echo back the query that was searched
+  string query                              = 1;
+  // Top-N matching regions, ordered by rank descending
+  repeated ReverseSearchResultItem results  = 2;
+  // Total number of distinct region matches before the LIMIT was applied
+  int32 total_found                         = 3;
+}
+
+// ─────────────────────────────────────────────
 // Service definition
 // ─────────────────────────────────────────────
 
@@ -218,6 +255,17 @@ service OrchService {
     option (google.api.http) = {
       patch: "/api/config"
       body:  "*"
+    };
+  }
+
+  // Reverse search: find brain regions by natural language query.
+  // Searches across region names, acronyms, and the latest summary text.
+  // Returns up to N results (configurable via search_result_limit config,
+  // default 5), ordered by relevance.
+  rpc ReverseSearch(ReverseSearchRequest) returns (ReverseSearchResponse) {
+    option (google.api.http) = {
+      post: "/api/search"
+      body: "*"
     };
   }
 }
