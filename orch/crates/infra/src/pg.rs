@@ -712,9 +712,9 @@ impl services::RegionMappingQueries for OrchPostgresql {
                                rm.acronym::text as acronym,
                                NULL::text as summary_snippet,
                                'name' as match_source,
-                               CASE WHEN LOWER(rm.name) = LOWER($1) THEN 1.0
-                                    WHEN LOWER(rm.name) LIKE LOWER($1) || '%' THEN 0.9
-                                    ELSE 0.7 END as rank
+                               (CASE WHEN LOWER(rm.name) = LOWER($1) THEN 1.0
+                                     WHEN LOWER(rm.name) LIKE LOWER($1) || '%' THEN 0.9
+                                     ELSE 0.7 END)::float8 as rank
                         FROM region_mapping rm
                         WHERE rm.name ILIKE '%' || $1 || '%'
 
@@ -724,9 +724,9 @@ impl services::RegionMappingQueries for OrchPostgresql {
                                rm.acronym::text,
                                NULL::text,
                                'acronym',
-                               CASE WHEN LOWER(rm.acronym) = LOWER($1) THEN 1.0
-                                    WHEN LOWER(rm.acronym) LIKE LOWER($1) || '%' THEN 0.95
-                                    ELSE 0.8 END
+                               (CASE WHEN LOWER(rm.acronym) = LOWER($1) THEN 1.0
+                                     WHEN LOWER(rm.acronym) LIKE LOWER($1) || '%' THEN 0.95
+                                     ELSE 0.8 END)::float8
                         FROM region_mapping rm
                         WHERE rm.acronym ILIKE '%' || $1 || '%'
 
@@ -736,7 +736,7 @@ impl services::RegionMappingQueries for OrchPostgresql {
                                rm.acronym::text,
                                LEFT(rs.summary, 200),
                                'summary',
-                               0.6
+                               0.6::float8
                         FROM region_summary rs
                         INNER JOIN region_mapping rm ON rm.region_id = rs.region_id
                         WHERE rs.summary ILIKE '%' || $1 || '%'
