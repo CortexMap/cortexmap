@@ -692,4 +692,90 @@ impl services::RegionMappingQueries for OrchPostgresql {
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
+
+    async fn search_regions(
+        &self,
+        database_url: &str,
+        query: &str,
+        limit: i64,
+    ) -> Result<(Vec<services::SearchHitRecord>, i64), Self::Error> {
+        use crate::models::SearchHitRow;
+
+        let query_str = query.to_string();
+        let conn = self.pool(database_url).await?.get().await?;
+
+        let rows = conn
+            .interact(move |c| {
+                diesel::sql_query(
+                    "WITH matches AS (
+                        SELECT rm.id as region_uuid, rm.region_id, rm.name,
+                               rm.acronym::text as acronym,
+                               NULL::text as summary_snippet,
+                               'name' as match_source,
+                               (CASE WHEN LOWER(rm.name) = LOWER($1) THEN 1.0
+                                     WHEN LOWER(rm.name) LIKE LOWER($1) || '%' THEN 0.9
+                                     ELSE 0.7 END)::float8 as rank
+                        FROM region_mapping rm
+                        WHERE rm.name ILIKE '%' || $1 || '%'
+
+                        UNION ALL
+
+                        SELECT rm.id, rm.region_id, rm.name,
+                               rm.acronym::text,
+                               NULL::text,
+                               'acronym',
+                               (CASE WHEN LOWER(rm.acronym) = LOWER($1) THEN 1.0
+                                     WHEN LOWER(rm.acronym) LIKE LOWER($1) || '%' THEN 0.95
+                                     ELSE 0.8 END)::float8
+                        FROM region_mapping rm
+                        WHERE rm.acronym ILIKE '%' || $1 || '%'
+
+                        UNION ALL
+
+                        SELECT rm.id, rm.region_id, rm.name,
+                               rm.acronym::text,
+                               (SELECT para
+                                FROM unnest(string_to_array(rs.summary, E'\n\n')) AS para
+                                WHERE para ILIKE '%' || $1 || '%'
+                                LIMIT 1),
+                               'summary',
+                               0.6::float8
+                        FROM region_summary rs
+                        INNER JOIN region_mapping rm ON rm.region_id = rs.region_id
+                        WHERE rs.summary ILIKE '%' || $1 || '%'
+                          AND rs.id = (
+                              SELECT rs2.id FROM region_summary rs2
+                              WHERE rs2.region_id = rs.region_id
+                              ORDER BY rs2.created_at DESC NULLS LAST
+                              LIMIT 1
+                          )
+                    ),
+                    deduped AS (
+                        SELECT DISTINCT ON (region_uuid)
+                               region_uuid, region_id, name, acronym,
+                               summary_snippet, match_source, rank
+                        FROM matches
+                        ORDER BY region_uuid, rank DESC
+                    ),
+                    counted AS (
+                        SELECT *, COUNT(*) OVER() as total_count
+                        FROM deduped
+                    )
+                    SELECT region_uuid, region_id, name, acronym, summary_snippet,
+                           match_source, rank, total_count
+                    FROM counted
+                    ORDER BY rank DESC, name ASC
+                    LIMIT $2",
+                )
+                .bind::<diesel::sql_types::Text, _>(&query_str)
+                .bind::<diesel::sql_types::BigInt, _>(&limit)
+                .load::<SearchHitRow>(c)
+            })
+            .await??;
+
+        let total_count = rows.first().map(|r| r.total_count).unwrap_or(0);
+        let records = rows.into_iter().map(Into::into).collect();
+
+        Ok((records, total_count))
+    }
 }

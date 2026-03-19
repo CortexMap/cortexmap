@@ -299,6 +299,15 @@ impl services::RegionMappingQueries for OrchInfra {
     ) -> Result<Vec<services::ChunkSourceRecord>, Self::Error> {
         self.pg.get_summary_sources(database_url, summary_id).await
     }
+
+    async fn search_regions(
+        &self,
+        database_url: &str,
+        query: &str,
+        limit: i64,
+    ) -> Result<(Vec<services::SearchHitRecord>, i64), Self::Error> {
+        self.pg.search_regions(database_url, query, limit).await
+    }
 }
 
 #[async_trait::async_trait]

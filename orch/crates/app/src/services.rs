@@ -67,6 +67,9 @@ pub trait RegionManagement: Send + Sync {
 
     /// Resolve a chunk UUID to its full source details via brainatlas-be
     async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error>;
+
+    /// Search regions by natural language query across names, acronyms, and latest summaries
+    async fn reverse_search(&self, query: &str) -> Result<domain::SearchResponse, Self::Error>;
 }
 
 /// Trait for managing batches and fetcher integration

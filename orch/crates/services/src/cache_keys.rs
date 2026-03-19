@@ -69,6 +69,16 @@ pub fn batches_status_pattern() -> String {
     "orch:batches:status:*".to_string()
 }
 
+/// `orch:search:{query}` — cached reverse search results for a given query.
+pub fn search_results(query: &str) -> String {
+    format!("orch:search:{}", query.to_lowercase())
+}
+
+/// `orch:search:*` — all cached search results (for invalidation).
+pub fn search_pattern() -> String {
+    "orch:search:*".to_string()
+}
+
 // ── Read-through cache helper ───────────────────────────────────────────────
 
 /// Try the cache first; on miss, call `fetch_fn`, store the result, and return it.

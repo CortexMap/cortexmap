@@ -159,6 +159,10 @@ where
     ) -> Result<domain::ChunkSourceResponse, Self::Error> {
         self.region_management.get_chunk_source(chunk_id).await
     }
+
+    async fn reverse_search(&self, query: &str) -> Result<domain::SearchResponse, Self::Error> {
+        self.region_management.reverse_search(query).await
+    }
 }
 
 #[async_trait::async_trait]

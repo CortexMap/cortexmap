@@ -349,4 +349,10 @@ where
         let active_batch = self.services.get_active_batch(region_id).await?;
         Ok(active_batch.map(|batch| batch.id))
     }
+
+    /// Reverse search: find brain regions by natural language query
+    pub async fn reverse_search(&self, query: &str) -> Result<domain::SearchResponse, E> {
+        tracing::info!(query, "Performing reverse search");
+        self.services.reverse_search(query).await
+    }
 }
