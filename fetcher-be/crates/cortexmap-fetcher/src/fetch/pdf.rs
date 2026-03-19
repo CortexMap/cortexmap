@@ -1,4 +1,5 @@
 use crate::FetchError;
+use crate::retry::{is_fetch_retryable, with_request_retry};
 use bytes::Bytes;
 use cortexmap_infra::{HttpInfra, InfraContext};
 use futures::stream::Stream;
@@ -31,7 +32,20 @@ pub async fn fetch_pdf<I: HttpInfra + Send + Sync + 'static>(
     
     // Step 1: Query the OA Service API to get the PDF URL
     let oa_url = OA_API_URL.replace("{PMCID}", &pmc_id_with_prefix);
-    let oa_response = ctx.infra.get(&oa_url).await?;
+    let oa_response = {
+        let infra = ctx.infra.clone();
+        let url = oa_url.clone();
+        with_request_retry(
+            || {
+                let infra = infra.clone();
+                let url = url.clone();
+                async move { Ok::<_, FetchError>(infra.get(&url).await?) }
+            },
+            |e| is_fetch_retryable(e),
+            "OA Service",
+        )
+        .await?
+    };
     
     if !oa_response.status().is_success() {
         return Err(FetchError::InvalidPdfSource(format!(
@@ -47,7 +61,20 @@ pub async fn fetch_pdf<I: HttpInfra + Send + Sync + 'static>(
     tracing::info!("Fetching PDF from: {}", pdf_url);
     
     // Step 2: Download the PDF from the FTP/HTTP URL
-    let response = ctx.infra.get(&pdf_url).await?;
+    let response = {
+        let infra = ctx.infra.clone();
+        let url = pdf_url.clone();
+        with_request_retry(
+            || {
+                let infra = infra.clone();
+                let url = url.clone();
+                async move { Ok::<_, FetchError>(infra.get(&url).await?) }
+            },
+            |e| is_fetch_retryable(e),
+            "PDF download",
+        )
+        .await?
+    };
     
     // Check if the response was successful
     let status = response.status();

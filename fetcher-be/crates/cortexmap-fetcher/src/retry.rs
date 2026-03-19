@@ -1,5 +1,5 @@
 use crate::FetchError;
-use backon::{ConstantBuilder, ExponentialBuilder, FibonacciBuilder, Retryable};
+use backon::{ExponentialBuilder, Retryable};
 use cortexmap_core::blueprint::connections::BackoffStrategy;
 use cortexmap_infra::InfraError;
 use std::future::Future;

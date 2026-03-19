@@ -1,4 +1,5 @@
 use crate::FetchError;
+use crate::retry::{is_fetch_retryable, with_request_retry};
 use cortexmap_core::blueprint::Blueprint;
 use cortexmap_infra::{HttpInfra, InfraContext};
 use serde::{Deserialize, Serialize};
@@ -96,7 +97,20 @@ pub async fn fetch_metadata<I: HttpInfra>(
         );
 
     tracing::info!("Making query at: {search_url}");
-    let search_resp = ctx.infra.get(&search_url).await?;
+    let search_resp = {
+        let infra = ctx.infra.clone();
+        let url = search_url.clone();
+        with_request_retry(
+            || {
+                let infra = infra.clone();
+                let url = url.clone();
+                async move { Ok::<_, FetchError>(infra.get(&url).await?) }
+            },
+            is_fetch_retryable,
+            "ESearch",
+        )
+        .await?
+    };
     let search_result: ESearchResponse = serde_json::from_slice(&search_resp.bytes().await?)?;
 
     // If no results, return empty list
@@ -109,7 +123,20 @@ pub async fn fetch_metadata<I: HttpInfra>(
     let summary_url = ESUMMARY_URL.replace("{ids}", &ids);
 
     tracing::info!("Trying to get paper summary at: {search_url}");
-    let summary_resp = ctx.infra.get(&summary_url).await?;
+    let summary_resp = {
+        let infra = ctx.infra.clone();
+        let url = summary_url.clone();
+        with_request_retry(
+            || {
+                let infra = infra.clone();
+                let url = url.clone();
+                async move { Ok::<_, FetchError>(infra.get(&url).await?) }
+            },
+            is_fetch_retryable,
+            "ESummary (batch)",
+        )
+        .await?
+    };
     let summary_result: ESummaryResponse = serde_json::from_slice(&summary_resp.bytes().await?)?;
 
     // Add delay before starting abstract fetches to respect NCBI rate limit
@@ -169,7 +196,20 @@ pub async fn fetch_summary<I: HttpInfra>(
     let summary_url = ESUMMARY_URL.replace("{ids}", numeric_id);
 
     tracing::info!("Fetching summary for PMC {}", pmc_uid);
-    let summary_resp = ctx.infra.get(&summary_url).await?;
+    let summary_resp = {
+        let infra = ctx.infra.clone();
+        let url = summary_url.clone();
+        with_request_retry(
+            || {
+                let infra = infra.clone();
+                let url = url.clone();
+                async move { Ok::<_, FetchError>(infra.get(&url).await?) }
+            },
+            is_fetch_retryable,
+            "ESummary (single)",
+        )
+        .await?
+    };
     let summary_result: ESummaryResponse = serde_json::from_slice(&summary_resp.bytes().await?)?;
 
     // Extract metadata for this specific ID (use numeric_id for lookup)
@@ -196,7 +236,20 @@ pub async fn fetch_abstract<I: HttpInfra>(
     let numeric_id = strip_pmc_prefix(pmc_uid);
     let fetch_url = EFETCH_URL.replace("{id}", numeric_id);
 
-    let resp = ctx.infra.get(&fetch_url).await?;
+    let resp = {
+        let infra = ctx.infra.clone();
+        let url = fetch_url.clone();
+        with_request_retry(
+            || {
+                let infra = infra.clone();
+                let url = url.clone();
+                async move { Ok::<_, FetchError>(infra.get(&url).await?) }
+            },
+            is_fetch_retryable,
+            "EFetch (abstract)",
+        )
+        .await?
+    };
     let xml_content = resp.text().await?;
 
     // Extract abstract from XML using simple text processing

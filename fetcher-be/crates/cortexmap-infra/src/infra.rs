@@ -11,6 +11,7 @@ pub trait EnvInfra: Send + Sync {
     fn get_env_var(&self, key: &str) -> Result<String, InfraError>;
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum ContentType {
     Text,
     Pdf,
