@@ -734,7 +734,10 @@ impl services::RegionMappingQueries for OrchPostgresql {
 
                         SELECT rm.id, rm.region_id, rm.name,
                                rm.acronym::text,
-                               LEFT(rs.summary, 200),
+                               (SELECT para
+                                FROM unnest(string_to_array(rs.summary, E'\n\n')) AS para
+                                WHERE para ILIKE '%' || $1 || '%'
+                                LIMIT 1),
                                'summary',
                                0.6::float8
                         FROM region_summary rs
