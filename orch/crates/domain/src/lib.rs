@@ -30,6 +30,8 @@ pub enum ConfigKey {
     EmbeddingModel,
     /// LLM model for chat/summarization (e.g., "openai/gpt-4o-mini")
     ChatModel,
+    /// Maximum number of results returned by the reverse search endpoint
+    SearchResultLimit,
 }
 
 /// Result of polling for completed fetch tasks

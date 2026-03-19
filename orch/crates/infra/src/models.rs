@@ -268,3 +268,39 @@ pub struct PaperMetadataRow {
     #[diesel(sql_type = diesel::sql_types::Text)]
     pub query: String,
 }
+
+// Reverse Search Models
+
+#[derive(QueryableByName, Debug, Clone)]
+pub struct SearchHitRow {
+    #[diesel(sql_type = diesel::sql_types::Uuid)]
+    pub region_uuid: Uuid,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub region_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub name: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub acronym: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub summary_snippet: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub match_source: String,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    pub rank: f64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub total_count: i64,
+}
+
+impl From<SearchHitRow> for services::SearchHitRecord {
+    fn from(row: SearchHitRow) -> Self {
+        Self {
+            region_uuid: row.region_uuid,
+            region_id: row.region_id,
+            name: row.name,
+            acronym: row.acronym,
+            summary_snippet: row.summary_snippet,
+            match_source: row.match_source,
+            rank: row.rank,
+        }
+    }
+}

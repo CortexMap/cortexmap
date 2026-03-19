@@ -1,6 +1,6 @@
 use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult,
-    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult, StopWorkersRequest,
+    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult, SearchResponse, StopWorkersRequest,
     WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
 };
 use uuid::Uuid;
@@ -67,4 +67,8 @@ pub trait OrchApi: Send + Sync {
     /// Stop workers in the fetcher service
     /// Forwards to fetcher-be: POST /fetcher-be/api/queue/workers/stop
     async fn stop_workers(&self, req: StopWorkersRequest) -> Result<WorkerStopResponse, Self::Error>;
+
+    /// Reverse search: find brain regions by natural language query
+    /// Searches across region names, acronyms, and latest summaries
+    async fn reverse_search(&self, query: String) -> Result<SearchResponse, Self::Error>;
 }

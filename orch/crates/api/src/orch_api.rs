@@ -2,7 +2,7 @@ use crate::{ApiError, OrchApi};
 use app::{AppError, OrchApp, Services};
 use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult,
-    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult, StopWorkersRequest,
+    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult, SearchResponse, StopWorkersRequest,
     WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
 };
 use std::sync::Arc;
@@ -143,6 +143,13 @@ where
     async fn stop_workers(&self, req: StopWorkersRequest) -> Result<WorkerStopResponse, Self::Error> {
         self.services
             .stop_workers(req)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn reverse_search(&self, query: String) -> Result<SearchResponse, Self::Error> {
+        self.app()
+            .reverse_search(&query)
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }

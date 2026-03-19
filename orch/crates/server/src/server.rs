@@ -60,6 +60,7 @@ impl OrchServer {
             .route("/api/regions/{id}/summaries", get(list_summaries_handler))
             .route("/api/regions/{id}/generate", post(generate_summary_handler))
             .route("/api/regions/{id}/active-batch", get(get_active_batch_handler))
+            .route("/api/search", post(reverse_search_handler))
             .route("/api/batches/{id}/status", get(get_batch_status_handler))
             .route("/api/regions/{id}/status", get(get_region_status_handler))
             .route("/api/pipeline/stats", get(get_pipeline_stats_handler))
@@ -83,7 +84,7 @@ impl OrchServer {
 
 fn cors_layer() -> CorsLayer {
     let layer = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::OPTIONS])
         .allow_headers(tower_http::cors::Any);
 
     match std::env::var("CORS_ORIGIN") {
@@ -202,5 +203,13 @@ async fn stop_workers_handler(
     Json(body): Json<domain::StopWorkersRequest>,
 ) -> Result<impl IntoResponse, ServerError> {
     let result = server.api.stop_workers(body).await?;
+    Ok(Json(result))
+}
+
+async fn reverse_search_handler(
+    State(server): State<OrchServer>,
+    Json(body): Json<domain::SearchRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.reverse_search(body.query).await?;
     Ok(Json(result))
 }
