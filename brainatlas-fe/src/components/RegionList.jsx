@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
 import { Search, Filter, Loader2 } from 'lucide-react';
 import { API_BASE_URL, logger } from '../config';
 import './RegionList.css';
@@ -121,7 +122,12 @@ function RegionList({ regions, onRegionSelect }) {
         )}
       </div>
 
-      {showBackendResults ? (
+      {searchLoading && searchTerm.trim().length >= 2 ? (
+        <div className="search-loading">
+          <Loader2 size={32} className="spinning" />
+          <p>Searching across regions and summaries&hellip;</p>
+        </div>
+      ) : showBackendResults ? (
         <>
           <div className="region-stats">
             <p>
@@ -166,7 +172,9 @@ function RegionList({ regions, onRegionSelect }) {
                       </div>
                     </div>
                     {result.summary_snippet && (
-                      <p className="search-result-snippet">{result.summary_snippet}</p>
+                      <div className="search-result-snippet">
+                        <HighlightedMarkdown text={result.summary_snippet} keyword={searchResults.query} />
+                      </div>
                     )}
                   </div>
                 </div>
@@ -235,6 +243,53 @@ function RegionList({ regions, onRegionSelect }) {
       )}
     </div>
   );
+}
+
+/**
+ * Renders markdown text with all occurrences of `keyword` highlighted in yellow.
+ * Uses ReactMarkdown for parsing, then injects <mark> tags into text nodes.
+ */
+function HighlightedMarkdown({ text, keyword }) {
+  const highlightText = useCallback((children) => {
+    if (!keyword) return children;
+
+    if (typeof children === 'string') {
+      const regex = new RegExp(`(${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+      const parts = children.split(regex);
+      if (parts.length === 1) return children;
+      return parts.map((part, i) =>
+        regex.test(part)
+          ? <mark key={i} className="search-highlight">{part}</mark>
+          : part
+      );
+    }
+
+    if (Array.isArray(children)) {
+      return children.map((child, i) =>
+        typeof child === 'string'
+          ? <span key={i}>{highlightText(child)}</span>
+          : child
+      );
+    }
+
+    return children;
+  }, [keyword]);
+
+  const components = {
+    p: ({ children, ...props }) => <p {...props}>{highlightText(children)}</p>,
+    li: ({ children, ...props }) => <li {...props}>{highlightText(children)}</li>,
+    strong: ({ children, ...props }) => <strong {...props}>{highlightText(children)}</strong>,
+    em: ({ children, ...props }) => <em {...props}>{highlightText(children)}</em>,
+    h1: ({ children, ...props }) => <h1 {...props}>{highlightText(children)}</h1>,
+    h2: ({ children, ...props }) => <h2 {...props}>{highlightText(children)}</h2>,
+    h3: ({ children, ...props }) => <h3 {...props}>{highlightText(children)}</h3>,
+    h4: ({ children, ...props }) => <h4 {...props}>{highlightText(children)}</h4>,
+  };
+
+  // Strip [chunk:...] references -- they don't make sense in a preview
+  const cleaned = text.replace(/\[chunk:[a-f0-9-]+\]/g, '');
+
+  return <ReactMarkdown components={components}>{cleaned}</ReactMarkdown>;
 }
 
 export default RegionList;
