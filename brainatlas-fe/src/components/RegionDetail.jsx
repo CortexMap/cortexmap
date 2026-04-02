@@ -367,15 +367,33 @@ function RegionDetail({ region, onBack }) {
                         <span className="batch-value">{batchStatus.message}</span>
                       </div>
                     )}
-                    {batchStatus.progress !== undefined && (
-                      <div className="batch-progress-bar-container">
-                        <div className="batch-progress-bar">
-                          <div 
-                            className="batch-progress-fill" 
-                            style={{ width: `${batchStatus.progress}%` }}
-                          />
+                    {batchStatus.expected_tasks > 0 && (
+                      <>
+                        <div className="batch-info-row">
+                          <span className="batch-label">Tasks:</span>
+                          <span className="batch-value">
+                            {batchStatus.completed_tasks ?? 0} / {batchStatus.expected_tasks} fetched
+                          </span>
                         </div>
-                        <span className="batch-progress-text">{batchStatus.progress}%</span>
+                        <div className="batch-progress-bar-container">
+                          <div className="batch-progress-bar">
+                            <div
+                              className="batch-progress-fill"
+                              style={{
+                                width: `${Math.min(100, Math.round(((batchStatus.completed_tasks ?? 0) / batchStatus.expected_tasks) * 100))}%`
+                              }}
+                            />
+                          </div>
+                          <span className="batch-progress-text">
+                            {Math.min(100, Math.round(((batchStatus.completed_tasks ?? 0) / batchStatus.expected_tasks) * 100))}%
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    {batchStatus.error && (
+                      <div className="batch-info-row batch-error-row">
+                        <AlertCircle size={14} />
+                        <span className="batch-value batch-error">{batchStatus.error}</span>
                       </div>
                     )}
                   </div>

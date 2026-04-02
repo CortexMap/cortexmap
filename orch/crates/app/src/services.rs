@@ -67,6 +67,9 @@ pub trait RegionManagement: Send + Sync {
 
     /// Resolve a chunk UUID to its full source details via brainatlas-be
     async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error>;
+
+    /// Search regions by natural language query across names, acronyms, and latest summaries
+    async fn reverse_search(&self, query: &str) -> Result<domain::SearchResponse, Self::Error>;
 }
 
 /// Trait for managing batches and fetcher integration
@@ -93,6 +96,9 @@ pub trait BatchOrchestration: Send + Sync {
     /// Ensure workers are allocated in fetcher service
     /// Checks if any workers are active, and if not, allocates the default number
     async fn ensure_workers_allocated(&self) -> Result<(), Self::Error>;
+
+    /// Count how many fetch tasks from a batch have completed
+    async fn count_completed_tasks(&self, task_ids: Vec<i64>) -> Result<i32, Self::Error>;
 }
 
 /// Trait for configuration management

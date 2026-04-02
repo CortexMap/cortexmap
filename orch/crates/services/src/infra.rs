@@ -261,6 +261,18 @@ pub struct PaperMetadataRecord {
     pub query: Option<String>,
 }
 
+/// A single search hit from the reverse search query
+#[derive(Debug, Clone)]
+pub struct SearchHitRecord {
+    pub region_uuid: Uuid,
+    pub region_id: i32,
+    pub name: String,
+    pub acronym: Option<String>,
+    pub summary_snippet: Option<String>,
+    pub match_source: String,
+    pub rank: f64,
+}
+
 #[async_trait::async_trait]
 pub trait RegionMappingQueries: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -303,6 +315,15 @@ pub trait RegionMappingQueries: Send + Sync {
         database_url: &str,
         summary_id: Uuid,
     ) -> Result<Vec<ChunkSourceRecord>, Self::Error>;
+
+    /// Search regions by natural language query across names, acronyms, and latest summaries.
+    /// Returns the limited result set and the total count of matches before limiting.
+    async fn search_regions(
+        &self,
+        database_url: &str,
+        query: &str,
+        limit: i64,
+    ) -> Result<(Vec<SearchHitRecord>, i64), Self::Error>;
 }
 
 /// Cache client for Redis-backed read-through caching and invalidation.

@@ -291,6 +291,21 @@ where
         .await
     }
 
+    async fn count_completed_tasks(&self, task_ids: Vec<i64>) -> Result<i32, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let count = self
+            .infra
+            .count_completed_tasks(&database_url, &task_ids)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        Ok(count as i32)
+    }
+
     async fn ensure_workers_allocated(&self) -> Result<(), Self::Error> {
         // Get fetcher URL
         let fetcher_url = match self.infra.get_env_var("FETCHER_HTTP_ADDR") {

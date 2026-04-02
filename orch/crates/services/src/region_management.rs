@@ -405,4 +405,56 @@ where
         )
         .await
     }
+
+    async fn reverse_search(&self, query: &str) -> Result<domain::SearchResponse, Self::Error> {
+        let infra = &self.infra;
+        let database_url = infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        // Read search result limit from config, default to 5
+        let limit: i64 = match infra
+            .get_config(&database_url, domain::ConfigKey::SearchResultLimit)
+            .await
+            .map_err(ServiceError::InfraError)?
+        {
+            Some(val) => val.parse::<i64>().unwrap_or(5),
+            None => 5,
+        };
+
+        let query_owned = query.to_string();
+        let db_url = database_url.clone();
+
+        cached_or_fetch(
+            infra.as_ref(),
+            &cache_keys::search_results(&query_owned),
+            cache_keys::TTL_SHORT,
+            || async {
+                let (hits, total_count) = infra
+                    .search_regions(&db_url, &query_owned, limit)
+                    .await
+                    .map_err(ServiceError::InfraError)?;
+
+                let results = hits
+                    .into_iter()
+                    .map(|hit| domain::SearchResultItem {
+                        region_id: hit.region_uuid,
+                        region_numeric_id: hit.region_id,
+                        name: hit.name,
+                        acronym: hit.acronym,
+                        summary_snippet: hit.summary_snippet,
+                        match_source: hit.match_source,
+                        rank: hit.rank,
+                    })
+                    .collect();
+
+                Ok(domain::SearchResponse {
+                    query: query_owned.clone(),
+                    results,
+                    total_found: total_count as usize,
+                })
+            },
+        )
+        .await
+    }
 }

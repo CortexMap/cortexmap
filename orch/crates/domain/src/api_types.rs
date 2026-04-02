@@ -179,3 +179,40 @@ pub struct RegionColor {
     pub green: i32,
     pub blue: i32,
 }
+
+/// Request body for the reverse search endpoint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchRequest {
+    /// The natural language search input
+    pub query: String,
+}
+
+/// A single item in the reverse search results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResultItem {
+    /// The region_mapping UUID
+    pub region_id: Uuid,
+    /// The integer region_id
+    pub region_numeric_id: i32,
+    /// Region name
+    pub name: String,
+    /// Region shortform / acronym
+    pub acronym: Option<String>,
+    /// Truncated summary text (~200 chars) if matched via summary
+    pub summary_snippet: Option<String>,
+    /// What matched: "name", "acronym", or "summary"
+    pub match_source: String,
+    /// Relevance score (higher = better match)
+    pub rank: f64,
+}
+
+/// Response from the reverse search endpoint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResponse {
+    /// Echo back the input query
+    pub query: String,
+    /// The matching results
+    pub results: Vec<SearchResultItem>,
+    /// How many total matches existed before the LIMIT was applied
+    pub total_found: usize,
+}
