@@ -54,5 +54,3 @@ plans/
 .vscode/
 *.swp
 *.swo
-
-**/.tsbuildinfo
