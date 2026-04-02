@@ -32,6 +32,26 @@ pub enum ConfigKey {
     ChatModel,
     /// Maximum number of results returned by the reverse search endpoint
     SearchResultLimit,
+    /// Default task timeout in seconds for fetcher workers
+    FetcherTaskTimeoutSecs,
+    /// Default max retry attempts for fetcher task components
+    FetcherMaxRetryAttempts,
+    /// Backoff strategy for fetcher retries: "constant", "linear", "exponential", "fibonacci"
+    FetcherBackoffStrategy,
+    /// Maximum backoff delay in seconds (for linear/exponential/fibonacci strategies)
+    FetcherMaxDelaySecs,
+    /// Jitter factor 0.0-1.0 for exponential backoff randomization
+    FetcherBackoffJitter,
+    /// Sleep duration in seconds when fetcher queue is empty
+    FetcherEmptyQueueSleepSecs,
+    /// Multiplier for stale task detection (task_timeout * multiplier)
+    FetcherStaleTaskMultiplier,
+    /// Max retry attempts specifically for summary component (overrides global)
+    FetcherSummaryMaxRetries,
+    /// Max retry attempts specifically for abstract component (overrides global)
+    FetcherAbstractMaxRetries,
+    /// Max retry attempts specifically for PDF component (overrides global)
+    FetcherPdfMaxRetries,
 }
 
 /// Result of polling for completed fetch tasks

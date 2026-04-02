@@ -1,4 +1,5 @@
 use crate::FetchError;
+use crate::retry::{is_fetch_retryable, with_request_retry};
 use cortexmap_core::blueprint::Blueprint;
 use cortexmap_infra::{HttpInfra, InfraContext, TaskQueueInfra};
 
@@ -17,12 +18,27 @@ where
     I: HttpInfra + TaskQueueInfra + Send + Sync + 'static,
 {
     // Query NCBI ESearch to get PMC IDs using URL from blueprint
-    let search_url = blueprint.fetcher.esearch_url
+    let search_url = blueprint
+        .fetcher
+        .esearch_url
         .replace("{query}", &blueprint.fetcher.query)
         .replace("{pageSize}", &blueprint.fetcher.page_size.to_string());
 
     tracing::info!("Fetching PMC IDs from: {}", search_url);
-    let search_resp = ctx.infra.get(&search_url).await?;
+    let search_resp = {
+        let infra = ctx.infra.clone();
+        let url = search_url.clone();
+        with_request_retry(
+            || {
+                let infra = infra.clone();
+                let url = url.clone();
+                async move { Ok::<_, FetchError>(infra.get(&url).await?) }
+            },
+            is_fetch_retryable,
+            "ESearch (enqueue)",
+        )
+        .await?
+    };
     let search_result: serde_json::Value = serde_json::from_slice(&search_resp.bytes().await?)?;
 
     // Extract ID list from response
@@ -58,7 +74,11 @@ where
     for pmc_id in pmc_ids {
         match ctx
             .infra
-            .enqueue_task(pmc_id.clone(), blueprint.fetcher.query.clone(), max_attempts)
+            .enqueue_task(
+                pmc_id.clone(),
+                blueprint.fetcher.query.clone(),
+                max_attempts,
+            )
             .await
         {
             Ok(task) => {
@@ -93,10 +113,11 @@ mod tests {
     #[test]
     fn test_esearch_url_replacement() {
         let fetcher = Fetcher::default();
-        let url = fetcher.esearch_url
+        let url = fetcher
+            .esearch_url
             .replace("{query}", "neuroscience")
             .replace("{pageSize}", "10");
-        
+
         assert!(url.contains("neuroscience"));
         assert!(url.contains("retmax=10"));
     }

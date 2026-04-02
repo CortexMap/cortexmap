@@ -96,6 +96,9 @@ pub trait BatchOrchestration: Send + Sync {
     /// Ensure workers are allocated in fetcher service
     /// Checks if any workers are active, and if not, allocates the default number
     async fn ensure_workers_allocated(&self) -> Result<(), Self::Error>;
+
+    /// Count how many fetch tasks from a batch have completed
+    async fn count_completed_tasks(&self, task_ids: Vec<i64>) -> Result<i32, Self::Error>;
 }
 
 /// Trait for configuration management

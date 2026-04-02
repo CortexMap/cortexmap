@@ -424,6 +424,53 @@ async fn allocate_workers_handler(
     blueprint.fetcher.task_timeout_secs = req.task_timeout_secs;
     blueprint.fetcher.max_retry_attempts = req.max_retry_attempts;
 
+    // Apply retry config from the request (sent by orch from its DB config)
+    if let Some(rc) = req.retry_config {
+        use cortexmap_core::blueprint::connections::{
+            BackoffStrategy, ComponentRetryConfig,
+        };
+
+        blueprint.fetcher.retry_config.backoff_strategy = match rc.backoff_strategy.as_str() {
+            "linear" => BackoffStrategy::Linear {
+                max_delay_secs: if rc.max_delay_secs > 0 { rc.max_delay_secs } else { 60 },
+            },
+            "exponential" => BackoffStrategy::Exponential {
+                max_delay_secs: if rc.max_delay_secs > 0 { rc.max_delay_secs } else { 60 },
+                jitter: rc.jitter,
+            },
+            "fibonacci" => BackoffStrategy::Fibonacci {
+                max_delay_secs: if rc.max_delay_secs > 0 { rc.max_delay_secs } else { 60 },
+            },
+            _ => BackoffStrategy::Constant,
+        };
+
+        if rc.empty_queue_sleep_secs > 0 {
+            blueprint.fetcher.retry_config.empty_queue_sleep_secs = rc.empty_queue_sleep_secs;
+        }
+        if rc.stale_task_multiplier > 0 {
+            blueprint.fetcher.retry_config.stale_task_multiplier = rc.stale_task_multiplier;
+        }
+
+        // Apply per-component retry overrides (0 means "use global")
+        let has_overrides = rc.summary_max_retries > 0
+            || rc.abstract_max_retries > 0
+            || rc.pdf_max_retries > 0;
+        if has_overrides {
+            blueprint.fetcher.retry_config.component_max_retries = Some(ComponentRetryConfig {
+                summary_max_retries: if rc.summary_max_retries > 0 { Some(rc.summary_max_retries) } else { None },
+                abstract_max_retries: if rc.abstract_max_retries > 0 { Some(rc.abstract_max_retries) } else { None },
+                pdf_max_retries: if rc.pdf_max_retries > 0 { Some(rc.pdf_max_retries) } else { None },
+            });
+        }
+
+        info!(
+            "Applied retry config: strategy={:?}, empty_queue_sleep={}s, stale_multiplier={}",
+            blueprint.fetcher.retry_config.backoff_strategy,
+            blueprint.fetcher.retry_config.empty_queue_sleep_secs,
+            blueprint.fetcher.retry_config.stale_task_multiplier,
+        );
+    }
+
     match worker_manager
         .allocate_workers(req.worker_count as usize, server.ctx.clone(), blueprint)
         .await

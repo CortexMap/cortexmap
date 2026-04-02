@@ -244,6 +244,10 @@ where
     async fn ensure_workers_allocated(&self) -> Result<(), Self::Error> {
         self.batch_orchestration.ensure_workers_allocated().await
     }
+
+    async fn count_completed_tasks(&self, task_ids: Vec<i64>) -> Result<i32, Self::Error> {
+        self.batch_orchestration.count_completed_tasks(task_ids).await
+    }
 }
 
 #[async_trait::async_trait]

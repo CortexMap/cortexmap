@@ -412,7 +412,7 @@ where
 
         // Retry with exponential backoff (max 3 attempts)
         let retry_strategy = ExponentialBuilder::default()
-            .with_max_times(0)
+            .with_max_times(2)
             .with_min_delay(std::time::Duration::from_secs(1))
             .with_max_delay(std::time::Duration::from_secs(10));
 

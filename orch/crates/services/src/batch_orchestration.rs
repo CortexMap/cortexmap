@@ -28,6 +28,79 @@ impl<I> OrchBatchOrchestration<I> {
     }
 }
 
+impl<E, I> OrchBatchOrchestration<I>
+where
+    E: std::error::Error + Send + Sync + 'static,
+    I: EnvInfra<Error = E> + crate::OrchDatabase<Error = E> + Send + Sync,
+{
+    /// Build a `FetcherRetryConfig` by reading all retry-related keys from orch_config.
+    /// Missing or unparseable values fall back to sensible defaults.
+    async fn build_retry_config_from_db(
+        &self,
+        database_url: &str,
+    ) -> Result<domain::FetcherRetryConfig, ServiceError<E>> {
+        let backoff_strategy = self.infra
+            .get_config(database_url, ConfigKey::FetcherBackoffStrategy)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .unwrap_or_else(|| "constant".to_string());
+
+        let max_delay_secs: Option<u64> = self.infra
+            .get_config(database_url, ConfigKey::FetcherMaxDelaySecs)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|s| s.parse().ok());
+
+        let jitter: Option<f64> = self.infra
+            .get_config(database_url, ConfigKey::FetcherBackoffJitter)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|s| s.parse().ok())
+            .filter(|&v: &f64| v > 0.0);
+
+        let empty_queue_sleep_secs: Option<u64> = self.infra
+            .get_config(database_url, ConfigKey::FetcherEmptyQueueSleepSecs)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|s| s.parse().ok());
+
+        let stale_task_multiplier: Option<u64> = self.infra
+            .get_config(database_url, ConfigKey::FetcherStaleTaskMultiplier)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|s| s.parse().ok());
+
+        let summary_max_retries: Option<u32> = self.infra
+            .get_config(database_url, ConfigKey::FetcherSummaryMaxRetries)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|s| s.parse().ok());
+
+        let abstract_max_retries: Option<u32> = self.infra
+            .get_config(database_url, ConfigKey::FetcherAbstractMaxRetries)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|s| s.parse().ok());
+
+        let pdf_max_retries: Option<u32> = self.infra
+            .get_config(database_url, ConfigKey::FetcherPdfMaxRetries)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|s| s.parse().ok());
+
+        Ok(domain::FetcherRetryConfig {
+            backoff_strategy,
+            max_delay_secs,
+            jitter,
+            empty_queue_sleep_secs,
+            stale_task_multiplier,
+            summary_max_retries,
+            abstract_max_retries,
+            pdf_max_retries,
+        })
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct EnqueueRequest {
     query: String,
@@ -49,6 +122,8 @@ struct AllocateWorkersRequest {
     worker_count: u32,
     task_timeout_secs: u64,
     max_retry_attempts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_config: Option<domain::FetcherRetryConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,6 +291,21 @@ where
         .await
     }
 
+    async fn count_completed_tasks(&self, task_ids: Vec<i64>) -> Result<i32, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let count = self
+            .infra
+            .count_completed_tasks(&database_url, &task_ids)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        Ok(count as i32)
+    }
+
     async fn ensure_workers_allocated(&self) -> Result<(), Self::Error> {
         // Get fetcher URL
         let fetcher_url = match self.infra.get_env_var("FETCHER_HTTP_ADDR") {
@@ -272,10 +362,28 @@ where
 
             let allocate_url = format!("{}/fetcher-be/api/queue/workers/allocate", fetcher_url.trim_end_matches('/'));
             
+            // Read retry configuration from orch_config
+            let retry_config = self.build_retry_config_from_db(&database_url).await?;
+            
+            let task_timeout_secs: u64 = self.infra
+                .get_config(&database_url, ConfigKey::FetcherTaskTimeoutSecs)
+                .await
+                .map_err(ServiceError::InfraError)?
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(2);
+
+            let max_retry_attempts: u32 = self.infra
+                .get_config(&database_url, ConfigKey::FetcherMaxRetryAttempts)
+                .await
+                .map_err(ServiceError::InfraError)?
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3);
+
             let request = AllocateWorkersRequest {
                 worker_count: default_worker_count,
-                task_timeout_secs: 300,
-                max_retry_attempts: 3,
+                task_timeout_secs,
+                max_retry_attempts,
+                retry_config: Some(retry_config),
             };
 
             let response: AllocateWorkersResponse = self
@@ -395,10 +503,23 @@ where
 
         let url = format!("{}/fetcher-be/api/queue/workers/allocate", fetcher_url.trim_end_matches('/'));
         
+        // If user didn't provide retry config, load from DB
+        let retry_config = match req.retry_config {
+            Some(rc) => Some(rc),
+            None => {
+                let database_url = self
+                    .infra
+                    .get_env_var("DATABASE_URL")
+                    .map_err(ServiceError::InfraError)?;
+                Some(self.build_retry_config_from_db(&database_url).await?)
+            }
+        };
+
         let request = AllocateWorkersRequest {
             worker_count: req.worker_count,
             task_timeout_secs: req.task_timeout_secs,
             max_retry_attempts: req.max_retry_attempts,
+            retry_config,
         };
 
         tracing::info!(

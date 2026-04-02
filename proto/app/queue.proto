@@ -188,6 +188,27 @@ message AllocateWorkersRequest {
   uint32 worker_count = 1;
   uint64 task_timeout_secs = 2;
   uint32 max_retry_attempts = 3;
+  // Optional retry configuration (overrides defaults)
+  FetcherRetryConfig retry_config = 4;
+}
+
+// Retry configuration forwarded from orch to fetcher.
+// Controls task-level backoff strategy and per-component retry limits.
+message FetcherRetryConfig {
+  // Backoff strategy: "constant", "linear", "exponential", "fibonacci"
+  string backoff_strategy = 1;
+  // Maximum backoff delay in seconds (used by linear/exponential/fibonacci)
+  uint64 max_delay_secs = 2;
+  // Jitter factor 0.0-1.0 (used by exponential)
+  double jitter = 3;
+  // Sleep duration in seconds when queue is empty
+  uint64 empty_queue_sleep_secs = 4;
+  // Multiplier for stale task detection (task_timeout_secs * multiplier)
+  uint64 stale_task_multiplier = 5;
+  // Per-component retry overrides (0 = use global max_retry_attempts)
+  uint32 summary_max_retries = 6;
+  uint32 abstract_max_retries = 7;
+  uint32 pdf_max_retries = 8;
 }
 
 // Response after allocating workers
