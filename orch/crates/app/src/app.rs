@@ -153,29 +153,63 @@ where
 
     /// Get pipeline statistics across all regions
     pub async fn get_pipeline_stats(&self) -> Result<PipelineStatsResult, E> {
-        // Get total region count
+        use std::collections::hash_map::Entry;
+        use std::collections::HashMap;
+
+        // Get total region count and regions that have never been touched
         let total_regions = self.services.get_total_regions().await? as i32;
-        
-        // Get count of regions with no batches
         let not_started = self.services.count_regions_without_batches().await? as i32;
-        
-        // Get all batches by status
-        let collecting = self.services.get_batches_by_status(BatchStatus::Collecting).await?.len();
-        let ready = self.services.get_batches_by_status(BatchStatus::Ready).await?.len();
-        let processing = self.services.get_batches_by_status(BatchStatus::Processing).await?.len();
-        let completed = self.services.get_batches_by_status(BatchStatus::Completed).await?.len();
-        let failed = self.services.get_batches_by_status(BatchStatus::Failed).await?.len();
+
+        // Collect all batches across every status, then keep only the *latest*
+        // batch per region so we count regions rather than batch records.
+        // (A region that failed, was invalidated, and restarted would otherwise
+        // be counted multiple times.)
+        let mut latest_by_region: HashMap<Uuid, domain::ProcessingBatch> = HashMap::new();
+
+        for status in [
+            BatchStatus::Collecting,
+            BatchStatus::Ready,
+            BatchStatus::Processing,
+            BatchStatus::Completed,
+            BatchStatus::Failed,
+            BatchStatus::Invalidated,
+        ] {
+            for batch in self.services.get_batches_by_status(status).await? {
+                match latest_by_region.entry(batch.region_id) {
+                    Entry::Vacant(e) => { e.insert(batch); }
+                    Entry::Occupied(mut e) => {
+                        if batch.created_at > e.get().created_at {
+                            e.insert(batch);
+                        }
+                    }
+                }
+            }
+        }
+
+        let (mut fetch_queued, mut fetch_failed, mut llm_queued, mut processing, mut done, mut invalidated) =
+            (0i32, 0i32, 0i32, 0i32, 0i32, 0i32);
+
+        for batch in latest_by_region.values() {
+            match batch.status {
+                BatchStatus::Collecting  => fetch_queued += 1,
+                BatchStatus::Ready       => llm_queued   += 1,
+                BatchStatus::Processing  => processing   += 1,
+                BatchStatus::Completed   => done         += 1,
+                BatchStatus::Failed      => fetch_failed += 1,
+                BatchStatus::Invalidated => invalidated  += 1,
+            }
+        }
 
         Ok(PipelineStatsResult {
             total_regions,
             not_started,
-            fetch_queued: collecting as i32,
-            fetching: collecting as i32, // Same as collecting - tasks are in progress
-            fetch_failed: failed as i32,
-            llm_queued: ready as i32,
-            processing: processing as i32,
-            done: completed as i32,
-            invalidated: 0, // Invalidated is a transient state, not stored separately
+            fetch_queued,
+            fetching: 0, // No distinct "actively fetching" state; subsumed by fetch_queued
+            fetch_failed,
+            llm_queued,
+            processing,
+            done,
+            invalidated,
         })
     }
 

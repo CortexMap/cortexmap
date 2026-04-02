@@ -54,10 +54,6 @@ pub struct FetcherRetryConfig {
     pub pdf_max_retries: Option<u32>,
 }
 
-fn default_backoff_strategy() -> String {
-    "constant".to_string()
-}
-
 /// Response after allocating workers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerAllocationResponse {
