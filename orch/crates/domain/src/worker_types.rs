@@ -34,28 +34,24 @@ pub struct FetcherRetryConfig {
     #[serde(default = "default_backoff_strategy")]
     pub backoff_strategy: String,
     /// Maximum backoff delay in seconds (used by linear/exponential/fibonacci)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_delay_secs: Option<u64>,
     /// Jitter factor 0.0-1.0 (used by exponential)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jitter: Option<f64>,
     /// Sleep duration in seconds when queue is empty
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub empty_queue_sleep_secs: Option<u64>,
     /// Multiplier for stale task detection (task_timeout_secs * multiplier)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale_task_multiplier: Option<u64>,
     /// Per-component retry overrides (None = use global max_retry_attempts)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary_max_retries: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub abstract_max_retries: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pdf_max_retries: Option<u32>,
-}
-
-fn default_backoff_strategy() -> String {
-    "constant".to_string()
 }
 
 /// Response after allocating workers
