@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useAtlasStore } from '../../store/atlasStore';
 import { findNode } from '../../utils/treeUtils';
@@ -100,8 +100,7 @@ export function RegionDetail() {
 
       {/* Allen info */}
       {ontologyNode && (
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>Allen Ontology</h3>
+        <CollapsibleSection title="Allen Ontology">
           <div className={styles.infoGrid}>
             <div className={styles.infoLabel}>Graph Order</div>
             <div className={styles.infoValue}>{ontologyNode.o ?? 'N/A'}</div>
@@ -110,13 +109,12 @@ export function RegionDetail() {
             <div className={styles.infoLabel}>Children</div>
             <div className={styles.infoValue}>{ontologyNode.ch.length}</div>
           </div>
-        </div>
+        </CollapsibleSection>
       )}
 
       {/* CortexMap info */}
       {cortexmapRegion && (
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>CortexMap Region</h3>
+        <CollapsibleSection title="CortexMap Region">
           <div className={styles.infoGrid}>
             <div className={styles.infoLabel}>UUID</div>
             <div className={styles.infoValue} style={{ fontSize: 10 }}>{cortexmapRegion.id}</div>
@@ -131,20 +129,18 @@ export function RegionDetail() {
               <span className={styles.statusBadge} data-status={status.status}>{status.status}</span>
             </div>
           )}
-        </div>
+        </CollapsibleSection>
       )}
 
       {!cortexmapRegion && cortexmapLoaded && (
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>CortexMap</h3>
+        <CollapsibleSection title="CortexMap">
           <p className={styles.noSummary}>This region is not tracked in CortexMap.</p>
-        </div>
+        </CollapsibleSection>
       )}
 
       {/* Summary section */}
       {cortexmapRegion && (
-        <div className={styles.section}>
-          <h3 className={styles.sectionTitle}>Summary</h3>
+        <CollapsibleSection title="Summary" defaultOpen>
           {summaryLoading && <div className={styles.loadingText}>Loading summary...</div>}
           {summaryError && <div className={styles.errorText}>{summaryError}</div>}
           {!summaryLoading && !summaryError && summaries.length === 0 && (
@@ -157,9 +153,29 @@ export function RegionDetail() {
               ))}
             </div>
           )}
-        </div>
+        </CollapsibleSection>
       )}
 
+    </div>
+  );
+}
+
+// ─── Collapsible Section ─────────────────────────────────────────────
+
+function CollapsibleSection({ title, defaultOpen = true, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div className={styles.section}>
+      <button
+        className={styles.sectionHeader}
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
+        <h3 className={styles.sectionTitle}>{title}</h3>
+        <span className={`${styles.collapseChevron} ${open ? styles.chevronOpen : ''}`}>{'\u25B8'}</span>
+      </button>
+      {open && <div className={styles.sectionBody}>{children}</div>}
     </div>
   );
 }

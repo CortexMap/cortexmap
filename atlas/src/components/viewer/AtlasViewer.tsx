@@ -78,8 +78,8 @@ export function AtlasViewer() {
   // Zoom handling
   const onWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.15 : 0.15;
-    setZoom(zoomLevel * (1 + delta));
+    const factor = e.deltaY > 0 ? 0.95 : 1.05;
+    setZoom(zoomLevel * factor);
   }, [zoomLevel, setZoom]);
 
   // Displayed image size
@@ -132,9 +132,9 @@ export function AtlasViewer() {
 
         {/* Zoom indicator */}
         <div className={styles.zoomIndicator}>
-          <button onClick={() => setZoom(zoomLevel * 1.3)} className={styles.zoomBtn}>+</button>
+          <button onClick={() => setZoom(zoomLevel + 0.1)} className={styles.zoomBtn}>+</button>
           <span className={styles.zoomLabel}>{Math.round(zoomLevel * 100)}%</span>
-          <button onClick={() => setZoom(zoomLevel / 1.3)} className={styles.zoomBtn}>-</button>
+          <button onClick={() => setZoom(zoomLevel - 0.1)} className={styles.zoomBtn}>-</button>
           <button onClick={resetView} className={styles.zoomBtn} title="Reset view">&#8634;</button>
         </div>
       </div>

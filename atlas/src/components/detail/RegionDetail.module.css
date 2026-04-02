@@ -86,7 +86,42 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: #9ca3af;
-  margin: 0 0 12px;
+  margin: 0;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sectionHeader:hover .sectionTitle {
+  color: #6b7280;
+}
+
+.sectionHeader:hover .collapseChevron {
+  color: #6b7280;
+}
+
+.collapseChevron {
+  font-size: 10px;
+  color: #9ca3af;
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.sectionBody {
+  margin-top: 12px;
 }
 
 .infoGrid {
