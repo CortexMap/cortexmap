@@ -14,6 +14,8 @@ const DEFAULT_RIGHT = 320;
 export function AppLayout({ left, center, right }: Props) {
   const [leftWidth, setLeftWidth] = useState(DEFAULT_LEFT);
   const [rightWidth, setRightWidth] = useState(DEFAULT_RIGHT);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragging = useRef<'left' | 'right' | null>(null);
 
@@ -53,23 +55,43 @@ export function AppLayout({ left, center, right }: Props) {
 
   return (
     <div className={styles.layout} ref={containerRef}>
-      <div className={styles.panel} style={{ width: leftWidth }}>
-        {left}
-      </div>
+      {!leftCollapsed && (
+        <div className={styles.panel} style={{ width: leftWidth }}>
+          {left}
+        </div>
+      )}
       <div
-        className={styles.divider}
-        onMouseDown={() => onMouseDown('left')}
-      />
+        className={`${styles.dividerRail} ${leftCollapsed ? styles.collapsed : ''}`}
+        onMouseDown={leftCollapsed ? undefined : () => onMouseDown('left')}
+      >
+        <button
+          className={styles.collapseBtn}
+          onClick={() => setLeftCollapsed(!leftCollapsed)}
+          title={leftCollapsed ? 'Show region tree' : 'Hide region tree'}
+        >
+          {leftCollapsed ? '\u25B6' : '\u25C0'}
+        </button>
+      </div>
       <div className={styles.center}>
         {center}
       </div>
       <div
-        className={styles.divider}
-        onMouseDown={() => onMouseDown('right')}
-      />
-      <div className={styles.panel} style={{ width: rightWidth }}>
-        {right}
+        className={`${styles.dividerRail} ${rightCollapsed ? styles.collapsed : ''}`}
+        onMouseDown={rightCollapsed ? undefined : () => onMouseDown('right')}
+      >
+        <button
+          className={styles.collapseBtn}
+          onClick={() => setRightCollapsed(!rightCollapsed)}
+          title={rightCollapsed ? 'Show region details' : 'Hide region details'}
+        >
+          {rightCollapsed ? '\u25C0' : '\u25B6'}
+        </button>
       </div>
+      {!rightCollapsed && (
+        <div className={styles.panel} style={{ width: rightWidth }}>
+          {right}
+        </div>
+      )}
     </div>
   );
 }
