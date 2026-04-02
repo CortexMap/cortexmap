@@ -828,6 +828,7 @@ dependencies = [
  "cortexmap-core",
  "cortexmap-infra",
  "diesel",
+ "fastrand",
  "futures",
  "reqwest",
  "serde",

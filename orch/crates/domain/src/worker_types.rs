@@ -21,6 +21,41 @@ pub struct AllocateWorkersRequest {
     pub worker_count: u32,
     pub task_timeout_secs: u64,
     pub max_retry_attempts: u32,
+    /// Retry configuration for task-level backoff and per-component limits
+    #[serde(default)]
+    pub retry_config: Option<FetcherRetryConfig>,
+}
+
+/// Retry configuration that orch forwards to the fetcher service.
+/// Maps 1:1 to fetcher-be's `RetryConfig` + `ComponentRetryConfig`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetcherRetryConfig {
+    /// Backoff strategy: "constant", "linear", "exponential", or "fibonacci"
+    #[serde(default = "default_backoff_strategy")]
+    pub backoff_strategy: String,
+    /// Maximum backoff delay in seconds (used by linear/exponential/fibonacci)
+    #[serde(default)]
+    pub max_delay_secs: Option<u64>,
+    /// Jitter factor 0.0-1.0 (used by exponential)
+    #[serde(default)]
+    pub jitter: Option<f64>,
+    /// Sleep duration in seconds when queue is empty
+    #[serde(default)]
+    pub empty_queue_sleep_secs: Option<u64>,
+    /// Multiplier for stale task detection (task_timeout_secs * multiplier)
+    #[serde(default)]
+    pub stale_task_multiplier: Option<u64>,
+    /// Per-component retry overrides (None = use global max_retry_attempts)
+    #[serde(default)]
+    pub summary_max_retries: Option<u32>,
+    #[serde(default)]
+    pub abstract_max_retries: Option<u32>,
+    #[serde(default)]
+    pub pdf_max_retries: Option<u32>,
+}
+
+fn default_backoff_strategy() -> String {
+    "constant".to_string()
 }
 
 /// Response after allocating workers
