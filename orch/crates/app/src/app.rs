@@ -330,13 +330,23 @@ where
             domain::BatchStatus::Invalidated => "Batch was invalidated".to_string(),
         };
         
+        // Count completed tasks for this batch
+        let completed_tasks = if !batch.fetch_task_ids.is_empty() {
+            match self.services.count_completed_tasks(batch.fetch_task_ids.clone()).await {
+                Ok(count) => Some(count),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
         Ok(BatchStatusResult {
             batch_id,
             status,
             message,
             error: batch.error_message,
             expected_tasks: batch.expected_task_count,
-            completed_tasks: None, // TODO: Query fetcher for completion count
+            completed_tasks,
             created_at: batch.created_at,
         })
     }
