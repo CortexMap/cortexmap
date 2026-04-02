@@ -1,0 +1,30 @@
+.layout {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: #FAFAFA;
+}
+
+.panel {
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.center {
+  flex: 1;
+  min-width: 200px;
+  overflow: hidden;
+}
+
+.divider {
+  width: 4px;
+  flex-shrink: 0;
+  background: #e2e2e0;
+  cursor: col-resize;
+  transition: background 0.15s;
+}
+
+.divider:hover {
+  background: #7c3aed;
+}
