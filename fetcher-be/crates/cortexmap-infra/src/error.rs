@@ -29,4 +29,7 @@ pub enum InfraError {
 
     #[error("env var not found: {0}")]
     EnvVarNotFound(String),
+
+    #[error("Redis error: {0}")]
+    RedisError(String),
 }

@@ -31,6 +31,14 @@ where
     // Mark task as in progress
     ctx.infra.mark_task_started(task_id).await?;
 
+    // Set initial Redis heartbeat TTL
+    if let Some(ref sid) = task.stream_message_id {
+        ctx.infra.update_task_heartbeat_redis(
+            sid,
+            blueprint.fetcher.retry_config.heartbeat_ttl_secs,
+        ).await.ok();
+    }
+
     // Log task start
     ctx.infra
         .log_task_event(NewFetchTaskLog {
@@ -57,6 +65,12 @@ where
         task_id,
         pending_components.len()
     );
+
+    let heartbeat_interval = blueprint.fetcher.retry_config.heartbeat_interval_secs;
+    let heartbeat_ttl = blueprint.fetcher.retry_config.heartbeat_ttl_secs;
+    let stream_id = task.stream_message_id.clone().unwrap_or_default();
+    let mut hb_interval = tokio::time::interval(Duration::from_secs(heartbeat_interval));
+    hb_interval.tick().await; // consume the immediate first tick
 
     // Process each pending component
     for component in pending_components {
@@ -223,6 +237,12 @@ where
                 )
                 .await?;
             }
+        }
+
+        // Pulse heartbeat after each component
+        if !stream_id.is_empty() {
+            ctx.infra.update_task_heartbeat(task_id).await.ok();
+            ctx.infra.update_task_heartbeat_redis(&stream_id, heartbeat_ttl).await.ok();
         }
     }
 
@@ -391,8 +411,25 @@ where
     let mut consecutive_failures: u32 = 0;
 
     loop {
+        // Reclaim any stale tasks from crashed/timed-out workers
+        let min_idle_ms = blueprint.fetcher.retry_config.stale_reclaim_min_idle_ms;
+        match ctx.infra.reclaim_stale_tasks(min_idle_ms, &worker_id).await {
+            Ok(reclaimed) if !reclaimed.is_empty() => {
+                tracing::info!("Worker {} reclaimed {} stale tasks", worker_id, reclaimed.len());
+                for stale_task in reclaimed {
+                    if let Err(e) = process_task(stale_task.clone(), ctx.clone(), &blueprint).await {
+                        tracing::error!("Worker {} error processing reclaimed task {}: {}", worker_id, stale_task.id, e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Worker {} failed to reclaim stale tasks: {}", worker_id, e);
+            }
+            _ => {}
+        }
+
         // Try to claim next pending task
-        match ctx.infra.get_next_pending_task(timeout_secs).await {
+        match ctx.infra.get_next_pending_task(timeout_secs, &worker_id).await {
             Ok(Some(task)) => {
                 tracing::info!("Worker {} claimed task {} for PMC {}", worker_id, task.id, task.pmc_id);
 
@@ -463,20 +500,3 @@ where
     }
 }
 
-/// Reset stale tasks that have been stuck in 'in_progress' state
-///
-/// This is a maintenance function that should be run periodically
-/// to recover from worker crashes or other failures
-pub async fn reset_stale_tasks<I>(
-    ctx: InfraContext<I>,
-    timeout_secs: u64,
-) -> Result<usize, FetchError>
-where
-    I: TaskQueueInfra + Send + Sync,
-{
-    let count = ctx.infra.reset_stale_tasks(timeout_secs).await?;
-    if count > 0 {
-        tracing::warn!("Reset {} stale tasks", count);
-    }
-    Ok(count)
-}

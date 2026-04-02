@@ -92,10 +92,12 @@ impl WorkerManager {
                 // Send cancellation signal
                 let _ = worker.cancel_token.send(()).await;
                 
-                // Wait a bit for graceful shutdown
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                // Give worker time to finish current component heartbeat
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 
-                // Abort if still running
+                // Release any tasks this worker holds back to the queue
+                // (reclaim_stale_tasks on next poll cycle will pick them up)
+                // For now abort cleanly — stale reclaim handles orphaned PEL entries
                 worker.handle.abort();
                 
                 stopped += 1;

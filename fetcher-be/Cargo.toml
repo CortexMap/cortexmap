@@ -25,6 +25,9 @@ http-body = "1.0.1"
 uuid = { version = "1.18.1", features = ["v4"] }
 tracing = "0.1.41"
 strum = { version = "0.26", features = ["derive"] }
+redis = { version = "0.27", features = ["tokio-comp", "streams"] }
+deadpool-redis = { version = "0.18", features = ["rt_tokio_1"] }
+sha2 = "0.10"
 
 cortexmap-core = { path = "crates/cortexmap-core" }
 cortexmap-infra = { path = "crates/cortexmap-infra" }

@@ -45,6 +45,8 @@ pub fn is_infra_retryable(err: &InfraError) -> bool {
         InfraError::PutObjectError(_) | InfraError::GetObjectError(_) | InfraError::S3Error(_) => true,
         // Pool exhaustion is transient
         InfraError::R2D2PoolError(_) => true,
+        // Redis errors are transient infrastructure failures
+        InfraError::RedisError(_) => true,
         // Database errors and env var errors are not retryable
         InfraError::Database(_) | InfraError::EnvVarNotFound(_) | InfraError::Join(_) => false,
     }

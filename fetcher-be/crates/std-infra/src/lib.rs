@@ -2,12 +2,14 @@ mod database;
 mod env;
 mod http;
 mod infra;
+pub mod redis_infra;
 mod s3;
 mod task_queue;
 
 pub use database::*;
 pub use env::*;
 pub use infra::StdInfra; // Make StdInfra public for testing
+pub use redis_infra::StdRedisInfra;
 
 use cortexmap_infra::{EnvInfra, InfraContext, InfraError};
 use std::sync::Arc;
@@ -19,6 +21,7 @@ pub struct StdInfraContext {
     pub access_key: String,
     pub secret_key: String,
     pub bucket: String,
+    pub redis_url: String,
 }
 
 impl StdInfraContext {
@@ -31,6 +34,7 @@ impl StdInfraContext {
             access_key: env.get_env_var("S3_ACCESS_KEY")?,
             secret_key: env.get_env_var("S3_SECRET_KEY")?,
             bucket: env.get_env_var("S3_BUCKET")?,
+            redis_url: env.get_env_var("REDIS_URL")?,
         })
     }
 
@@ -42,6 +46,7 @@ impl StdInfraContext {
                 &self.access_key,
                 &self.secret_key,
                 &self.bucket,
+                &self.redis_url,
             )?),
         })
     }

@@ -88,9 +88,21 @@ struct Args {
     #[arg(long, default_value = "0.1")]
     backoff_jitter: f64,
 
-    /// Multiplier for stale task timeout detection
-    #[arg(long, default_value = "10")]
-    stale_task_multiplier: u64,
+    /// How often (seconds) a worker refreshes its heartbeat key in Redis
+    #[arg(long, default_value = "15")]
+    heartbeat_interval_secs: u64,
+
+    /// TTL (seconds) for the Redis heartbeat key. Should be > 2× heartbeat_interval_secs.
+    #[arg(long, default_value = "45")]
+    heartbeat_ttl_secs: u64,
+
+    /// Minimum idle time (ms) before XAUTOCLAIM reclaims a stale PEL entry
+    #[arg(long, default_value = "60000")]
+    stale_reclaim_min_idle_ms: u64,
+
+    /// Redis URL for the task queue stream
+    #[arg(long, env = "REDIS_URL", default_value = "redis://127.0.0.1:6379")]
+    redis_url: String,
 
     /// Max retries for summary component (overrides global max if set)
     #[arg(long)]
@@ -152,7 +164,9 @@ async fn main() -> Result<()> {
 
     let retry_config = RetryConfig {
         empty_queue_sleep_secs: args.empty_queue_sleep_secs,
-        stale_task_multiplier: args.stale_task_multiplier,
+        heartbeat_interval_secs: args.heartbeat_interval_secs,
+        heartbeat_ttl_secs: args.heartbeat_ttl_secs,
+        stale_reclaim_min_idle_ms: args.stale_reclaim_min_idle_ms,
         backoff_strategy,
         component_max_retries,
     };
@@ -188,6 +202,7 @@ async fn main() -> Result<()> {
         .access_key(args.s3_access_key)
         .secret_key(args.s3_secret_key)
         .bucket(args.s3_bucket)
+        .redis_url(args.redis_url)
         .build()?;
 
     let ctx = infra_ctx_builder.get()?;

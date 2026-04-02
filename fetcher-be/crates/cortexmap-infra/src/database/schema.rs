@@ -48,6 +48,7 @@ diesel::table! {
         worker_id -> Nullable<Text>,
         heartbeat_at -> Nullable<Timestamp>,
         worker_version -> Nullable<Text>,
+        stream_message_id -> Nullable<Text>,
     }
 }
 

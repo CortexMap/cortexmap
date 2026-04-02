@@ -58,6 +58,7 @@ pub struct FetchTask {
     pub worker_id: Option<String>,
     pub heartbeat_at: Option<chrono::NaiveDateTime>,
     pub worker_version: Option<String>,
+    pub stream_message_id: Option<String>,
 }
 // ==================== Fetch Task Components ====================
 

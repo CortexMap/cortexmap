@@ -121,12 +121,11 @@ pub trait TaskQueueInfra {
         max_attempts: i32,
     ) -> Result<FetchTask, InfraError>;
 
-    /// Get the next pending task respecting timeout
-    /// Only returns tasks where last_processed_at is None or older than timeout_secs
-    /// Uses FOR UPDATE SKIP LOCKED for concurrent worker safety
+    /// Get the next pending task using XREADGROUP
     async fn get_next_pending_task(
         &self,
         timeout_secs: u64,
+        worker_id: &str,
     ) -> Result<Option<FetchTask>, InfraError>;
 
     /// Mark a task as started (in_progress status)
@@ -164,10 +163,6 @@ pub trait TaskQueueInfra {
 
     /// Check if all components for a task are completed
     async fn all_components_completed(&self, task_id: i64) -> Result<bool, InfraError>;
-
-    /// Reset tasks stuck in 'in_progress' state
-    /// Used for recovering from worker crashes
-    async fn reset_stale_tasks(&self, timeout_secs: u64) -> Result<usize, InfraError>;
 
     /// Log a task event
     async fn log_task_event(&self, log: NewFetchTaskLog) -> Result<(), InfraError>;
@@ -210,19 +205,24 @@ pub trait TaskQueueInfra {
     /// Update the heartbeat timestamp for a task
     /// Should be called periodically while processing to prevent stale task detection
     async fn update_task_heartbeat(&self, task_id: i64) -> Result<(), InfraError>;
-    
-    /// Release all tasks assigned to a specific worker
-    /// Sets status back to 'pending' and clears worker_id/heartbeat
-    /// Used for graceful shutdown
-    async fn release_worker_tasks(&self, worker_id: String) -> Result<usize, InfraError>;
-    
+
     /// Release a single task back to pending (used when processing fails/incomplete)
     /// Clears worker_id, heartbeat_at, started_at and sets status to 'pending'
     async fn release_task(&self, task_id: i64) -> Result<(), InfraError>;
-    
-    /// Release tasks with stale heartbeats (worker likely crashed)
-    /// Tasks with heartbeat older than timeout_secs are reset to 'pending'
-    async fn release_stale_tasks_by_heartbeat(&self, timeout_secs: u64) -> Result<usize, InfraError>;
+
+    /// Reclaim tasks whose heartbeat has been idle for >= min_idle_ms (XAUTOCLAIM)
+    async fn reclaim_stale_tasks(
+        &self,
+        min_idle_ms: u64,
+        worker_id: &str,
+    ) -> Result<Vec<FetchTask>, InfraError>;
+
+    /// Refresh the Redis heartbeat TTL key for an in-progress task
+    async fn update_task_heartbeat_redis(
+        &self,
+        stream_id: &str,
+        ttl_secs: u64,
+    ) -> Result<(), InfraError>;
 }
 
 /// Statistics about tasks in the queue

@@ -41,6 +41,10 @@ impl QueueServer {
     ) -> Result<Self, anyhow::Error> {
         let ctx = infra_ctx.get()?;
 
+        // Bootstrap Redis consumer group (idempotent — tolerates BUSYGROUP)
+        ctx.infra.redis().bootstrap_queue().await
+            .map_err(|e| anyhow::anyhow!("Failed to bootstrap Redis queue: {}", e))?;
+
         let blueprint_template = Blueprint {
             fetcher: Fetcher {
                 query: String::new(),
@@ -133,8 +137,15 @@ impl<E: Into<anyhow::Error>> From<E> for AppError {
 // ---------------------------------------------------------------------------
 
 /// GET /health
-async fn health_handler() -> impl IntoResponse {
-    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
+async fn health_handler(State(state): State<QueueServer>) -> impl IntoResponse {
+    // Check Redis
+    if let Err(e) = state.ctx.infra.redis().ping().await {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"status": "error", "redis": e.to_string()})),
+        ).into_response();
+    }
+    (StatusCode::OK, Json(serde_json::json!({"status": "ok"}))).into_response()
 }
 
 /// POST /api/queue/enqueue
@@ -447,9 +458,6 @@ async fn allocate_workers_handler(
         if rc.empty_queue_sleep_secs > 0 {
             blueprint.fetcher.retry_config.empty_queue_sleep_secs = rc.empty_queue_sleep_secs;
         }
-        if rc.stale_task_multiplier > 0 {
-            blueprint.fetcher.retry_config.stale_task_multiplier = rc.stale_task_multiplier;
-        }
 
         // Apply per-component retry overrides (0 means "use global")
         let has_overrides = rc.summary_max_retries > 0
@@ -464,10 +472,9 @@ async fn allocate_workers_handler(
         }
 
         info!(
-            "Applied retry config: strategy={:?}, empty_queue_sleep={}s, stale_multiplier={}",
+            "Applied retry config: strategy={:?}, empty_queue_sleep={}s",
             blueprint.fetcher.retry_config.backoff_strategy,
             blueprint.fetcher.retry_config.empty_queue_sleep_secs,
-            blueprint.fetcher.retry_config.stale_task_multiplier,
         );
     }
 
