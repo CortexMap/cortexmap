@@ -397,6 +397,16 @@
   text-align: right;
 }
 
+.batch-error-row {
+  color: var(--error-color);
+  gap: 0.375rem;
+}
+
+.batch-error {
+  color: var(--error-color);
+  font-weight: 500;
+}
+
 @media (max-width: 768px) {
   .region-detail-header {
     flex-direction: column;
