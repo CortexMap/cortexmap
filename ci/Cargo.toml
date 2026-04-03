@@ -5,3 +5,4 @@ edition = "2024"
 
 [dev-dependencies]
 gh-workflow = "0.8.0"
+serde_json = "1"

@@ -310,3 +310,47 @@ fn extract_abstract_from_xml(xml: &str) -> Result<String, FetchError> {
         "Abstract not found in XML".to_string(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_pmc_prefix_removes_only_leading_pmc_prefix() {
+        assert_eq!(strip_pmc_prefix("PMC12345"), "12345");
+        assert_eq!(strip_pmc_prefix("12345"), "12345");
+        assert_eq!(strip_pmc_prefix("PMCID12345"), "ID12345");
+    }
+
+    #[test]
+    fn test_extract_abstract_from_xml_formats_sections_and_decodes_entities() {
+        let xml = "<article><front><abstract><sec><title>Background</title><p>Line &lt;one&gt; &amp; more&#8239;text</p></sec><p>Second paragraph</p></abstract></front></article>";
+
+        let abstract_text = extract_abstract_from_xml(xml).unwrap();
+
+        assert_eq!(
+            abstract_text,
+            "**Background:**\n\nLine <one> & more text\n\nSecond paragraph"
+        );
+    }
+
+    #[test]
+    fn test_extract_abstract_from_xml_errors_when_missing() {
+        let xml = "<article><body><p>No abstract here</p></body></article>";
+
+        let error = extract_abstract_from_xml(xml).unwrap_err();
+        assert!(
+            matches!(error, FetchError::NotFound(message) if message == "Abstract not found in XML")
+        );
+    }
+
+    #[test]
+    fn test_extract_abstract_from_xml_errors_when_only_tags_remain() {
+        let xml = "<article><abstract><sec><italic></italic></sec></abstract></article>";
+
+        let error = extract_abstract_from_xml(xml).unwrap_err();
+        assert!(
+            matches!(error, FetchError::NotFound(message) if message == "Abstract not found in XML")
+        );
+    }
+}

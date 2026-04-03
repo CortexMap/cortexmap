@@ -30,11 +30,21 @@ env:
     branches:
     - main
 jobs:
-  build:
-    name: Build and Test
+  test:
+    name: Test (${{ matrix.workspace }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      matrix:
+        include:
+        - lcov_name: lcov-fetcher
+          workspace: fetcher-be
+        - lcov_name: lcov-brainatlas
+          workspace: brainatlas-be
+        - lcov_name: lcov-orch
+          workspace: orch
+      fail-fast: false
     steps:
     - name: Checkout Code
       uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -86,10 +96,7 @@ jobs:
         toolchain: nightly
         components: llvm-tools-preview
         cache: 'true'
-        cache-workspaces: |-
-          fetcher-be -> fetcher-be/target
-          brainatlas-be -> brainatlas-be/target
-          orch -> orch/target
+        cache-workspaces: ${{ matrix.workspace }} -> ${{ matrix.workspace }}/target
     - name: Cache cargo-llvm-cov
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
@@ -98,9 +105,8 @@ jobs:
         restore-keys: ${{ runner.os }}-cargo-llvm-cov-
     - name: Install cargo-llvm-cov
       run: cargo install cargo-llvm-cov || true
-    - name: Generate coverage (main branch or expensive)
-      if: '${{ github.ref == ''refs/heads/main'' || contains(github.event.pull_request.labels.*.name, ''ci: expensive'') }}'
-      run: (cd fetcher-be && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-fetcher.info) && (cd brainatlas-be && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-brainatlas.info) && (cd orch && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-orch.info)
+    - name: Generate coverage
+      run: cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --all-features --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info
       env:
         DATABASE_URL: postgresql://test_user:test_password@localhost:5433/test_db
         TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5433/test_db
@@ -110,18 +116,30 @@ jobs:
         S3_ACCESS_KEY: test_access_key
         S3_SECRET_KEY: test_secret_key
         S3_BUCKET: test-bucket
-    - name: Generate coverage (fast)
-      if: '${{ github.ref != ''refs/heads/main'' && !contains(github.event.pull_request.labels.*.name, ''ci: expensive'') }}'
-      run: (cd fetcher-be && cargo +nightly llvm-cov --workspace --lcov --output-path ../lcov-fetcher.info) && (cd brainatlas-be && cargo +nightly llvm-cov --workspace --lcov --output-path ../lcov-brainatlas.info) && (cd orch && cargo +nightly llvm-cov --workspace --lcov --output-path ../lcov-orch.info)
-      env:
-        DATABASE_URL: postgresql://test_user:test_password@localhost:5433/test_db
-        TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5433/test_db
-        RUN_INTEGRATION_TESTS: '1'
-        REDIS_URL: redis://127.0.0.1:6380
-        S3_ENDPOINT: http://localhost:9000
-        S3_ACCESS_KEY: test_access_key
-        S3_SECRET_KEY: test_secret_key
-        S3_BUCKET: test-bucket
+    - name: Upload Coverage Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.lcov_name }}
+        path: ${{ matrix.lcov_name }}.info
+        retention-days: '1'
+  coverage:
+    needs:
+    - test
+    if: always()
+    name: Merge Coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+    - name: Install lcov
+      run: sudo apt-get update && sudo apt-get install -y lcov
+    - name: Download Coverage Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: lcov-*
+        merge-multiple: 'true'
     - name: Merge coverage reports
       run: lcov --add-tracefile lcov-fetcher.info --add-tracefile lcov-brainatlas.info --add-tracefile lcov-orch.info --output-file lcov.info
     - name: Upload Coverage to Codecov

@@ -391,6 +391,7 @@ dependencies = [
  "chrono",
  "rpc-types",
  "serde",
+ "serde_json",
  "strum",
  "uuid",
 ]

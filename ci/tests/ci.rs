@@ -1,13 +1,25 @@
 use gh_workflow::generate::Generate;
 use gh_workflow::*;
+use serde_json::json;
 
 #[test]
 fn main() {
-    // Build and Test job with coverage
-    let build_job = Job::new("Build and Test")
-        .name("Build and Test")
+    // Test and Coverage job — runs in parallel via matrix (one per workspace)
+    let test_job = Job::new("Test and Coverage")
+        .name("Test (${{ matrix.workspace }})")
         .runs_on("ubuntu-latest")
         .permissions(Permissions::default().contents(Level::Read))
+        .strategy(
+            Strategy::default()
+                .fail_fast(false)
+                .matrix(json!({
+                    "include": [
+                        {"workspace": "fetcher-be", "lcov_name": "lcov-fetcher"},
+                        {"workspace": "brainatlas-be", "lcov_name": "lcov-brainatlas"},
+                        {"workspace": "orch", "lcov_name": "lcov-orch"}
+                    ]
+                })),
+        )
         .add_step(Step::new("Checkout Code").uses("actions", "checkout", "34e114876b0b11c390a56381ad16ebd13914f8d5"))
         .add_step(protoc_and_lcov_install())
         .add_step(test_infrastructure())
@@ -26,7 +38,7 @@ fn main() {
                         .add("cache", "true")
                         .add(
                             "cache-workspaces",
-                            "fetcher-be -> fetcher-be/target\nbrainatlas-be -> brainatlas-be/target\norch -> orch/target",
+                            "${{ matrix.workspace }} -> ${{ matrix.workspace }}/target",
                         ),
                 ),
         )
@@ -45,28 +57,43 @@ fn main() {
         )
         .add_step(Step::new("Install cargo-llvm-cov").run("cargo install cargo-llvm-cov || true"))
         .add_step(
-            Step::new("Generate coverage (main branch or expensive)")
+            Step::new("Generate coverage")
                 .run(
-                    "(cd fetcher-be && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-fetcher.info) && \
-(cd brainatlas-be && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-brainatlas.info) && \
-(cd orch && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-orch.info)",
+                    "cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --all-features --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info",
                 )
-                .env(test_env())
-                .if_condition(Expression::new(
-                    "${{ github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'ci: expensive') }}",
-                )),
+                .env(test_env()),
         )
         .add_step(
-            Step::new("Generate coverage (fast)")
-                .run(
-                    "(cd fetcher-be && cargo +nightly llvm-cov --workspace --lcov --output-path ../lcov-fetcher.info) && \
-(cd brainatlas-be && cargo +nightly llvm-cov --workspace --lcov --output-path ../lcov-brainatlas.info) && \
-(cd orch && cargo +nightly llvm-cov --workspace --lcov --output-path ../lcov-orch.info)",
-                )
-                .env(test_env())
-                .if_condition(Expression::new(
-                    "${{ github.ref != 'refs/heads/main' && !contains(github.event.pull_request.labels.*.name, 'ci: expensive') }}",
-                )),
+            Step::new("Upload Coverage Artifact")
+                .uses("actions", "upload-artifact", "v4")
+                .with(
+                    Input::default()
+                        .add("name", "${{ matrix.lcov_name }}")
+                        .add("path", "${{ matrix.lcov_name }}.info")
+                        .add("retention-days", "1"),
+                ),
+        );
+
+    // Coverage merge job — waits for all matrix test jobs, then combines reports
+    let coverage_job = Job::new("Merge Coverage")
+        .name("Merge Coverage")
+        .runs_on("ubuntu-latest")
+        .add_needs("test")
+        .cond(Expression::new("always()"))
+        .permissions(Permissions::default().contents(Level::Read))
+        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "34e114876b0b11c390a56381ad16ebd13914f8d5"))
+        .add_step(
+            Step::new("Install lcov")
+                .run("sudo apt-get update && sudo apt-get install -y lcov"),
+        )
+        .add_step(
+            Step::new("Download Coverage Artifacts")
+                .uses("actions", "download-artifact", "v4")
+                .with(
+                    Input::default()
+                        .add("pattern", "lcov-*")
+                        .add("merge-multiple", "true"),
+                ),
         )
         .add_step(Step::new("Merge coverage reports").run(
             "lcov \
@@ -102,7 +129,8 @@ fn main() {
                     .add_type(PullRequestType::Reopened),
             )
             .push(Push::default().add_branch("main")))
-        .add_job("build", build_job);
+        .add_job("test", test_job)
+        .add_job("coverage", coverage_job);
 
     workflow.generate().unwrap();
 }

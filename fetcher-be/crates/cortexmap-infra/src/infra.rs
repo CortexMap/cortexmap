@@ -111,6 +111,39 @@ impl Display for TaskStatus {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_content_type_display_matches_expected_mime_types() {
+        assert_eq!(ContentType::Text.to_string(), "text/plain");
+        assert_eq!(ContentType::Pdf.to_string(), "application/pdf");
+        assert_eq!(ContentType::Json.to_string(), "application/json");
+        assert_eq!(ContentType::Markdown.to_string(), "text/markdown");
+    }
+
+    #[test]
+    fn test_component_type_string_contracts_are_stable() {
+        assert_eq!(ComponentType::Summary.as_str(), "summary");
+        assert_eq!(ComponentType::Abstract.as_str(), "abstract");
+        assert_eq!(ComponentType::Pdf.as_str(), "pdf");
+        assert_eq!(ComponentType::Summary.to_string(), "summary");
+        assert_eq!(ComponentType::from_str("pdf").unwrap(), ComponentType::Pdf);
+        assert!(ComponentType::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn test_task_status_as_str_and_display_match_queue_values() {
+        assert_eq!(TaskStatus::Pending.as_str(), "pending");
+        assert_eq!(TaskStatus::InProgress.as_str(), "in_progress");
+        assert_eq!(TaskStatus::Completed.as_str(), "completed");
+        assert_eq!(TaskStatus::Failed.as_str(), "failed");
+        assert_eq!(TaskStatus::InProgress.to_string(), "in_progress");
+    }
+}
+
 #[async_trait::async_trait]
 pub trait TaskQueueInfra {
     /// Enqueue a new fetch task for a PMC ID
