@@ -88,6 +88,7 @@ fn main() {
         .name("Lint")
         .runs_on("ubuntu-latest")
         .permissions(Permissions::default().contents(Level::Read))
+        .cond(Expression::new("github.event_name != 'pull_request'"))
         .add_step(Step::new("Checkout Code").uses(
             "actions",
             "checkout",
