@@ -1,4 +1,4 @@
-use cortexmap_core::blueprint::connections::{Connections, Database, Fetcher, Postgresql, S3Info};
+use cortexmap_core::blueprint::connections::{Connections, Database, Fetcher, Postgresql, RetryConfig, S3Info};
 use cortexmap_core::blueprint::Blueprint;
 use cortexmap_fetcher::enqueue_query;
 use cortexmap_infra::{InfraContext, TaskQueueInfra};
@@ -14,13 +14,14 @@ fn create_test_blueprint(query: &str) -> Blueprint {
             task_timeout_secs: 1,
             max_retry_attempts: 3,
             esearch_url: "https://www.ebi.ac.uk/europepmc/webservices/rest/search".to_string(),
+            retry_config: RetryConfig::default(),
         },
         connections: Connections {
-            database: Database::Postgresql(Postgresql {
+            db: Database::Postgresql(Postgresql {
                 url: std::env::var("DATABASE_URL")
                     .unwrap_or_else(|_| "postgres://cortexmap:cortexmap_dev@localhost:5432/cortexmap".to_string()),
             }),
-            s3: S3Info {
+            s3_info: S3Info {
                 endpoint: "http://localhost:9000".to_string(),
                 access_key: "minioadmin".to_string(),
                 secret_key: "minioadmin".to_string(),
@@ -47,16 +48,9 @@ async fn setup_test_context() -> InfraContext<StdInfra> {
 }
 
 /// Cleanup test data
-async fn cleanup_test_data(ctx: &InfraContext<StdInfra>, query: &str) {
-    use cortexmap_infra::DatabaseInfra;
-    use diesel::prelude::*;
-    use cortexmap_infra::schema::fetch_tasks;
-    
-    let conn = ctx.infra.get_connection().expect("Failed to get connection");
-    
-    diesel::delete(fetch_tasks::table.filter(fetch_tasks::query.eq(query)))
-        .execute(&conn)
-        .ok(); // Ignore errors on cleanup
+async fn cleanup_test_data(ctx: &InfraContext<StdInfra>, _query: &str) {
+    // Cleanup is best-effort; ignore errors
+    let _ = ctx.infra.reset_stale_tasks(0).await;
 }
 
 #[tokio::test]
@@ -68,7 +62,7 @@ async fn test_enqueue_query_integration() {
     cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
     
     // Enqueue tasks from a real query
-    let result = enqueue_query(&blueprint, &ctx).await;
+    let result = enqueue_query(&blueprint, ctx.clone()).await;
     
     match result {
         Ok(pmc_ids) => {
@@ -97,9 +91,9 @@ async fn test_process_task_lifecycle() {
     
     // Manually enqueue a task
     ctx.infra.enqueue_task(
-        "PMC5334499", // Known good PMC ID for testing
-        &blueprint.fetcher.query,
-        blueprint.fetcher.max_retry_attempts,
+        "PMC5334499".to_string(), // Known good PMC ID for testing
+        blueprint.fetcher.query.clone(),
+        blueprint.fetcher.max_retry_attempts.try_into().unwrap(),
     ).await.expect("Failed to enqueue task");
     
     // Claim the task
@@ -127,8 +121,8 @@ async fn test_partial_failure_retry() {
     
     // Enqueue a task
     ctx.infra.enqueue_task(
-        "PMC999999", // Likely doesn't exist, will cause failures
-        &blueprint.fetcher.query,
+        "PMC999999".to_string(), // Likely doesn't exist, will cause failures
+        blueprint.fetcher.query.clone(),
         2, // Only 2 retries for faster test
     ).await.expect("Failed to enqueue task");
     
@@ -149,15 +143,16 @@ async fn test_partial_failure_retry() {
     // Mark summary as completed
     ctx.infra.update_component_status(
         summary.id,
-        &cortexmap_infra::TaskStatus::Completed,
-        Some("s3://test/PMC999999/summary.json"),
+        cortexmap_infra::ComponentType::Summary,
+        cortexmap_infra::TaskStatus::Completed,
+        Some("s3://test/PMC999999/summary.json".to_string()),
         None,
     ).await.expect("Failed to update summary");
     
     // Mark PDF as failed and increment retry
     ctx.infra.increment_component_attempt(
         pdf.id,
-        Some("PDF not found"),
+        cortexmap_infra::ComponentType::Pdf,
     ).await.expect("Failed to increment PDF attempt");
     
     // Verify summary is done but PDF is still pending
@@ -184,8 +179,8 @@ async fn test_timeout_prevents_immediate_retry() {
     
     // Enqueue a task
     ctx.infra.enqueue_task(
-        "PMC123456",
-        &blueprint.fetcher.query,
+        "PMC123456".to_string(),
+        blueprint.fetcher.query.clone(),
         3,
     ).await.expect("Failed to enqueue task");
     
@@ -222,8 +217,8 @@ async fn test_max_retry_exhaustion() {
     
     // Enqueue with only 2 max attempts
     ctx.infra.enqueue_task(
-        "PMC888888",
-        &blueprint.fetcher.query,
+        "PMC888888".to_string(),
+        blueprint.fetcher.query.clone(),
         2,
     ).await.expect("Failed to enqueue task");
     
@@ -238,8 +233,8 @@ async fn test_max_retry_exhaustion() {
     let pdf = components.iter().find(|c| c.component_type == "pdf").unwrap();
     
     // Fail twice (max_attempts = 2)
-    ctx.infra.increment_component_attempt(pdf.id, Some("Error 1")).await.expect("Failed");
-    ctx.infra.increment_component_attempt(pdf.id, Some("Error 2")).await.expect("Failed");
+    ctx.infra.increment_component_attempt(pdf.id, cortexmap_infra::ComponentType::Pdf).await.expect("Failed");
+    ctx.infra.increment_component_attempt(pdf.id, cortexmap_infra::ComponentType::Pdf).await.expect("Failed");
     
     // Get component and check attempt count
     let pending = ctx.infra.get_pending_components(task.id).await
@@ -254,9 +249,10 @@ async fn test_max_retry_exhaustion() {
     if pdf_updated.attempt_count >= pdf_updated.max_attempts {
         ctx.infra.update_component_status(
             pdf_updated.id,
-            &cortexmap_infra::TaskStatus::Failed,
+            cortexmap_infra::ComponentType::Pdf,
+            cortexmap_infra::TaskStatus::Failed,
             None,
-            Some("Max retries exceeded"),
+            Some("Max retries exceeded".to_string()),
         ).await.expect("Failed to mark as failed");
     }
     
@@ -273,8 +269,8 @@ async fn test_concurrent_workers_no_duplicate() {
     // Enqueue 3 tasks
     for i in 0..3 {
         ctx.infra.enqueue_task(
-            &format!("PMC{}", 100000 + i),
-            &blueprint.fetcher.query,
+            format!("PMC{}", 100000 + i),
+            blueprint.fetcher.query.clone(),
             3,
         ).await.expect("Failed to enqueue task");
     }

@@ -4,6 +4,7 @@
 use cortexmap_be::server::QueueServer;
 use cortexmap_be::proto::{EnqueueRequest, EnqueueResponse};
 use std::env;
+use std_infra::StdInfraContext;
 
 fn get_test_database_url() -> String {
     env::var("TEST_DATABASE_URL")
@@ -18,19 +19,23 @@ fn get_test_s3_config() -> (String, String, String, String) {
     (endpoint, access_key, secret_key, bucket)
 }
 
+fn get_test_infra_ctx() -> StdInfraContext {
+    let database_url = get_test_database_url();
+    let (endpoint, access_key, secret_key, bucket) = get_test_s3_config();
+    StdInfraContext {
+        database_url,
+        endpoint,
+        access_key,
+        secret_key,
+        bucket,
+    }
+}
+
 #[tokio::test]
 async fn test_queue_server_initialization() {
-    let database_url = get_test_database_url();
-    let (s3_endpoint, s3_access_key, s3_secret_key, s3_bucket) = get_test_s3_config();
+    let infra_ctx = get_test_infra_ctx();
 
-    let result = QueueServer::new(
-        database_url,
-        s3_endpoint,
-        s3_access_key,
-        s3_secret_key,
-        s3_bucket,
-    )
-    .await;
+    let result = QueueServer::new(infra_ctx).await;
 
     // Should succeed if database and S3 are available
     match result {
@@ -47,18 +52,11 @@ async fn test_queue_server_initialization() {
 #[tokio::test]
 #[ignore] // Run with --ignored when test infrastructure is available
 async fn test_enqueue_task_workflow() {
-    let database_url = get_test_database_url();
-    let (s3_endpoint, s3_access_key, s3_secret_key, s3_bucket) = get_test_s3_config();
+    let infra_ctx = get_test_infra_ctx();
 
-    let _server = QueueServer::new(
-        database_url.clone(),
-        s3_endpoint,
-        s3_access_key,
-        s3_secret_key,
-        s3_bucket,
-    )
-    .await
-    .expect("Failed to create QueueServer");
+    let _server = QueueServer::new(infra_ctx)
+        .await
+        .expect("Failed to create QueueServer");
 
     // Test enqueue request
     let request = EnqueueRequest {

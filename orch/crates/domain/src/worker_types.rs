@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn default_backoff_strategy() -> String {
+    "constant".to_string()
+}
+
 /// Worker status and statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerStatus {

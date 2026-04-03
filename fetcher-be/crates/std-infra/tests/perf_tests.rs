@@ -1,4 +1,4 @@
-use cortexmap_infra::{InfraContext, TaskQueueInfra};
+use cortexmap_infra::{ComponentType, InfraContext, TaskQueueInfra};
 use std::time::Instant;
 use std_infra::{StdInfra, StdInfraContext};
 
@@ -19,16 +19,9 @@ async fn setup_test_context() -> InfraContext<StdInfra> {
 }
 
 /// Cleanup test data
-async fn cleanup_test_data(ctx: &InfraContext<StdInfra>, query: &str) {
-    use cortexmap_infra::DatabaseInfra;
-    use diesel::prelude::*;
-    use cortexmap_infra::schema::fetch_tasks;
-    
-    let conn = ctx.infra.get_connection().expect("Failed to get connection");
-    
-    diesel::delete(fetch_tasks::table.filter(fetch_tasks::query.eq(query)))
-        .execute(&conn)
-        .ok();
+async fn cleanup_test_data(ctx: &InfraContext<StdInfra>, _query: &str) {
+    // Cleanup is best-effort; ignore errors
+    let _ = ctx.infra.reset_stale_tasks(0).await;
 }
 
 #[tokio::test]
@@ -45,8 +38,8 @@ async fn test_queue_throughput_batch_enqueue() {
     // Enqueue 100 tasks
     for i in 0..batch_size {
         ctx.infra.enqueue_task(
-            &format!("PMC{}", 1000000 + i),
-            query,
+            format!("PMC{}", 1000000 + i),
+            query.to_string(),
             3,
         ).await.expect("Failed to enqueue task");
     }
@@ -76,14 +69,14 @@ async fn test_task_claiming_latency() {
     // Enqueue tasks
     for i in 0..num_tasks {
         ctx.infra.enqueue_task(
-            &format!("PMC{}", 2000000 + i),
-            query,
+            format!("PMC{}", 2000000 + i),
+            query.to_string(),
             3,
         ).await.expect("Failed to enqueue");
     }
     
     // Measure claim latency
-    let mut latencies = Vec::new();
+    let mut latencies: Vec<f64> = Vec::new();
     
     for _ in 0..num_tasks {
         let start = Instant::now();
@@ -96,8 +89,8 @@ async fn test_task_claiming_latency() {
     }
     
     let avg_latency = latencies.iter().sum::<f64>() / latencies.len() as f64;
-    let max_latency = latencies.iter().fold(0.0, |a, &b| a.max(b));
-    let min_latency = latencies.iter().fold(f64::MAX, |a, &b| a.min(b));
+    let max_latency = latencies.iter().cloned().fold(0.0_f64, f64::max);
+    let min_latency = latencies.iter().cloned().fold(f64::MAX, f64::min);
     
     println!("📊 Task Claiming Latency:");
     println!("  Samples: {}", latencies.len());
@@ -123,8 +116,8 @@ async fn test_concurrent_workers_throughput() {
     // Enqueue tasks
     for i in 0..num_tasks {
         ctx.infra.enqueue_task(
-            &format!("PMC{}", 3000000 + i),
-            query,
+            format!("PMC{}", 3000000 + i),
+            query.to_string(),
             3,
         ).await.expect("Failed to enqueue");
     }
@@ -192,7 +185,7 @@ async fn test_timeout_overhead() {
     cleanup_test_data(&ctx, query).await;
     
     // Enqueue one task
-    ctx.infra.enqueue_task("PMC4000000", query, 3).await.expect("Failed to enqueue");
+    ctx.infra.enqueue_task("PMC4000000".to_string(), query.to_string(), 3).await.expect("Failed to enqueue");
     
     // Test different timeout values
     let timeout_values = vec![0, 1, 5, 10];
@@ -226,8 +219,8 @@ async fn test_component_update_performance() {
     // Enqueue tasks
     for i in 0..num_tasks {
         ctx.infra.enqueue_task(
-            &format!("PMC{}", 5000000 + i),
-            query,
+            format!("PMC{}", 5000000 + i),
+            query.to_string(),
             3,
         ).await.expect("Failed to enqueue");
     }
@@ -246,10 +239,16 @@ async fn test_component_update_performance() {
             .expect("Failed to get components");
         
         for component in components {
+            let component_type = match component.component_type.as_str() {
+                "summary" => ComponentType::Summary,
+                "abstract" => ComponentType::Abstract,
+                _ => ComponentType::Pdf,
+            };
             ctx.infra.update_component_status(
                 component.id,
-                &cortexmap_infra::TaskStatus::Completed,
-                Some(&format!("s3://bucket/{}/{}", task.pmc_id, component.component_type)),
+                component_type,
+                cortexmap_infra::TaskStatus::Completed,
+                Some(format!("s3://bucket/{}/{}", task.pmc_id, component.component_type)),
                 None,
             ).await.expect("Failed to update component");
         }
@@ -286,8 +285,8 @@ async fn test_stats_query_performance() {
         // Enqueue batch
         for i in 0..batch_size {
             ctx.infra.enqueue_task(
-                &format!("PMC{}", 6000000 + i),
-                query,
+                format!("PMC{}", 6000000 + i),
+                query.to_string(),
                 3,
             ).await.expect("Failed to enqueue");
         }
