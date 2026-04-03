@@ -79,7 +79,9 @@ fn main() {
         .name("Merge Coverage")
         .runs_on("ubuntu-latest")
         .add_needs("test")
+        .cond(Expression::new("always()"))
         .permissions(Permissions::default().contents(Level::Read))
+        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "34e114876b0b11c390a56381ad16ebd13914f8d5"))
         .add_step(
             Step::new("Install lcov")
                 .run("sudo apt-get update && sudo apt-get install -y lcov"),

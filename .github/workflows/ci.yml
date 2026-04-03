@@ -125,11 +125,14 @@ jobs:
   coverage:
     needs:
     - test
+    if: always()
     name: Merge Coverage
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+    - name: Checkout Code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
     - name: Install lcov
       run: sudo apt-get update && sudo apt-get install -y lcov
     - name: Download Coverage Artifacts
