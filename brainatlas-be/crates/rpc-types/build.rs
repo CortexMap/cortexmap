@@ -33,9 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "#[serde(default)]"
     );
     
-    config
-        .protoc_arg("--experimental_allow_proto3_optional")
-        .compile_protos(
+    config.compile_protos(
         &["../../../proto/llm/brain.proto"],
         &["../../../proto"],
     )?;
