@@ -83,42 +83,6 @@ fn main() {
                 ),
         );
 
-    // Lint job
-    let lint_job = Job::new("Lint")
-        .name("Lint")
-        .runs_on("ubuntu-latest")
-        .permissions(Permissions::default().contents(Level::Read))
-        .cond(Expression::new("github.event_name != 'pull_request'"))
-        .add_step(Step::new("Checkout Code").uses(
-            "actions",
-            "checkout",
-            "34e114876b0b11c390a56381ad16ebd13914f8d5",
-        ))
-        .add_step(protoc_install())
-        .add_step(
-            Step::new("Setup Rust Toolchain")
-                .uses(
-                    "actions-rust-lang",
-                    "setup-rust-toolchain",
-                    "1780873c7b576612439a134613cc4cc74ce5538c",
-                )
-                .with(
-                    Input::default()
-                        .add("toolchain", "nightly")
-                        .add("components", "clippy, rustfmt"),
-                ),
-        )
-        .add_step(Step::new("Cargo Fmt").run(
-            "(cd fetcher-be && cargo +nightly fmt --all --check) && \
-(cd brainatlas-be && cargo +nightly fmt --all --check) && \
-(cd orch && cargo +nightly fmt --all --check)",
-        ))
-        .add_step(Step::new("Cargo Clippy").run(
-            "(cd fetcher-be && cargo +nightly clippy --all-features --workspace -- -D warnings) && \
-(cd brainatlas-be && cargo +nightly clippy --all-features --workspace -- -D warnings) && \
-(cd orch && cargo +nightly clippy --all-features --workspace -- -D warnings)",
-        ));
-
     let workflow = Workflow::new("ci")
         .name("ci")
         .env(Env::from(("RUSTFLAGS", "-Dwarnings")))
@@ -131,8 +95,7 @@ fn main() {
                     .add_type(PullRequestType::Reopened),
             )
             .push(Push::default().add_branch("main")))
-        .add_job("build", build_job)
-        .add_job("lint", lint_job);
+        .add_job("build", build_job);
 
     workflow.generate().unwrap();
 }

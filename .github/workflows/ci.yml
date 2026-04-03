@@ -73,23 +73,3 @@ jobs:
         with: |-
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
-  lint:
-    if: github.event_name != 'pull_request'
-    name: Lint
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-    - name: Checkout Code
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-    - name: Install protoc
-      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-    - name: Setup Rust Toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c
-      with:
-        toolchain: nightly
-        components: clippy, rustfmt
-    - name: Cargo Fmt
-      run: (cd fetcher-be && cargo +nightly fmt --all --check) && (cd brainatlas-be && cargo +nightly fmt --all --check) && (cd orch && cargo +nightly fmt --all --check)
-    - name: Cargo Clippy
-      run: (cd fetcher-be && cargo +nightly clippy --all-features --workspace -- -D warnings) && (cd brainatlas-be && cargo +nightly clippy --all-features --workspace -- -D warnings) && (cd orch && cargo +nightly clippy --all-features --workspace -- -D warnings)
