@@ -1,4 +1,4 @@
-use api::{ApiError, BrainAtlasApi, BrainRegionApi};
+use api::{ApiError, BrainAtlasApi, BrainRegionApi, IngestRequest, SummarizeRequest};
 use app::AppError;
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, Method, StatusCode};
@@ -61,6 +61,8 @@ impl BrainAtlasServer {
             .route("/api/search", post(search_brain_region_handler))
             .route("/api/status", post(status_handler))
             .route("/api/process", post(process_region_handler))
+            .route("/api/ingest", post(ingest_region_handler))
+            .route("/api/summarize", post(summarize_region_handler))
             .route("/api/generate-queries", post(generate_queries_handler))
             .route("/api/chunks/{chunk_id}/source", get(get_chunk_source_handler))
             .layer(cors)
@@ -165,6 +167,47 @@ async fn generate_queries_handler(
     let resp = server
         .api
         .generate_queries(body.region_name, body.count)
+        .await
+        .map_err(ServerError)?;
+    Ok(Json(resp))
+}
+
+/// POST /brainatlas-be/api/ingest  body: { "region_id": { "value": "<uuid>" }, "batch_id": { "value": "<uuid>" }, "s3_keys": [...], "paper_metadata": [...] }
+async fn ingest_region_handler(
+    State(server): State<BrainAtlasServer>,
+    Json(body): Json<IngestRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let region_id = body
+        .region_id
+        .and_then(|u| u.value.parse::<uuid::Uuid>().ok());
+    let batch_id = body
+        .batch_id
+        .and_then(|u| u.value.parse::<uuid::Uuid>().ok());
+    let resp = server
+        .api
+        .ingest_region(
+            region_id,
+            batch_id,
+            body.s3_keys,
+            body.paper_metadata,
+            body.embedding_model,
+        )
+        .await
+        .map_err(ServerError)?;
+    Ok(Json(resp))
+}
+
+/// POST /brainatlas-be/api/summarize  body: { "region_id": { "value": "<uuid>" } }
+async fn summarize_region_handler(
+    State(server): State<BrainAtlasServer>,
+    Json(body): Json<SummarizeRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let region_id = body
+        .region_id
+        .and_then(|u| u.value.parse::<uuid::Uuid>().ok());
+    let resp = server
+        .api
+        .summarize_region(region_id, body.chat_model, body.embedding_model)
         .await
         .map_err(ServerError)?;
     Ok(Json(resp))

@@ -2,6 +2,39 @@ use domain::{AllocateWorkersRequest, ChunkSourceResponse, ConfigEntry, ConfigEnt
 use std::error::Error;
 use uuid::Uuid;
 
+/// Result of a single region ingestion
+#[derive(Debug, Clone)]
+pub struct RegionIngestionResult {
+    pub region_id: Uuid,
+    pub batch_id: Uuid,
+    pub query_count: usize,
+    pub task_count: usize,
+    pub skipped: bool,
+    pub skip_reason: Option<String>,
+}
+
+/// Result of a full ingestion cycle
+#[derive(Debug, Clone)]
+pub struct IngestionCycleResult {
+    pub regions_processed: usize,
+    pub regions_skipped: usize,
+    pub regions_failed: usize,
+    pub details: Vec<RegionIngestionResult>,
+}
+
+/// Trait for periodic knowledge base ingestion
+#[async_trait::async_trait]
+pub trait IngestionScheduler: Send + Sync {
+    type Error: Error + Send + Sync;
+
+    /// Run a full ingestion cycle across all (or a batch of) regions.
+    /// Generates queries, enqueues fetch tasks, and creates batches.
+    async fn run_ingestion_cycle(&self) -> Result<IngestionCycleResult, Self::Error>;
+
+    /// Ingest a single region: generate queries, enqueue fetch tasks, create batch.
+    async fn ingest_region(&self, region_id: Uuid) -> Result<RegionIngestionResult, Self::Error>;
+}
+
 #[async_trait::async_trait]
 pub trait CompletionOrchestrator: Send + Sync {
     type Error: Error + Send + Sync;
@@ -70,6 +103,10 @@ pub trait RegionManagement: Send + Sync {
 
     /// Search regions by natural language query across names, acronyms, and latest summaries
     async fn reverse_search(&self, query: &str) -> Result<domain::SearchResponse, Self::Error>;
+
+    /// Generate a summary for a region using existing embeddings (RAG-only, no fetching).
+    /// Calls brainatlas-be /api/summarize synchronously.
+    async fn summarize_region(&self, region_id: Uuid) -> Result<domain::GenerateSummaryResult, Self::Error>;
 }
 
 /// Trait for managing batches and fetcher integration
@@ -147,6 +184,7 @@ pub trait Services:
     + ConfigManagement<Error = <Self as Services>::Error>
     + WorkerManagement<Error = <Self as Services>::Error>
     + HealthCheck<Error = <Self as Services>::Error>
+    + IngestionScheduler<Error = <Self as Services>::Error>
 {
     type Error: Error + Send + Sync;
 }
@@ -158,7 +196,8 @@ where
         + BatchOrchestration<Error = E>
         + ConfigManagement<Error = E>
         + WorkerManagement<Error = E>
-        + HealthCheck<Error = E>,
+        + HealthCheck<Error = E>
+        + IngestionScheduler<Error = E>,
     E: Error + Send + Sync,
 {
     type Error = E;

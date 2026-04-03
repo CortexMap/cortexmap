@@ -7,7 +7,7 @@ diesel::table! {
     brain_region_embeddings (id) {
         id -> Uuid,
         region_id -> Int4,
-        summary_id -> Uuid,
+        summary_id -> Nullable<Uuid>,
         chunk_index -> Int4,
         chunk_text -> Text,
         embedding -> Vector,
@@ -191,7 +191,6 @@ diesel::table! {
     }
 }
 
-diesel::joinable!(brain_region_embeddings -> region_summary (summary_id));
 diesel::joinable!(fetch_task_components -> fetch_tasks (task_id));
 diesel::joinable!(fetch_task_logs -> fetch_tasks (task_id));
 diesel::joinable!(langchain_pg_embedding -> langchain_pg_collection (collection_id));

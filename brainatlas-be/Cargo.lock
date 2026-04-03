@@ -39,6 +39,7 @@ dependencies = [
  "app",
  "async-trait",
  "domain",
+ "serde",
  "thiserror",
  "uuid",
 ]

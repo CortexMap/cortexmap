@@ -8,11 +8,13 @@ use diesel::r2d2::{ConnectionManager, Pool};
 
 pub type DbPool = Pool<ConnectionManager<PgConnection>>;
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct StdTaskQueue {
     pool: DbPool,
 }
 
+#[allow(dead_code)]
 impl StdTaskQueue {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -55,6 +57,7 @@ impl TaskQueueInfra for StdTaskQueue {
         self.run_blocking(move |conn| {
             conn.transaction(|conn| {
                 // Insert the task or update if exists (using ON CONFLICT DO UPDATE to always return a row)
+                // On conflict: reset status to pending so the task gets re-fetched
                 let task: FetchTask = diesel::insert_into(fetch_tasks::table)
                     .values(NewFetchTask {
                         pmc_id: pmc_id.clone(),
@@ -64,10 +67,16 @@ impl TaskQueueInfra for StdTaskQueue {
                     })
                     .on_conflict((fetch_tasks::pmc_id, fetch_tasks::query))
                     .do_update()
-                    .set(fetch_tasks::updated_at.eq(diesel::dsl::now))
+                    .set((
+                        fetch_tasks::updated_at.eq(diesel::dsl::now),
+                        fetch_tasks::status.eq(TaskStatus::Pending.as_str()),
+                        fetch_tasks::completed_at.eq(None::<chrono::NaiveDateTime>),
+                        fetch_tasks::worker_id.eq(None::<String>),
+                        fetch_tasks::started_at.eq(None::<chrono::NaiveDateTime>),
+                    ))
                     .get_result(conn)?;
 
-                // Create component records for this task if they don't exist
+                // Create component records for this task — reset existing ones to pending
                 let components = vec![
                     ComponentType::Summary,
                     ComponentType::Abstract,
@@ -86,7 +95,13 @@ impl TaskQueueInfra for StdTaskQueue {
                             fetch_task_components::task_id,
                             fetch_task_components::component_type,
                         ))
-                        .do_nothing()
+                        .do_update()
+                        .set((
+                            fetch_task_components::status.eq(TaskStatus::Pending.as_str()),
+                            fetch_task_components::attempt_count.eq(0),
+                            fetch_task_components::error_message.eq(None::<String>),
+                            fetch_task_components::completed_at.eq(None::<chrono::NaiveDateTime>),
+                        ))
                         .execute(conn)?;
                 }
 
@@ -891,7 +906,7 @@ impl TaskQueueInfra for RedisTaskQueue {
     ) -> Result<FetchTask, InfraError> {
         use cortexmap_infra::schema::{fetch_task_components, fetch_tasks};
 
-        // Step 1: PG insert/upsert (verbatim from StdTaskQueue)
+        // Step 1: PG insert/upsert — reset status on conflict so task gets re-fetched
         let task: FetchTask = self
             .run_blocking(move |conn| {
                 conn.transaction(|conn| {
@@ -904,7 +919,13 @@ impl TaskQueueInfra for RedisTaskQueue {
                         })
                         .on_conflict((fetch_tasks::pmc_id, fetch_tasks::query))
                         .do_update()
-                        .set(fetch_tasks::updated_at.eq(diesel::dsl::now))
+                        .set((
+                            fetch_tasks::updated_at.eq(diesel::dsl::now),
+                            fetch_tasks::status.eq(TaskStatus::Pending.as_str()),
+                            fetch_tasks::completed_at.eq(None::<chrono::NaiveDateTime>),
+                            fetch_tasks::worker_id.eq(None::<String>),
+                            fetch_tasks::started_at.eq(None::<chrono::NaiveDateTime>),
+                        ))
                         .get_result(conn)?;
 
                     let components = vec![
@@ -924,7 +945,13 @@ impl TaskQueueInfra for RedisTaskQueue {
                                 fetch_task_components::task_id,
                                 fetch_task_components::component_type,
                             ))
-                            .do_nothing()
+                            .do_update()
+                            .set((
+                                fetch_task_components::status.eq(TaskStatus::Pending.as_str()),
+                                fetch_task_components::attempt_count.eq(0),
+                                fetch_task_components::error_message.eq(None::<String>),
+                                fetch_task_components::completed_at.eq(None::<chrono::NaiveDateTime>),
+                            ))
                             .execute(conn)?;
                     }
                     Ok(task)
@@ -932,9 +959,18 @@ impl TaskQueueInfra for RedisTaskQueue {
             })
             .await?;
 
-        // Step 2: If already in Redis stream, return as-is (duplicate enqueue)
+        // Step 2: Clear stream_message_id in PG if it was set from a prior run,
+        // so we always re-add to the Redis stream
         if task.stream_message_id.is_some() {
-            return Ok(task);
+            let task_id = task.id;
+            self.run_blocking(move |conn| {
+                diesel::sql_query("UPDATE fetch_tasks SET stream_message_id = NULL WHERE id = $1")
+                    .bind::<diesel::sql_types::BigInt, _>(task_id)
+                    .execute(conn)
+                    .map(|_| ())
+                    .map_err(diesel::result::Error::from)
+            })
+            .await?;
         }
 
         // Step 3 & 4: XADD + HSET

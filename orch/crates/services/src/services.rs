@@ -1,11 +1,12 @@
 use crate::batch_orchestration::OrchBatchOrchestration;
 use crate::completion_watcher::CompletionWatcher;
 use crate::config_management::OrchConfigManagement;
+use crate::ingestion_scheduler::OrchIngestionScheduler;
 use crate::region_management::OrchRegionManagement;
 use crate::{Infra, ServiceError};
 use app::{
-    BatchOrchestration, CompletionOrchestrator, ConfigManagement, HealthCheck, RegionManagement,
-    WorkerManagement,
+    BatchOrchestration, CompletionOrchestrator, ConfigManagement, HealthCheck, IngestionScheduler,
+    IngestionCycleResult, RegionIngestionResult, RegionManagement, WorkerManagement,
 };
 use domain::{
     AllocateWorkersRequest, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult,
@@ -21,6 +22,7 @@ pub struct OrchServices<I> {
     region_management: OrchRegionManagement<I>,
     batch_orchestration: OrchBatchOrchestration<I>,
     config_management: OrchConfigManagement<I>,
+    ingestion_scheduler: OrchIngestionScheduler<I>,
     infra: Arc<I>,
 }
 
@@ -30,11 +32,13 @@ impl<I: Infra> OrchServices<I> {
         let region_management = OrchRegionManagement::new(infra.clone());
         let batch_orchestration = OrchBatchOrchestration::new(infra.clone());
         let config_management = OrchConfigManagement::new(infra.clone());
+        let ingestion_scheduler = OrchIngestionScheduler::new(infra.clone());
         Self {
             completion_watcher,
             region_management,
             batch_orchestration,
             config_management,
+            ingestion_scheduler,
             infra,
         }
     }
@@ -162,6 +166,10 @@ where
 
     async fn reverse_search(&self, query: &str) -> Result<domain::SearchResponse, Self::Error> {
         self.region_management.reverse_search(query).await
+    }
+
+    async fn summarize_region(&self, region_id: Uuid) -> Result<domain::GenerateSummaryResult, Self::Error> {
+        self.region_management.summarize_region(region_id).await
     }
 }
 
@@ -332,5 +340,22 @@ where
 
     async fn stop_workers(&self, req: StopWorkersRequest) -> Result<WorkerStopResponse, Self::Error> {
         self.batch_orchestration.stop_workers(req).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> IngestionScheduler for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn run_ingestion_cycle(&self) -> Result<IngestionCycleResult, Self::Error> {
+        self.ingestion_scheduler.run_ingestion_cycle().await
+    }
+
+    async fn ingest_region(&self, region_id: Uuid) -> Result<RegionIngestionResult, Self::Error> {
+        self.ingestion_scheduler.ingest_region(region_id).await
     }
 }

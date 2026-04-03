@@ -60,6 +60,7 @@ mod database_tests {
     use diesel::r2d2::{self, ConnectionManager};
 
     #[test]
+    #[ignore] // Requires running test infrastructure
     fn test_database_connection() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -80,6 +81,7 @@ mod database_tests {
     }
 
     #[test]
+    #[ignore] // Requires running test infrastructure
     fn test_region_mapping_table_exists() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -102,6 +104,7 @@ mod database_tests {
     }
 
     #[test]
+    #[ignore] // Requires running test infrastructure
     fn test_region_summary_table_exists() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -124,6 +127,7 @@ mod database_tests {
     }
 
     #[test]
+    #[ignore] // Requires running test infrastructure
     fn test_insert_and_query_region_mapping() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -177,6 +181,7 @@ mod s3_tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore] // Requires running test infrastructure
     async fn test_s3_connection() {
         let (endpoint, access_key, secret_key, _bucket) = get_test_s3_config();
         
@@ -202,6 +207,7 @@ mod s3_tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires running test infrastructure
     async fn test_s3_create_bucket_and_upload() {
         let (endpoint, access_key, secret_key, bucket) = get_test_s3_config();
         
@@ -272,6 +278,7 @@ mod api_tests {
     use diesel::r2d2::{self, ConnectionManager};
 
     #[tokio::test]
+    #[ignore] // Requires running test infrastructure
     async fn test_search_brain_region_empty() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -317,6 +324,7 @@ mod api_tests {
     }
 
     #[tokio::test]
+    #[ignore] // Requires running test infrastructure
     async fn test_insert_and_retrieve_summary() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -393,6 +401,7 @@ mod workflow_tests {
     use aws_sdk_s3::primitives::ByteStream;
 
     #[tokio::test]
+    #[ignore] // Requires running test infrastructure
     async fn test_complete_workflow_simulation() {
         // This test simulates the complete workflow:
         // 1. Create region in database

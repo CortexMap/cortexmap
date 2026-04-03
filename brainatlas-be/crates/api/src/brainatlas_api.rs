@@ -1,4 +1,4 @@
-use crate::{ApiError, BrainRegionApi};
+use crate::{ApiError, BrainRegionApi, IngestResponse, SummarizeResponse};
 use app::{AppError, BrainAtlasApp, Services};
 use domain::rpc_types;
 use domain::rpc_types::{
@@ -96,6 +96,63 @@ where
             .map_err(ApiError::AppError)?;
 
         Ok(GenerateQueriesResponse { queries })
+    }
+
+    async fn ingest_region(
+        &self,
+        region_id: Option<Uuid>,
+        batch_id: Option<Uuid>,
+        s3_keys: Vec<String>,
+        paper_metadata: Vec<PaperMetadata>,
+        embedding_model: Option<String>,
+    ) -> Result<IngestResponse, Self::Error> {
+        let region_uuid = region_id.ok_or(ApiError::MissingOrInvalidId)?;
+        let batch_uuid = batch_id.ok_or(ApiError::MissingOrInvalidId)?;
+
+        self.app()
+            .ingest_region(region_uuid, batch_uuid, s3_keys, paper_metadata, embedding_model)
+            .await
+            .map_err(ApiError::AppError)?;
+
+        Ok(IngestResponse {
+            region_id: Some(rpc_types::Uuid {
+                value: region_uuid.to_string(),
+            }),
+            detail: "Ingestion complete: chunks embedded into knowledge base".to_string(),
+        })
+    }
+
+    async fn summarize_region(
+        &self,
+        region_id: Option<Uuid>,
+        chat_model: Option<String>,
+        embedding_model: Option<String>,
+    ) -> Result<SummarizeResponse, Self::Error> {
+        let region_uuid = region_id.ok_or(ApiError::MissingOrInvalidId)?;
+
+        let (summary_id, summary_text) = self
+            .app()
+            .summarize_region(region_uuid, chat_model, embedding_model)
+            .await
+            .map_err(ApiError::AppError)?;
+
+        // Get region name for response
+        let regions = self
+            .app()
+            .list()
+            .await
+            .map_err(ApiError::AppError)?;
+        let region_name = regions
+            .iter()
+            .find(|r| r.id == region_uuid)
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+
+        Ok(SummarizeResponse {
+            summary_id: summary_id.to_string(),
+            summary_text,
+            region_name,
+        })
     }
 
     async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<Option<ChunkSource>, Self::Error> {

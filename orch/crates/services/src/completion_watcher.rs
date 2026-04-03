@@ -1,6 +1,6 @@
 use crate::{
     BatchManagement, CacheClient, EnvInfra, HttpClient, OrchDatabase, PaperMetadataEntry,
-    ProcessRegionRequest, ProcessRegionResponse, ServiceError, UuidWrapper,
+    IngestRegionRequest, IngestRegionResponse, ServiceError, UuidWrapper,
 };
 use crate::cache_keys::{self, invalidate, invalidate_pattern};
 use app::CompletionOrchestrator;
@@ -360,8 +360,8 @@ where
             "Collected paper metadata for source attribution"
         );
 
-        // Call brainatlas /process with retry logic
-        let process_url = format!("{}/brainatlas-be/api/process", brainatlas_url);
+        // Call brainatlas /ingest with retry logic (chunk + embed only, no summary generation)
+        let process_url = format!("{}/brainatlas-be/api/ingest", brainatlas_url);
         
         tracing::info!(
             batch_id = %batch.id,
@@ -372,15 +372,6 @@ where
         let region_uuid = batch.region_id;
 
         // Read model configuration from orch config (with env var fallback)
-        let chat_model = match self.infra.get_env_var("CHAT_MODEL") {
-            Ok(model) => Some(model),
-            Err(_) => self
-                .infra
-                .get_config(database_url, ConfigKey::ChatModel)
-                .await
-                .map_err(ServiceError::InfraError)?,
-        };
-
         let embedding_model = match self.infra.get_env_var("EMBEDDING_MODEL") {
             Ok(model) => Some(model),
             Err(_) => self
@@ -390,7 +381,7 @@ where
                 .map_err(ServiceError::InfraError)?,
         };
 
-        let request = ProcessRegionRequest {
+        let request = IngestRegionRequest {
             region_id: UuidWrapper {
                 value: region_uuid.to_string(),
             },
@@ -399,7 +390,6 @@ where
             },
             s3_keys: text_s3_keys.clone(),
             paper_metadata,
-            chat_model,
             embedding_model,
         };
         
@@ -422,7 +412,7 @@ where
 
         let result = (|| async {
             infra
-                .post::<ProcessRegionRequest, ProcessRegionResponse>(&url_clone, &req_clone)
+                .post::<IngestRegionRequest, IngestRegionResponse>(&url_clone, &req_clone)
                 .await
         })
         .retry(retry_strategy)

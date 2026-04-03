@@ -3,43 +3,33 @@
 
 use cortexmap_be::server::QueueServer;
 use cortexmap_be::proto::{EnqueueRequest, EnqueueResponse};
+use std_infra::StdInfraContext;
 use std::env;
 
-fn get_test_database_url() -> String {
-    env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://test_user:test_password@localhost:5433/test_db".to_string())
-}
-
-fn get_test_s3_config() -> (String, String, String, String) {
-    let endpoint = env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
-    let access_key = env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "test_access_key".to_string());
-    let secret_key = env::var("S3_SECRET_KEY").unwrap_or_else(|_| "test_secret_key".to_string());
-    let bucket = env::var("S3_BUCKET").unwrap_or_else(|_| "test-bucket".to_string());
-    (endpoint, access_key, secret_key, bucket)
+fn get_test_infra_ctx() -> StdInfraContext {
+    StdInfraContext {
+        database_url: env::var("TEST_DATABASE_URL")
+            .unwrap_or_else(|_| "postgresql://test_user:test_password@localhost:5433/test_db".to_string()),
+        endpoint: env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string()),
+        access_key: env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "test_access_key".to_string()),
+        secret_key: env::var("S3_SECRET_KEY").unwrap_or_else(|_| "test_secret_key".to_string()),
+        bucket: env::var("S3_BUCKET").unwrap_or_else(|_| "test-bucket".to_string()),
+        redis_url: env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string()),
+    }
 }
 
 #[tokio::test]
+#[ignore] // Requires running PostgreSQL, Redis, and S3
 async fn test_queue_server_initialization() {
-    let database_url = get_test_database_url();
-    let (s3_endpoint, s3_access_key, s3_secret_key, s3_bucket) = get_test_s3_config();
+    let result = QueueServer::new(get_test_infra_ctx()).await;
 
-    let result = QueueServer::new(
-        database_url,
-        s3_endpoint,
-        s3_access_key,
-        s3_secret_key,
-        s3_bucket,
-    )
-    .await;
-
-    // Should succeed if database and S3 are available
     match result {
         Ok(server) => {
-            println!("✅ QueueServer initialized successfully");
+            println!("QueueServer initialized successfully");
             assert!(server.blueprint_template.fetcher.query.is_empty());
         }
         Err(e) => {
-            println!("⚠️  QueueServer initialization failed (expected if test infrastructure not running): {}", e);
+            println!("QueueServer initialization failed (expected if test infrastructure not running): {}", e);
         }
     }
 }
@@ -47,18 +37,9 @@ async fn test_queue_server_initialization() {
 #[tokio::test]
 #[ignore] // Run with --ignored when test infrastructure is available
 async fn test_enqueue_task_workflow() {
-    let database_url = get_test_database_url();
-    let (s3_endpoint, s3_access_key, s3_secret_key, s3_bucket) = get_test_s3_config();
-
-    let _server = QueueServer::new(
-        database_url.clone(),
-        s3_endpoint,
-        s3_access_key,
-        s3_secret_key,
-        s3_bucket,
-    )
-    .await
-    .expect("Failed to create QueueServer");
+    let _server = QueueServer::new(get_test_infra_ctx())
+        .await
+        .expect("Failed to create QueueServer");
 
     // Test enqueue request
     let request = EnqueueRequest {

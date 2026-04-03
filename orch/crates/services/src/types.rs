@@ -75,3 +75,29 @@ pub struct GenerateQueriesRequest {
 pub struct GenerateQueriesResponse {
     pub queries: Vec<String>,
 }
+
+// Ingest API types (brainatlas-be /api/ingest)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestRegionRequest {
+    pub region_id: UuidWrapper,
+    pub batch_id: UuidWrapper,
+    pub s3_keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paper_metadata: Vec<PaperMetadataEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding_model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestRegionResponse {
+    pub region_id: Option<UuidWrapper>,
+    pub detail: String,
+}
+
+// Summarize API types (brainatlas-be /api/summarize)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummarizeResponse {
+    pub summary_id: String,
+    pub summary_text: String,
+    pub region_name: String,
+}
