@@ -40,10 +40,6 @@ fn main() {
         )
         .add_step(Step::new("Install cargo-llvm-cov").run("cargo install cargo-llvm-cov || true"))
         .add_step(
-            Step::new("Wait for Test Infrastructure")
-                .run("docker compose -f docker-compose.test.yml wait postgres-test redis-test minio-test || sleep 10"),
-        )
-        .add_step(
             Step::new("Generate coverage (main branch or expensive)")
                 .run(
                     "(cd fetcher-be && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-fetcher.info) && \
@@ -183,8 +179,7 @@ fn protoc_and_lcov_install() -> Step<Run> {
 
 fn test_infrastructure() -> Step<Run> {
     Step::new("Start Test Infrastructure").run(
-        "docker compose -f docker-compose.test.yml up -d && \
-sleep 5",
+        "docker compose -f docker-compose.test.yml up -d --wait",
     )
 }
 

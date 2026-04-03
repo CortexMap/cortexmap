@@ -41,7 +41,7 @@ jobs:
     - name: Install protoc and lcov
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler lcov
     - name: Start Test Infrastructure
-      run: docker compose -f docker-compose.test.yml up -d && sleep 5
+      run: docker compose -f docker-compose.test.yml up -d --wait
     - name: Setup Rust Toolchain
       uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c
       with:
@@ -56,8 +56,6 @@ jobs:
         restore-keys: ${{ runner.os }}-cargo-llvm-cov-
     - name: Install cargo-llvm-cov
       run: cargo install cargo-llvm-cov || true
-    - name: Wait for Test Infrastructure
-      run: docker compose -f docker-compose.test.yml wait postgres-test redis-test minio-test || sleep 10
     - name: Generate coverage (main branch or expensive)
       if: '${{ github.ref == ''refs/heads/main'' || contains(github.event.pull_request.labels.*.name, ''ci: expensive'') }}'
       run: (cd fetcher-be && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-fetcher.info) && (cd brainatlas-be && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-brainatlas.info) && (cd orch && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-orch.info)
