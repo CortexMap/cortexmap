@@ -4,6 +4,8 @@ use cortexmap_core::blueprint::connections::{
 };
 use cortexmap_fetcher::enqueue_query;
 use cortexmap_infra::{InfraContext, TaskQueueInfra};
+use diesel::prelude::*;
+use diesel::r2d2::{self, ConnectionManager};
 use std_infra::{StdInfra, StdInfraContext};
 
 fn get_test_database_url() -> String {
@@ -62,10 +64,27 @@ async fn setup_test_context() -> InfraContext<StdInfra> {
         .expect("Failed to create test infrastructure context")
 }
 
-/// Cleanup test data
-async fn cleanup_test_data(ctx: &InfraContext<StdInfra>, _query: &str) {
-    // Cleanup is best-effort; ignore errors
-    let _ = ctx.infra.reset_stale_tasks(0).await;
+/// Cleanup test data by deleting all tasks matching the query
+async fn cleanup_test_data(_ctx: &InfraContext<StdInfra>, query: &str) {
+    let database_url = get_test_database_url();
+    let manager = ConnectionManager::<PgConnection>::new(database_url);
+    let pool = r2d2::Pool::builder()
+        .max_size(1)
+        .build(manager)
+        .expect("Failed to create cleanup pool");
+    let conn = &mut pool.get().expect("Failed to get cleanup connection");
+
+    // Delete components first (FK), then tasks
+    diesel::sql_query(
+        "DELETE FROM fetch_task_components WHERE task_id IN (SELECT id FROM fetch_tasks WHERE query = $1)",
+    )
+    .bind::<diesel::sql_types::Text, _>(query)
+    .execute(conn)
+    .ok();
+    diesel::sql_query("DELETE FROM fetch_tasks WHERE query = $1")
+        .bind::<diesel::sql_types::Text, _>(query)
+        .execute(conn)
+        .ok();
 }
 
 #[tokio::test]
@@ -177,19 +196,19 @@ async fn test_partial_failure_retry() {
         .await
         .expect("Failed to get components");
 
-    let summary = components
+    let _summary = components
         .iter()
         .find(|c| c.component_type == "summary")
         .unwrap();
-    let pdf = components
+    let _pdf = components
         .iter()
         .find(|c| c.component_type == "pdf")
         .unwrap();
 
-    // Mark summary as completed
+    // Mark summary as completed (update_component_status takes task_id, not component id)
     ctx.infra
         .update_component_status(
-            summary.id,
+            task.id,
             cortexmap_infra::ComponentType::Summary,
             cortexmap_infra::TaskStatus::Completed,
             Some("s3://test/PMC999999/summary.json".to_string()),
@@ -200,7 +219,7 @@ async fn test_partial_failure_retry() {
 
     // Mark PDF as failed and increment retry
     ctx.infra
-        .increment_component_attempt(pdf.id, cortexmap_infra::ComponentType::Pdf)
+        .increment_component_attempt(task.id, cortexmap_infra::ComponentType::Pdf)
         .await
         .expect("Failed to increment PDF attempt");
 
@@ -307,18 +326,18 @@ async fn test_max_retry_exhaustion() {
         .get_pending_components(task.id)
         .await
         .expect("Failed to get components");
-    let pdf = components
+    let _pdf = components
         .iter()
         .find(|c| c.component_type == "pdf")
         .unwrap();
 
-    // Fail twice (max_attempts = 2)
+    // Fail twice (max_attempts = 2) -- increment_component_attempt takes task_id
     ctx.infra
-        .increment_component_attempt(pdf.id, cortexmap_infra::ComponentType::Pdf)
+        .increment_component_attempt(task.id, cortexmap_infra::ComponentType::Pdf)
         .await
         .expect("Failed");
     ctx.infra
-        .increment_component_attempt(pdf.id, cortexmap_infra::ComponentType::Pdf)
+        .increment_component_attempt(task.id, cortexmap_infra::ComponentType::Pdf)
         .await
         .expect("Failed");
 
@@ -338,7 +357,7 @@ async fn test_max_retry_exhaustion() {
     if pdf_updated.attempt_count >= pdf_updated.max_attempts {
         ctx.infra
             .update_component_status(
-                pdf_updated.id,
+                task.id,
                 cortexmap_infra::ComponentType::Pdf,
                 cortexmap_infra::TaskStatus::Failed,
                 None,

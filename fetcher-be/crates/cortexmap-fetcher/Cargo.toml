@@ -22,5 +22,5 @@ fastrand = "2"
 [dev-dependencies]
 # it's bad idea to use std-infra for tests..
 std-infra = { path = "../std-infra" }
-diesel = { version = "2.2.9", features = ["postgres"] }
+diesel = { version = "2.2.9", features = ["postgres", "r2d2"] }
 futures = "0.3"

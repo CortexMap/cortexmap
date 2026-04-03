@@ -1,16 +1,20 @@
 use cortexmap_infra::{ComponentType, InfraContext, TaskQueueInfra, TaskStatus};
+use diesel::prelude::*;
+use diesel::r2d2::{self, ConnectionManager};
 use std_infra::{StdInfra, StdInfraContext};
 
-/// Helper function to create a test infrastructure context
-async fn setup_test_context() -> InfraContext<StdInfra> {
-    let database_url = std::env::var("TEST_DATABASE_URL")
+fn get_test_database_url() -> String {
+    std::env::var("TEST_DATABASE_URL")
         .or_else(|_| std::env::var("DATABASE_URL"))
         .unwrap_or_else(|_| {
             "postgresql://test_user:test_password@localhost:5433/test_db".to_string()
-        });
+        })
+}
 
+/// Helper function to create a test infrastructure context
+async fn setup_test_context() -> InfraContext<StdInfra> {
     let ctx = StdInfraContext {
-        database_url,
+        database_url: get_test_database_url(),
         endpoint: std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string()),
         access_key: std::env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "test_access_key".to_string()),
         secret_key: std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "test_secret_key".to_string()),
@@ -21,10 +25,26 @@ async fn setup_test_context() -> InfraContext<StdInfra> {
         .expect("Failed to create test infrastructure context")
 }
 
-/// Helper function to clean up test data
-async fn cleanup_test_data(ctx: &InfraContext<StdInfra>, _query: &str) {
-    // Cleanup is best-effort; ignore errors
-    let _ = ctx.infra.reset_stale_tasks(0).await;
+/// Cleanup test data by deleting all tasks matching the query
+async fn cleanup_test_data(_ctx: &InfraContext<StdInfra>, query: &str) {
+    let database_url = get_test_database_url();
+    let manager = ConnectionManager::<PgConnection>::new(database_url);
+    let pool = r2d2::Pool::builder()
+        .max_size(1)
+        .build(manager)
+        .expect("Failed to create cleanup pool");
+    let conn = &mut pool.get().expect("Failed to get cleanup connection");
+
+    diesel::sql_query(
+        "DELETE FROM fetch_task_components WHERE task_id IN (SELECT id FROM fetch_tasks WHERE query = $1)",
+    )
+    .bind::<diesel::sql_types::Text, _>(query)
+    .execute(conn)
+    .ok();
+    diesel::sql_query("DELETE FROM fetch_tasks WHERE query = $1")
+        .bind::<diesel::sql_types::Text, _>(query)
+        .execute(conn)
+        .ok();
 }
 
 #[tokio::test]
@@ -166,15 +186,15 @@ async fn test_component_status_updates() {
         .expect("Failed to get components");
     assert_eq!(components.len(), 3, "Expected 3 pending components");
 
-    // Update summary component to completed
-    let summary_component = components
+    // Update summary component to completed (takes task_id, not component id)
+    let _summary_component = components
         .iter()
         .find(|c| c.component_type == "summary")
         .expect("No summary component found");
 
     ctx.infra
         .update_component_status(
-            summary_component.id,
+            task.id,
             ComponentType::Summary,
             TaskStatus::Completed,
             Some("s3://bucket/key/summary.json".to_string()),
@@ -247,9 +267,9 @@ async fn test_retry_increment() {
         _ => ComponentType::Pdf,
     };
 
-    // Increment attempt count
+    // Increment attempt count (takes task_id, not component id)
     ctx.infra
-        .increment_component_attempt(component.id, component_type)
+        .increment_component_attempt(task.id, component_type)
         .await
         .expect("Failed to increment attempt");
 
@@ -297,8 +317,8 @@ async fn test_stale_task_reset() {
         .await
         .expect("Failed to mark started");
 
-    // Wait a bit
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    // Wait for stale timeout (reset_stale_tasks uses timeout_secs * 3, so 1 * 3 = 3 seconds)
+    tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
 
     // Reset stale tasks (timeout of 1 second means task should be reset)
     let reset_count = ctx
@@ -346,7 +366,7 @@ async fn test_task_completion() {
         .await
         .expect("Failed to mark started");
 
-    // Mark all components as completed
+    // Mark all components as completed (update_component_status takes task_id)
     let components = ctx
         .infra
         .get_pending_components(task.id)
@@ -360,7 +380,7 @@ async fn test_task_completion() {
         };
         ctx.infra
             .update_component_status(
-                component.id,
+                task.id,
                 component_type,
                 TaskStatus::Completed,
                 Some(format!("s3://bucket/{}/component", task.pmc_id)),

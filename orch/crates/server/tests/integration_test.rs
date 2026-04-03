@@ -123,16 +123,16 @@ mod database_tests {
     async fn test_config_table_exists() {
         let mut conn = get_db_connection();
 
-        // Check if config table exists
+        // Check if orch_config table exists
         let count = diesel::sql_query(
             "SELECT COUNT(*) as count FROM information_schema.tables 
-             WHERE table_name = 'config'",
+             WHERE table_name = 'orch_config'",
         )
         .get_result::<CountResult>(&mut conn)
         .expect("Failed to check table existence");
 
-        assert_eq!(count.count, 1, "config table should exist");
-        println!("✅ config table exists");
+        assert_eq!(count.count, 1, "orch_config table should exist");
+        println!("✅ orch_config table exists");
     }
 
     #[tokio::test]
@@ -190,7 +190,7 @@ mod config_tests {
         let test_value = "test_value_123";
 
         // Insert config
-        diesel::sql_query("INSERT INTO config (key, value, description) VALUES ($1, $2, $3)")
+        diesel::sql_query("INSERT INTO orch_config (key, value, description) VALUES ($1, $2, $3)")
             .bind::<diesel::sql_types::Text, _>(&test_key)
             .bind::<diesel::sql_types::Text, _>(test_value)
             .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(Some("Test config"))
@@ -198,7 +198,7 @@ mod config_tests {
             .expect("Failed to insert config");
 
         // Retrieve it
-        let config = diesel::sql_query("SELECT key, value FROM config WHERE key = $1")
+        let config = diesel::sql_query("SELECT key, value FROM orch_config WHERE key = $1")
             .bind::<diesel::sql_types::Text, _>(&test_key)
             .get_result::<ConfigRow>(&mut conn)
             .expect("Failed to retrieve config");
@@ -207,14 +207,14 @@ mod config_tests {
         assert_eq!(config.value, test_value);
 
         // Update it
-        diesel::sql_query("UPDATE config SET value = $1 WHERE key = $2")
+        diesel::sql_query("UPDATE orch_config SET value = $1 WHERE key = $2")
             .bind::<diesel::sql_types::Text, _>("updated_value")
             .bind::<diesel::sql_types::Text, _>(&test_key)
             .execute(&mut conn)
             .expect("Failed to update config");
 
         // Verify update
-        let updated_config = diesel::sql_query("SELECT key, value FROM config WHERE key = $1")
+        let updated_config = diesel::sql_query("SELECT key, value FROM orch_config WHERE key = $1")
             .bind::<diesel::sql_types::Text, _>(&test_key)
             .get_result::<ConfigRow>(&mut conn)
             .expect("Failed to retrieve updated config");
@@ -222,7 +222,7 @@ mod config_tests {
         assert_eq!(updated_config.value, "updated_value");
 
         // Cleanup
-        diesel::sql_query("DELETE FROM config WHERE key = $1")
+        diesel::sql_query("DELETE FROM orch_config WHERE key = $1")
             .bind::<diesel::sql_types::Text, _>(&test_key)
             .execute(&mut conn)
             .ok();
@@ -247,11 +247,11 @@ mod batch_tests {
         diesel::sql_query("INSERT INTO region_mapping (id, region_id, name) VALUES ($1, $2, $3)")
             .bind::<diesel::sql_types::Uuid, _>(test_region_uuid)
             .bind::<diesel::sql_types::Int4, _>(test_region_id)
-            .bind::<diesel::sql_types::Text, _>("Test Batch Region")
+            .bind::<diesel::sql_types::Text, _>(&format!("Test Batch Region {}", test_region_uuid))
             .execute(&mut conn)
             .expect("Failed to insert test region");
 
-        // Create a batch
+        // Create a batch (region_id is UUID FK to region_mapping.id)
         let batch_id = Uuid::new_v4();
         diesel::sql_query(
             "INSERT INTO region_processing_batches 
@@ -259,7 +259,7 @@ mod batch_tests {
              VALUES ($1, $2, $3, $4, NOW())",
         )
         .bind::<diesel::sql_types::Uuid, _>(batch_id)
-        .bind::<diesel::sql_types::Int4, _>(test_region_id)
+        .bind::<diesel::sql_types::Uuid, _>(test_region_uuid)
         .bind::<diesel::sql_types::Text, _>("collecting")
         .bind::<diesel::sql_types::Int4, _>(5)
         .execute(&mut conn)
@@ -311,39 +311,26 @@ mod batch_tests {
         let mut conn = get_db_connection();
 
         // Create batches with different statuses (each needs own region due to unique constraint)
-        let test_data: Vec<(Uuid, i32, &str)> = vec![
-            (
-                Uuid::new_v4(),
-                (rand::random::<u16>() as i32) + 10000,
-                "collecting",
-            ),
-            (
-                Uuid::new_v4(),
-                (rand::random::<u16>() as i32) + 10000,
-                "ready",
-            ),
-            (
-                Uuid::new_v4(),
-                (rand::random::<u16>() as i32) + 10000,
-                "completed",
-            ),
-        ];
+        let statuses = ["collecting", "ready", "completed"];
 
         let mut batch_ids = Vec::new();
         let mut region_uuids = Vec::new();
 
-        for (region_uuid, region_id, status) in &test_data {
+        for status in &statuses {
+            let region_uuid = Uuid::new_v4();
+            let region_id = (rand::random::<u16>() as i32) + 10000;
+
             // Create region
             diesel::sql_query(
                 "INSERT INTO region_mapping (id, region_id, name) VALUES ($1, $2, $3)",
             )
             .bind::<diesel::sql_types::Uuid, _>(region_uuid)
             .bind::<diesel::sql_types::Int4, _>(region_id)
-            .bind::<diesel::sql_types::Text, _>(&format!("Test {} Region", status))
+            .bind::<diesel::sql_types::Text, _>(&format!("Test {} Region {}", status, region_uuid))
             .execute(&mut conn)
             .expect("Failed to insert test region");
 
-            // Create batch
+            // Create batch (region_id is UUID FK to region_mapping.id)
             let batch_id = Uuid::new_v4();
             diesel::sql_query(
                 "INSERT INTO region_processing_batches 
@@ -351,14 +338,14 @@ mod batch_tests {
                  VALUES ($1, $2, $3, $4, NOW())",
             )
             .bind::<diesel::sql_types::Uuid, _>(batch_id)
-            .bind::<diesel::sql_types::Int4, _>(region_id)
+            .bind::<diesel::sql_types::Uuid, _>(region_uuid)
             .bind::<diesel::sql_types::Text, _>(status)
             .bind::<diesel::sql_types::Int4, _>(1)
             .execute(&mut conn)
             .expect("Failed to insert batch");
 
             batch_ids.push(batch_id);
-            region_uuids.push(*region_uuid);
+            region_uuids.push(region_uuid);
         }
 
         // Count by status
@@ -412,7 +399,7 @@ mod workflow_tests {
         )
         .bind::<diesel::sql_types::Uuid, _>(region_uuid)
         .bind::<diesel::sql_types::Int4, _>(region_id)
-        .bind::<diesel::sql_types::Text, _>("Workflow Test Region")
+        .bind::<diesel::sql_types::Text, _>(&format!("Workflow Test Region {}", region_uuid))
         .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(Some("WTR"))
         .execute(&mut conn)
         .expect("Failed to insert test region");
@@ -429,17 +416,17 @@ mod workflow_tests {
             "New region should have no summaries"
         );
 
-        // 3. Check if batch exists (should not exist)
+        // 3. Check if batch exists (should not exist) -- region_id is UUID FK
         let batch_count = diesel::sql_query(
             "SELECT COUNT(*) as count FROM region_processing_batches WHERE region_id = $1",
         )
-        .bind::<diesel::sql_types::Int4, _>(region_id)
+        .bind::<diesel::sql_types::Uuid, _>(region_uuid)
         .get_result::<CountResult>(&mut conn)
         .expect("Failed to count batches");
 
         assert_eq!(batch_count.count, 0, "New region should have no batches");
 
-        // 4. Create a new batch (simulating enqueue)
+        // 4. Create a new batch (simulating enqueue) -- region_id is UUID FK
         let batch_id = Uuid::new_v4();
         diesel::sql_query(
             "INSERT INTO region_processing_batches 
@@ -447,7 +434,7 @@ mod workflow_tests {
              VALUES ($1, $2, 'collecting', 3, NOW())",
         )
         .bind::<diesel::sql_types::Uuid, _>(batch_id)
-        .bind::<diesel::sql_types::Int4, _>(region_id)
+        .bind::<diesel::sql_types::Uuid, _>(region_uuid)
         .execute(&mut conn)
         .expect("Failed to create batch");
 
@@ -467,16 +454,17 @@ mod workflow_tests {
         .execute(&mut conn)
         .expect("Failed to update batch to processing");
 
-        // 7. Simulate completion - create summary
+        // 7. Simulate completion - create summary (batch_id is required)
         let summary_id = Uuid::new_v4();
         diesel::sql_query(
-            "INSERT INTO region_summary (id, region_id, name, summary, created_at) 
-             VALUES ($1, $2, $3, $4, NOW())",
+            "INSERT INTO region_summary (id, region_id, name, summary, batch_id, created_at) 
+             VALUES ($1, $2, $3, $4, $5, NOW())",
         )
         .bind::<diesel::sql_types::Uuid, _>(summary_id)
         .bind::<diesel::sql_types::Int4, _>(region_id)
-        .bind::<diesel::sql_types::Text, _>("Workflow Test Region")
+        .bind::<diesel::sql_types::Text, _>(&format!("Workflow Test Region {}", region_uuid))
         .bind::<diesel::sql_types::Text, _>("This is a test summary from workflow simulation")
+        .bind::<diesel::sql_types::Uuid, _>(batch_id)
         .execute(&mut conn)
         .expect("Failed to create summary");
 
@@ -540,7 +528,7 @@ mod workflow_tests {
         diesel::sql_query("INSERT INTO region_mapping (id, region_id, name) VALUES ($1, $2, $3)")
             .bind::<diesel::sql_types::Uuid, _>(region_uuid)
             .bind::<diesel::sql_types::Int4, _>(region_id)
-            .bind::<diesel::sql_types::Text, _>("Lifecycle Test Region")
+            .bind::<diesel::sql_types::Text, _>(&format!("Lifecycle Test Region {}", region_uuid))
             .execute(&mut conn)
             .expect("Failed to insert test region");
 
@@ -549,14 +537,14 @@ mod workflow_tests {
         // Test all state transitions
         let states = ["collecting", "ready", "processing", "completed"];
 
-        // Create batch
+        // Create batch (region_id is UUID FK to region_mapping.id)
         diesel::sql_query(
             "INSERT INTO region_processing_batches 
              (id, region_id, status, expected_task_count, created_at) 
              VALUES ($1, $2, $3, 1, NOW())",
         )
         .bind::<diesel::sql_types::Uuid, _>(batch_id)
-        .bind::<diesel::sql_types::Int4, _>(region_id)
+        .bind::<diesel::sql_types::Uuid, _>(region_uuid)
         .bind::<diesel::sql_types::Text, _>(states[0])
         .execute(&mut conn)
         .expect("Failed to create batch");
