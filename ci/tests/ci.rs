@@ -57,24 +57,11 @@ fn main() {
         )
         .add_step(Step::new("Install cargo-llvm-cov").run("cargo install cargo-llvm-cov || true"))
         .add_step(
-            Step::new("Generate coverage (main branch or expensive)")
+            Step::new("Generate coverage")
                 .run(
-                    "cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info",
+                    "cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --all-features --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info",
                 )
-                .env(test_env())
-                .if_condition(Expression::new(
-                    "${{ github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'ci: expensive') }}",
-                )),
-        )
-        .add_step(
-            Step::new("Generate coverage (fast)")
-                .run(
-                    "cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info",
-                )
-                .env(test_env())
-                .if_condition(Expression::new(
-                    "${{ github.ref != 'refs/heads/main' && !contains(github.event.pull_request.labels.*.name, 'ci: expensive') }}",
-                )),
+                .env(test_env()),
         )
         .add_step(
             Step::new("Upload Coverage Artifact")

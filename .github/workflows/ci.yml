@@ -105,21 +105,8 @@ jobs:
         restore-keys: ${{ runner.os }}-cargo-llvm-cov-
     - name: Install cargo-llvm-cov
       run: cargo install cargo-llvm-cov || true
-    - name: Generate coverage (main branch or expensive)
-      if: '${{ github.ref == ''refs/heads/main'' || contains(github.event.pull_request.labels.*.name, ''ci: expensive'') }}'
-      run: cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info
-      env:
-        DATABASE_URL: postgresql://test_user:test_password@localhost:5433/test_db
-        TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5433/test_db
-        RUN_INTEGRATION_TESTS: '1'
-        REDIS_URL: redis://127.0.0.1:6380
-        S3_ENDPOINT: http://localhost:9000
-        S3_ACCESS_KEY: test_access_key
-        S3_SECRET_KEY: test_secret_key
-        S3_BUCKET: test-bucket
-    - name: Generate coverage (fast)
-      if: '${{ github.ref != ''refs/heads/main'' && !contains(github.event.pull_request.labels.*.name, ''ci: expensive'') }}'
-      run: cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info
+    - name: Generate coverage
+      run: cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --all-features --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info
       env:
         DATABASE_URL: postgresql://test_user:test_password@localhost:5433/test_db
         TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5433/test_db
