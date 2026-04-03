@@ -1,0 +1,17 @@
+.overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: all;
+}
+
+.regionPath {
+  cursor: pointer;
+  transition: fill 0.15s, stroke 0.15s;
+}
+
+.regionPath:hover {
+  fill: rgba(139, 92, 246, 0.20);
+  stroke: #a78bfa;
+  stroke-width: 1.5px;
+}
