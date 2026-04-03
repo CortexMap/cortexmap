@@ -9,15 +9,20 @@ use diesel::r2d2::{self, ConnectionManager};
 use std_infra::{StdInfra, StdInfraContext};
 
 fn get_test_database_url() -> String {
-    std::env::var("TEST_DATABASE_URL").or_else(|_| std::env::var("DATABASE_URL")).unwrap_or_else(|_| {
-        "postgresql://test_user:test_password@localhost:5433/test_db".to_string()
-    })
+    std::env::var("TEST_DATABASE_URL")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .unwrap_or_else(|_| {
+            "postgresql://test_user:test_password@localhost:5433/test_db".to_string()
+        })
 }
 
 fn get_test_s3_config() -> (String, String, String, String) {
-    let endpoint = std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
-    let access_key = std::env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "test_access_key".to_string());
-    let secret_key = std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "test_secret_key".to_string());
+    let endpoint =
+        std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
+    let access_key =
+        std::env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "test_access_key".to_string());
+    let secret_key =
+        std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "test_secret_key".to_string());
     let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "test-bucket".to_string());
     (endpoint, access_key, secret_key, bucket)
 }
