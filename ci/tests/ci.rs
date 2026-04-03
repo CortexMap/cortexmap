@@ -1,3 +1,4 @@
+use gh_workflow::generate::Generate;
 use gh_workflow::*;
 
 #[test]
@@ -133,6 +134,71 @@ fn main() {
         .add_job("lint", lint_job);
 
     workflow.generate().unwrap();
+}
+
+#[test]
+fn autofix_workflow() {
+    let lint_fix_job = Job::new("Lint Fix")
+        .name("Lint Fix")
+        .runs_on("ubuntu-latest")
+        .permissions(Permissions::default().contents(Level::Read))
+        .add_step(Step::new("Checkout Code").uses(
+            "actions",
+            "checkout",
+            "34e114876b0b11c390a56381ad16ebd13914f8d5",
+        ))
+        .add_step(protoc_install())
+        .add_step(
+            Step::new("Setup Rust Toolchain")
+                .uses(
+                    "actions-rust-lang",
+                    "setup-rust-toolchain",
+                    "1780873c7b576612439a134613cc4cc74ce5538c",
+                )
+                .with(
+                    Input::default()
+                        .add("toolchain", "nightly")
+                        .add("components", "clippy, rustfmt"),
+                ),
+        )
+        .add_step(Step::new("Cargo Fmt").run(
+            "(cd fetcher-be && cargo +nightly fmt --all) && \
+(cd brainatlas-be && cargo +nightly fmt --all) && \
+(cd orch && cargo +nightly fmt --all)",
+        ))
+        .add_step(Step::new("Cargo Clippy").run(
+            "(cd fetcher-be && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings) && \
+(cd brainatlas-be && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings) && \
+(cd orch && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings)",
+        ))
+        .add_step(Step::new("Autofix").uses(
+            "autofix-ci",
+            "action",
+            "7a166d7532b277f34e16238930461bf77f9d7ed8",
+        ));
+
+    let events = Event::default()
+        .pull_request(
+            PullRequest::default()
+                .add_branch("main")
+                .add_type(PullRequestType::Opened)
+                .add_type(PullRequestType::Synchronize)
+                .add_type(PullRequestType::Reopened),
+        )
+        .push(Push::default().add_branch("main"));
+
+    let workflow = Workflow::new("autofix")
+        .name("autofix.ci")
+        .env(Env::from(("RUSTFLAGS", "-Dwarnings")))
+        .on(events)
+        .concurrency(
+            Concurrency::default()
+                .group("autofix-${{github.ref}}")
+                .cancel_in_progress(false),
+        )
+        .add_job("lint", lint_fix_job);
+
+    Generate::new(workflow).name("autofix.yml").generate().unwrap();
 }
 
 fn protoc_install() -> Step<Run> {
