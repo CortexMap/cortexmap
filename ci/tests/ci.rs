@@ -23,7 +23,11 @@ fn main() {
                     Input::default()
                         .add("toolchain", "nightly")
                         .add("components", "llvm-tools-preview")
-                        .add("cache", "true"),
+                        .add("cache", "true")
+                        .add(
+                            "cache-workspaces",
+                            "fetcher-be -> fetcher-be/target\nbrainatlas-be -> brainatlas-be/target\norch -> orch/target",
+                        ),
                 ),
         )
         .add_step(
@@ -125,7 +129,12 @@ fn autofix_workflow() {
                 .with(
                     Input::default()
                         .add("toolchain", "nightly")
-                        .add("components", "clippy, rustfmt"),
+                        .add("components", "clippy, rustfmt")
+                        .add("cache", "true")
+                        .add(
+                            "cache-workspaces",
+                            "fetcher-be -> fetcher-be/target\nbrainatlas-be -> brainatlas-be/target\norch -> orch/target",
+                        ),
                 ),
         )
         .add_step(Step::new("Cargo Fmt").run(

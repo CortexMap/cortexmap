@@ -45,6 +45,11 @@ jobs:
       with:
         toolchain: nightly
         components: clippy, rustfmt
+        cache: 'true'
+        cache-workspaces: |-
+          fetcher-be -> fetcher-be/target
+          brainatlas-be -> brainatlas-be/target
+          orch -> orch/target
     - name: Cargo Fmt
       run: (cd fetcher-be && cargo +nightly fmt --all) && (cd brainatlas-be && cargo +nightly fmt --all) && (cd orch && cargo +nightly fmt --all)
     - name: Cargo Clippy
