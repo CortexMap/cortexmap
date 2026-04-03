@@ -8,7 +8,7 @@ fn main() {
         .runs_on("ubuntu-latest")
         .permissions(Permissions::default().contents(Level::Read))
         .add_step(Step::new("Checkout Code").uses("actions", "checkout", "v4"))
-        .add_step(protoc_install())
+        .add_step(protoc_and_lcov_install())
         .add_step(test_infrastructure())
         .add_step(
             Step::new("Setup Rust Toolchain")
@@ -60,6 +60,13 @@ fn main() {
                     "${{ github.ref != 'refs/heads/main' && !contains(github.event.pull_request.labels.*.name, 'ci: expensive') }}",
                 )),
         )
+        .add_step(Step::new("Merge coverage reports").run(
+            "lcov \
+--add-tracefile lcov-fetcher.info \
+--add-tracefile lcov-brainatlas.info \
+--add-tracefile lcov-orch.info \
+--output-file lcov.info",
+        ))
         .add_step(
             Step::new("Upload Coverage to Codecov")
                 .uses("Wandalen", "wretry.action", "v3")
@@ -70,7 +77,7 @@ fn main() {
                         .add("attempt_delay", "10000")
                         .add(
                             "with",
-                            "token: ${{ secrets.CODECOV_TOKEN }}\nfiles: lcov-fetcher.info,lcov-brainatlas.info,lcov-orch.info",
+                            "token: ${{ secrets.CODECOV_TOKEN }}\nfiles: lcov.info",
                         ),
                 ),
         );
@@ -129,6 +136,11 @@ fn main() {
 fn protoc_install() -> Step<Run> {
     Step::new("Install protoc")
         .run("sudo apt-get update && sudo apt-get install -y protobuf-compiler")
+}
+
+fn protoc_and_lcov_install() -> Step<Run> {
+    Step::new("Install protoc and lcov")
+        .run("sudo apt-get update && sudo apt-get install -y protobuf-compiler lcov")
 }
 
 fn test_infrastructure() -> Step<Run> {
