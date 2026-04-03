@@ -3,10 +3,12 @@ use cortexmap_core::blueprint::connections::{
     Connections, Database, Fetcher, Postgresql, RetryConfig, S3Info,
 };
 use cortexmap_fetcher::enqueue_query;
-use cortexmap_infra::{InfraContext, TaskQueueInfra};
+use cortexmap_infra::{FetchTask, InfraContext, TaskQueueInfra};
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
+use serial_test::serial;
 use std_infra::{StdInfra, StdInfraContext};
+use uuid::Uuid;
 
 fn get_test_database_url() -> String {
     std::env::var("TEST_DATABASE_URL")
@@ -25,6 +27,10 @@ fn get_test_s3_config() -> (String, String, String, String) {
         std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "test_secret_key".to_string());
     let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "test-bucket".to_string());
     (endpoint, access_key, secret_key, bucket)
+}
+
+fn unique_test_query(prefix: &str) -> String {
+    format!("{prefix}-{}", Uuid::new_v4())
 }
 
 /// Helper function to create a test blueprint
@@ -69,8 +75,8 @@ async fn setup_test_context() -> InfraContext<StdInfra> {
         .expect("Failed to create test infrastructure context")
 }
 
-/// Cleanup test data by deleting all tasks matching the query
-async fn cleanup_test_data(_ctx: &InfraContext<StdInfra>, query: &str) {
+/// Cleanup shared queue state so tests do not interfere with one another.
+async fn cleanup_test_queue() {
     let database_url = get_test_database_url();
     let manager = ConnectionManager::<PgConnection>::new(database_url);
     let pool = r2d2::Pool::builder()
@@ -79,26 +85,41 @@ async fn cleanup_test_data(_ctx: &InfraContext<StdInfra>, query: &str) {
         .expect("Failed to create cleanup pool");
     let conn = &mut pool.get().expect("Failed to get cleanup connection");
 
-    // Delete components first (FK), then tasks
     diesel::sql_query(
-        "DELETE FROM fetch_task_components WHERE task_id IN (SELECT id FROM fetch_tasks WHERE query = $1)",
+        "TRUNCATE TABLE fetch_task_logs, fetch_task_components, fetch_tasks RESTART IDENTITY CASCADE",
     )
-    .bind::<diesel::sql_types::Text, _>(query)
     .execute(conn)
-    .ok();
-    diesel::sql_query("DELETE FROM fetch_tasks WHERE query = $1")
-        .bind::<diesel::sql_types::Text, _>(query)
-        .execute(conn)
-        .ok();
+    .expect("Failed to cleanup fetch queue tables");
+}
+
+async fn claim_task_for_test(
+    ctx: InfraContext<StdInfra>,
+    timeout_secs: u64,
+    worker_id: &str,
+) -> Result<Option<FetchTask>, cortexmap_infra::InfraError> {
+    let task = ctx.infra.get_next_pending_task(timeout_secs).await?;
+
+    if let Some(ref task) = task {
+        ctx.infra
+            .claim_task_for_worker(
+                task.id,
+                worker_id.to_string(),
+                Some("test-worker".to_string()),
+            )
+            .await?;
+    }
+
+    Ok(task)
 }
 
 #[tokio::test]
+#[serial]
 #[ignore] // Requires network access to NCBI API
 async fn test_enqueue_query_integration() {
-    let blueprint = create_test_blueprint("test_enqueue_integration AND neuroscience");
-    let ctx = setup_test_context().await;
+    cleanup_test_queue().await;
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
+    let blueprint = create_test_blueprint(&unique_test_query("test_enqueue_integration"));
+    let ctx = setup_test_context().await;
 
     // Enqueue tasks from a real query
     let result = enqueue_query(&blueprint, ctx.clone()).await;
@@ -125,18 +146,20 @@ async fn test_enqueue_query_integration() {
         }
     }
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
+    cleanup_test_queue().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn test_process_task_lifecycle() {
-    let blueprint = create_test_blueprint("test_process_lifecycle");
+    cleanup_test_queue().await;
+
+    let blueprint = create_test_blueprint(&unique_test_query("test_process_lifecycle"));
     let ctx = setup_test_context().await;
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
-
     // Manually enqueue a task
-    ctx.infra
+    let enqueued_task = ctx
+        .infra
         .enqueue_task(
             "PMC5334499".to_string(), // Known good PMC ID for testing
             blueprint.fetcher.query.clone(),
@@ -148,31 +171,30 @@ async fn test_process_task_lifecycle() {
     // Claim the task
     let task = ctx
         .infra
-        .get_next_pending_task(0)
+        .get_next_pending_task(5)
         .await
         .expect("Failed to get task")
         .expect("No task available");
 
+    assert_eq!(task.id, enqueued_task.id);
     assert_eq!(task.pmc_id, "PMC5334499");
+    assert_eq!(task.query, blueprint.fetcher.query);
     assert_eq!(task.status, "pending");
 
-    // Note: process_task would require network access and S3, so we just test structure
-    // In a real integration test, you would call:
-    // let result = process_task(task, &ctx, &blueprint).await;
-    // assert!(result.is_ok());
-
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
+    cleanup_test_queue().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn test_partial_failure_retry() {
-    let blueprint = create_test_blueprint("test_partial_failure");
+    cleanup_test_queue().await;
+
+    let blueprint = create_test_blueprint(&unique_test_query("test_partial_failure"));
     let ctx = setup_test_context().await;
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
-
     // Enqueue a task
-    ctx.infra
+    let enqueued_task = ctx
+        .infra
         .enqueue_task(
             "PMC999999".to_string(), // Likely doesn't exist, will cause failures
             blueprint.fetcher.query.clone(),
@@ -184,10 +206,12 @@ async fn test_partial_failure_retry() {
     // Get the task
     let task = ctx
         .infra
-        .get_next_pending_task(0)
+        .get_next_pending_task(5)
         .await
         .expect("Failed to get task")
         .expect("No task available");
+
+    assert_eq!(task.id, enqueued_task.id);
 
     ctx.infra
         .mark_task_started(task.id)
@@ -249,18 +273,20 @@ async fn test_partial_failure_retry() {
         .unwrap();
     assert_eq!(pdf_updated.attempt_count, 1, "PDF should have 1 attempt");
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
+    cleanup_test_queue().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn test_timeout_prevents_immediate_retry() {
-    let blueprint = create_test_blueprint("test_timeout_prevents_retry");
+    cleanup_test_queue().await;
+
+    let blueprint = create_test_blueprint(&unique_test_query("test_timeout_prevents_retry"));
     let ctx = setup_test_context().await;
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
-
     // Enqueue a task
-    ctx.infra
+    let enqueued_task = ctx
+        .infra
         .enqueue_task("PMC123456".to_string(), blueprint.fetcher.query.clone(), 3)
         .await
         .expect("Failed to enqueue task");
@@ -272,6 +298,8 @@ async fn test_timeout_prevents_immediate_retry() {
         .await
         .expect("Failed to get task")
         .expect("No task available");
+
+    assert_eq!(task1.id, enqueued_task.id);
 
     // Immediately try to claim again - should be None
     let task2 = ctx
@@ -298,28 +326,32 @@ async fn test_timeout_prevents_immediate_retry() {
 
     assert_eq!(task3.id, task1.id, "Should claim same task after timeout");
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
+    cleanup_test_queue().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn test_max_retry_exhaustion() {
-    let blueprint = create_test_blueprint("test_max_retry");
+    cleanup_test_queue().await;
+
+    let blueprint = create_test_blueprint(&unique_test_query("test_max_retry"));
     let ctx = setup_test_context().await;
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
-
     // Enqueue with only 2 max attempts
-    ctx.infra
+    let enqueued_task = ctx
+        .infra
         .enqueue_task("PMC888888".to_string(), blueprint.fetcher.query.clone(), 2)
         .await
         .expect("Failed to enqueue task");
 
     let task = ctx
         .infra
-        .get_next_pending_task(0)
+        .get_next_pending_task(5)
         .await
         .expect("Failed to get task")
         .expect("No task available");
+
+    assert_eq!(task.id, enqueued_task.id);
 
     ctx.infra
         .mark_task_started(task.id)
@@ -372,19 +404,22 @@ async fn test_max_retry_exhaustion() {
             .expect("Failed to mark as failed");
     }
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
+    cleanup_test_queue().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn test_concurrent_workers_no_duplicate() {
-    let blueprint = create_test_blueprint("test_concurrent_workers");
+    cleanup_test_queue().await;
+
+    let blueprint = create_test_blueprint(&unique_test_query("test_concurrent_workers"));
     let ctx = setup_test_context().await;
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
-
     // Enqueue 3 tasks
+    let mut expected_task_ids = Vec::new();
     for i in 0..3 {
-        ctx.infra
+        let task = ctx
+            .infra
             .enqueue_task(
                 format!("PMC{}", 100000 + i),
                 blueprint.fetcher.query.clone(),
@@ -392,13 +427,14 @@ async fn test_concurrent_workers_no_duplicate() {
             )
             .await
             .expect("Failed to enqueue task");
+        expected_task_ids.push(task.id);
     }
 
-    // Simulate 3 workers claiming tasks concurrently
+    // Simulate 3 workers claiming tasks concurrently using the same timeout semantics as the worker loop.
     let (task1, task2, task3) = tokio::join!(
-        ctx.infra.get_next_pending_task(0),
-        ctx.infra.get_next_pending_task(0),
-        ctx.infra.get_next_pending_task(0),
+        claim_task_for_test(ctx.clone(), 5, "worker-1"),
+        claim_task_for_test(ctx.clone(), 5, "worker-2"),
+        claim_task_for_test(ctx.clone(), 5, "worker-3"),
     );
 
     let claimed_tasks = vec![
@@ -410,16 +446,28 @@ async fn test_concurrent_workers_no_duplicate() {
     // Filter out None results
     let actual_tasks: Vec<_> = claimed_tasks.into_iter().flatten().collect();
 
+    assert_eq!(
+        actual_tasks.len(),
+        3,
+        "Expected each worker to claim one task"
+    );
+
     // Verify no duplicates (each worker got a different task)
-    let mut pmc_ids: Vec<_> = actual_tasks.iter().map(|t| &t.pmc_id).collect();
-    pmc_ids.sort();
-    pmc_ids.dedup();
+    let mut task_ids: Vec<_> = actual_tasks.iter().map(|t| t.id).collect();
+    task_ids.sort_unstable();
+    task_ids.dedup();
+
+    expected_task_ids.sort_unstable();
 
     assert_eq!(
-        pmc_ids.len(),
+        task_ids.len(),
         actual_tasks.len(),
         "Workers claimed duplicate tasks!"
     );
+    assert_eq!(
+        task_ids, expected_task_ids,
+        "Workers did not claim the queued tasks"
+    );
 
-    cleanup_test_data(&ctx, &blueprint.fetcher.query).await;
+    cleanup_test_queue().await;
 }
