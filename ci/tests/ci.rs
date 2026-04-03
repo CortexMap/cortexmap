@@ -7,7 +7,7 @@ fn main() {
         .name("Build and Test")
         .runs_on("ubuntu-latest")
         .permissions(Permissions::default().contents(Level::Read))
-        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "v4"))
+        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "34e114876b0b11c390a56381ad16ebd13914f8d5"))
         .add_step(protoc_and_lcov_install())
         .add_step(test_infrastructure())
         .add_step(
@@ -26,7 +26,7 @@ fn main() {
         )
         .add_step(
             Step::new("Cache cargo-llvm-cov")
-                .uses("actions", "cache", "v4")
+                .uses("actions", "cache", "0057852bfaa89a56745cba8c7296529d2fc39830")
                 .with(
                     Input::default()
                         .add("path", "~/.cargo/bin/cargo-llvm-cov")
@@ -69,7 +69,7 @@ fn main() {
         ))
         .add_step(
             Step::new("Upload Coverage to Codecov")
-                .uses("Wandalen", "wretry.action", "v3")
+                .uses("Wandalen", "wretry.action", "e68c23e6309f2871ca8ae4763e7629b9c258e1ea")
                 .with(
                     Input::default()
                         .add("action", "codecov/codecov-action@v4")
@@ -87,7 +87,7 @@ fn main() {
         .name("Lint")
         .runs_on("ubuntu-latest")
         .permissions(Permissions::default().contents(Level::Read))
-        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "v4"))
+        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "34e114876b0b11c390a56381ad16ebd13914f8d5"))
         .add_step(protoc_install())
         .add_step(
             Step::new("Setup Rust Toolchain")

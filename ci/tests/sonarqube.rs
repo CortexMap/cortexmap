@@ -7,10 +7,10 @@ fn main() {
         .name("SonarQube")
         .runs_on("ubuntu-latest")
         .permissions(Permissions::default().contents(Level::Read))
-        .add_step(Step::checkout().with(Input::default().add("fetch-depth", "0")))
+        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "93cb6efe18208431cddfb8368fd83d5badbf9bfd").with(Input::default().add("fetch-depth", "0")))
         .add_step(
             Step::new("SonarQube Scan")
-                .uses("SonarSource", "sonarqube-scan-action", "v6")
+                .uses("SonarSource", "sonarqube-scan-action", "fd88b7d7ccbaefd23d8f36f73b59db7a3d246602")
                 .env(Env::default().add("SONAR_TOKEN", "${{ secrets.SONAR_TOKEN }}")),
         );
 
