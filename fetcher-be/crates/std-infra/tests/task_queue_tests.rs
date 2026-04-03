@@ -26,6 +26,7 @@ async fn cleanup_test_data(ctx: &InfraContext<StdInfra>, _query: &str) {
 }
 
 #[tokio::test]
+#[ignore] // requires PostgreSQL infrastructure
 async fn test_enqueue_task() {
     let ctx = setup_test_context().await;
     let query = "test_enqueue_task";
@@ -54,6 +55,7 @@ async fn test_enqueue_task() {
 }
 
 #[tokio::test]
+#[ignore] // requires PostgreSQL infrastructure
 async fn test_duplicate_task_handling() {
     let ctx = setup_test_context().await;
     let query = "test_duplicate_task";
@@ -131,6 +133,7 @@ async fn test_task_claiming_with_timeout() {
 }
 
 #[tokio::test]
+#[ignore] // requires PostgreSQL infrastructure
 async fn test_component_status_updates() {
     let ctx = setup_test_context().await;
     let query = "test_component_status";
@@ -399,6 +402,7 @@ async fn test_task_completion() {
 }
 
 #[tokio::test]
+#[ignore] // requires PostgreSQL infrastructure
 async fn test_get_task_stats() {
     let ctx = setup_test_context().await;
 

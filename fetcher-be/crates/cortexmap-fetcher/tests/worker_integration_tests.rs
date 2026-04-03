@@ -95,6 +95,7 @@ async fn test_enqueue_query_integration() {
 }
 
 #[tokio::test]
+#[ignore] // requires PostgreSQL infrastructure
 async fn test_process_task_lifecycle() {
     let blueprint = create_test_blueprint("test_process_lifecycle");
     let ctx = setup_test_context().await;

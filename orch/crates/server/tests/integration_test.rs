@@ -68,6 +68,7 @@ mod database_tests {
     use diesel::prelude::*;
 
     #[tokio::test]
+    #[ignore] // requires PostgreSQL infrastructure
     async fn test_database_connection() {
         let mut conn = get_db_connection();
 
@@ -81,6 +82,7 @@ mod database_tests {
     }
 
     #[tokio::test]
+    #[ignore] // requires PostgreSQL infrastructure
     async fn test_region_mapping_table_exists() {
         let mut conn = get_db_connection();
 
@@ -97,6 +99,7 @@ mod database_tests {
     }
 
     #[tokio::test]
+    #[ignore] // requires PostgreSQL infrastructure
     async fn test_region_processing_batches_table_exists() {
         let mut conn = get_db_connection();
 
@@ -116,6 +119,7 @@ mod database_tests {
     }
 
     #[tokio::test]
+    #[ignore] // requires PostgreSQL infrastructure
     async fn test_config_table_exists() {
         let mut conn = get_db_connection();
 
@@ -132,6 +136,7 @@ mod database_tests {
     }
 
     #[tokio::test]
+    #[ignore] // requires PostgreSQL infrastructure
     async fn test_insert_and_query_region_mapping() {
         let mut conn = get_db_connection();
 
@@ -177,6 +182,7 @@ mod config_tests {
     use diesel::prelude::*;
 
     #[tokio::test]
+    #[ignore] // requires PostgreSQL infrastructure
     async fn test_insert_and_retrieve_config() {
         let mut conn = get_db_connection();
 
@@ -230,6 +236,7 @@ mod batch_tests {
     use diesel::prelude::*;
 
     #[tokio::test]
+    #[ignore] // requires PostgreSQL infrastructure
     async fn test_create_and_query_batch() {
         let mut conn = get_db_connection();
 
@@ -299,6 +306,7 @@ mod batch_tests {
     }
 
     #[tokio::test]
+    #[ignore] // requires PostgreSQL infrastructure
     async fn test_count_batches_by_status() {
         let mut conn = get_db_connection();
 
@@ -390,6 +398,7 @@ mod workflow_tests {
     use diesel::prelude::*;
 
     #[tokio::test]
+    #[ignore] // requires PostgreSQL infrastructure
     async fn test_region_search_workflow_simulation() {
         let mut conn = get_db_connection();
 
@@ -521,6 +530,7 @@ mod workflow_tests {
     }
 
     #[tokio::test]
+    #[ignore] // requires PostgreSQL infrastructure
     async fn test_batch_lifecycle_transitions() {
         let mut conn = get_db_connection();
 
