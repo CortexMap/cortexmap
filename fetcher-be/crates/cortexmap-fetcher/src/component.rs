@@ -1,6 +1,6 @@
-use crate::fetch::metadata::{fetch_abstract, fetch_summary, ArticleMetadata};
-use crate::fetch::pdf::PdfStream;
 use crate::FetchError;
+use crate::fetch::metadata::{ArticleMetadata, fetch_abstract, fetch_summary};
+use crate::fetch::pdf::PdfStream;
 use bytes::Bytes;
 use cortexmap_infra::{ComponentType, HttpInfra, InfraContext};
 use futures::stream::Stream;
@@ -8,7 +8,7 @@ use std::pin::Pin;
 
 /// Result of fetching a single component
 pub enum ComponentResult {
-    Summary(ArticleMetadata),
+    Summary(Box<ArticleMetadata>),
     Abstract(String),
     Pdf(PdfStream),
 }
@@ -22,8 +22,9 @@ impl ComponentResult {
             ComponentResult::Pdf(_) => "paper.pdf",
         }
     }
-    
+
     /// Convert component result to a byte stream for S3 upload
+    #[allow(clippy::result_large_err)]
     pub fn into_byte_stream(
         self,
     ) -> Result<Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>, FetchError> {
@@ -51,33 +52,33 @@ impl ComponentResult {
 /// Convert ArticleMetadata to Markdown format
 fn metadata_to_markdown(metadata: &ArticleMetadata) -> String {
     let mut md = String::new();
-    
+
     // Title
     if let Some(ref title) = metadata.title {
         md.push_str(&format!("# {}\n\n", title));
     }
-    
+
     // Metadata section
     md.push_str("## Metadata\n\n");
     md.push_str(&format!("- **PMC ID**: PMC{}\n", metadata.uid));
-    
+
     // DOI (from articleids)
     if let Some(doi_id) = metadata.articleids.iter().find(|id| id.idtype == "doi") {
         md.push_str(&format!("- **DOI**: {}\n", doi_id.value));
     }
-    
+
     // Journal
     if let Some(ref journal) = metadata.fulljournalname {
         md.push_str(&format!("- **Journal**: {}\n", journal));
     } else if let Some(ref source) = metadata.source {
         md.push_str(&format!("- **Journal**: {}\n", source));
     }
-    
+
     // Publication Date
     if let Some(ref pubdate) = metadata.pubdate {
         md.push_str(&format!("- **Publication Date**: {}\n", pubdate));
     }
-    
+
     // Volume/Issue/Pages
     if let Some(ref volume) = metadata.volume {
         md.push_str(&format!("- **Volume**: {}\n", volume));
@@ -88,35 +89,37 @@ fn metadata_to_markdown(metadata: &ArticleMetadata) -> String {
     if let Some(ref pages) = metadata.pages {
         md.push_str(&format!("- **Pages**: {}\n", pages));
     }
-    
+
     // Authors
     if !metadata.authors.is_empty() {
         md.push_str("- **Authors**: ");
-        let author_names: Vec<String> = metadata.authors.iter()
-            .map(|a| a.name.clone())
-            .collect();
+        let author_names: Vec<String> = metadata.authors.iter().map(|a| a.name.clone()).collect();
         md.push_str(&author_names.join(", "));
-        md.push_str("\n");
+        md.push('\n');
     }
-    
-    md.push_str("\n");
-    
+
+    md.push('\n');
+
     // Abstract (if available)
     if let Some(ref abstract_text) = metadata.abstract_text {
         md.push_str("## Abstract\n\n");
         md.push_str(abstract_text);
         md.push_str("\n\n");
     }
-    
+
     // Article IDs (PMC, PMID, DOI, etc.)
     if !metadata.articleids.is_empty() {
         md.push_str("## Article IDs\n\n");
         for article_id in &metadata.articleids {
-            md.push_str(&format!("- **{}**: {}\n", article_id.idtype.to_uppercase(), article_id.value));
+            md.push_str(&format!(
+                "- **{}**: {}\n",
+                article_id.idtype.to_uppercase(),
+                article_id.value
+            ));
         }
-        md.push_str("\n");
+        md.push('\n');
     }
-    
+
     md
 }
 
@@ -129,7 +132,7 @@ pub async fn fetch_component<I: HttpInfra + Send + Sync + 'static>(
     match component_type {
         ComponentType::Summary => {
             let metadata = fetch_summary(&pmc_id, ctx).await?;
-            Ok(ComponentResult::Summary(metadata))
+            Ok(ComponentResult::Summary(Box::new(metadata)))
         }
         ComponentType::Abstract => {
             let abstract_text = fetch_abstract(&pmc_id, ctx).await?;
@@ -143,11 +146,7 @@ pub async fn fetch_component<I: HttpInfra + Send + Sync + 'static>(
 }
 
 /// Determine S3 key for a component
-pub fn determine_component_key(
-    pmcid: &str,
-    component_type: ComponentType,
-    prefix: &str,
-) -> String {
+pub fn determine_component_key(pmcid: &str, component_type: ComponentType, prefix: &str) -> String {
     let sterilized = sterilize_prefix(prefix);
     let suffix = match component_type {
         ComponentType::Summary => "summary.md",

@@ -3,13 +3,13 @@ use crate::env::OrchEnvInfra;
 use crate::http::OrchHttpClient;
 use crate::pg::OrchPostgresql;
 use crate::redis::OrchRedis;
+use domain::{BatchStatus, ProcessingBatch, RegionQuery};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use services::{
-    EnvInfra, HttpClient, NewProcessedFetchTask, OrchConfig, OrchDatabase, ProcessedFetchTask,
-    BatchManagement, CacheClient,
+    BatchManagement, CacheClient, EnvInfra, HttpClient, NewProcessedFetchTask, OrchConfig,
+    OrchDatabase, ProcessedFetchTask,
 };
-use domain::{RegionQuery, ProcessingBatch, BatchStatus};
 use uuid::Uuid;
 
 pub struct OrchInfra {
@@ -114,7 +114,7 @@ impl HttpClient for OrchInfra {
     ) -> Result<Res, Self::Error> {
         self.http.post(url, body).await
     }
-    
+
     async fn check_health(&self, base_url: &str, service_name: &str) -> Result<(), Self::Error> {
         self.http.check_health(base_url, service_name).await
     }
@@ -138,14 +138,12 @@ impl BatchManagement for OrchInfra {
         region_id: Uuid,
         queries: Vec<String>,
     ) -> Result<Vec<Uuid>, Self::Error> {
-        self.pg.insert_queries(database_url, region_id, queries).await
+        self.pg
+            .insert_queries(database_url, region_id, queries)
+            .await
     }
 
-    async fn delete_queries(
-        &self,
-        database_url: &str,
-        region_id: Uuid,
-    ) -> Result<(), Self::Error> {
+    async fn delete_queries(&self, database_url: &str, region_id: Uuid) -> Result<(), Self::Error> {
         self.pg.delete_queries(database_url, region_id).await
     }
 
@@ -155,7 +153,9 @@ impl BatchManagement for OrchInfra {
         region_id: Uuid,
         expected_count: i32,
     ) -> Result<Uuid, Self::Error> {
-        self.pg.create_batch(database_url, region_id, expected_count).await
+        self.pg
+            .create_batch(database_url, region_id, expected_count)
+            .await
     }
 
     async fn add_tasks_to_batch(
@@ -164,7 +164,9 @@ impl BatchManagement for OrchInfra {
         batch_id: Uuid,
         task_ids: Vec<i64>,
     ) -> Result<(), Self::Error> {
-        self.pg.add_tasks_to_batch(database_url, batch_id, task_ids).await
+        self.pg
+            .add_tasks_to_batch(database_url, batch_id, task_ids)
+            .await
     }
 
     async fn update_batch_expected_count(
@@ -173,7 +175,9 @@ impl BatchManagement for OrchInfra {
         batch_id: Uuid,
         expected_count: i32,
     ) -> Result<(), Self::Error> {
-        self.pg.update_batch_expected_count(database_url, batch_id, expected_count).await
+        self.pg
+            .update_batch_expected_count(database_url, batch_id, expected_count)
+            .await
     }
 
     async fn get_batch_by_id(
@@ -199,14 +203,12 @@ impl BatchManagement for OrchInfra {
         status: BatchStatus,
         error: Option<String>,
     ) -> Result<(), Self::Error> {
-        self.pg.update_batch_status(database_url, batch_id, status, error).await
+        self.pg
+            .update_batch_status(database_url, batch_id, status, error)
+            .await
     }
 
-    async fn complete_batch(
-        &self,
-        database_url: &str,
-        batch_id: Uuid,
-    ) -> Result<(), Self::Error> {
+    async fn complete_batch(&self, database_url: &str, batch_id: Uuid) -> Result<(), Self::Error> {
         self.pg.complete_batch(database_url, batch_id).await
     }
 
@@ -217,7 +219,7 @@ impl BatchManagement for OrchInfra {
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
         self.pg.get_active_batch(database_url, region_id).await
     }
-    
+
     async fn get_recent_batch(
         &self,
         database_url: &str,
@@ -225,7 +227,7 @@ impl BatchManagement for OrchInfra {
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
         self.pg.get_recent_batch(database_url, region_id).await
     }
-    
+
     async fn count_completed_tasks(
         &self,
         database_url: &str,
@@ -233,7 +235,7 @@ impl BatchManagement for OrchInfra {
     ) -> Result<usize, Self::Error> {
         self.pg.count_completed_tasks(database_url, task_ids).await
     }
-    
+
     async fn get_task_s3_keys(
         &self,
         database_url: &str,
@@ -247,7 +249,9 @@ impl BatchManagement for OrchInfra {
         database_url: &str,
         task_ids: &[i64],
     ) -> Result<Vec<services::PaperMetadataRecord>, Self::Error> {
-        self.pg.get_task_paper_metadata(database_url, task_ids).await
+        self.pg
+            .get_task_paper_metadata(database_url, task_ids)
+            .await
     }
 }
 
@@ -270,17 +274,11 @@ impl services::RegionMappingQueries for OrchInfra {
         self.pg.get_all_regions(database_url).await
     }
 
-    async fn get_total_region_count(
-        &self,
-        database_url: &str,
-    ) -> Result<i64, Self::Error> {
+    async fn get_total_region_count(&self, database_url: &str) -> Result<i64, Self::Error> {
         self.pg.get_total_region_count(database_url).await
     }
 
-    async fn count_regions_without_batches(
-        &self,
-        database_url: &str,
-    ) -> Result<i64, Self::Error> {
+    async fn count_regions_without_batches(&self, database_url: &str) -> Result<i64, Self::Error> {
         self.pg.count_regions_without_batches(database_url).await
     }
 

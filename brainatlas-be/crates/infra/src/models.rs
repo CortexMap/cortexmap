@@ -25,9 +25,11 @@ pub struct RegionMappingRow {
 impl From<RegionMappingRow> for RegionMapping {
     fn from(row: RegionMappingRow) -> Self {
         let color = match (row.red, row.green, row.blue) {
-            (Some(r), Some(g), Some(b)) => {
-                Some(Rgb::new(r.clamp(0, 255) as u8, g.clamp(0, 255) as u8, b.clamp(0, 255) as u8))
-            }
+            (Some(r), Some(g), Some(b)) => Some(Rgb::new(
+                r.clamp(0, 255) as u8,
+                g.clamp(0, 255) as u8,
+                b.clamp(0, 255) as u8,
+            )),
             _ => None,
         };
         let created_at: DateTime<Utc> = row
@@ -71,7 +73,7 @@ impl From<RegionSummaryRow> for BrainRegionEntry {
             .created_at
             .map(|ndt| Utc.from_utc_datetime(&ndt))
             .unwrap_or_else(Utc::now);
-            
+
         BrainRegionEntry {
             region_id: row.region_id,
             name: row.name,

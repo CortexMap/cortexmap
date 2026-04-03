@@ -1,13 +1,13 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Priority levels for fetch/process tasks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Priority {
-    Background,     // 0 - Routine scheduled scan
-    Normal,         // 5 - Standard enqueue
-    UserRequested,  // 8 - Triggered by search miss
-    Invalidation,   // 10 - Force refresh
+    Background,    // 0 - Routine scheduled scan
+    Normal,        // 5 - Standard enqueue
+    UserRequested, // 8 - Triggered by search miss
+    Invalidation,  // 10 - Force refresh
 }
 
 impl Priority {
@@ -24,14 +24,14 @@ impl Priority {
 /// End-to-end pipeline state for a brain region
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RegionPipelineStatus {
-    NotStarted,   // No fetch task exists
-    FetchQueued,  // Fetch task exists, status = pending
-    Fetching,     // Fetch task status = in_progress
-    FetchFailed,  // Fetch task status = failed
-    LlmQueued,    // Fetch complete, handed to brainatlas, not done yet
-    Processing,   // Brainatlas is chunking/embedding/summarizing
-    Done,         // At least one region_summary entry exists
-    Invalidated,  // New cycle queued on top of existing summaries
+    NotStarted,  // No fetch task exists
+    FetchQueued, // Fetch task exists, status = pending
+    Fetching,    // Fetch task status = in_progress
+    FetchFailed, // Fetch task status = failed
+    LlmQueued,   // Fetch complete, handed to brainatlas, not done yet
+    Processing,  // Brainatlas is chunking/embedding/summarizing
+    Done,        // At least one region_summary entry exists
+    Invalidated, // New cycle queued on top of existing summaries
 }
 
 /// Source chunk referenced by a summary (lightweight metadata for client)

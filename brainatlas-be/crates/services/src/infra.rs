@@ -1,4 +1,7 @@
-use domain::{BrainRegionEntry, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, SimilarChunk, ChunkSource};
+use domain::{
+    BrainRegionEntry, ChunkSource, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary,
+    RegionMapping, SimilarChunk,
+};
 use uuid::Uuid;
 
 /// All queries the service layer can issue against Postgres.

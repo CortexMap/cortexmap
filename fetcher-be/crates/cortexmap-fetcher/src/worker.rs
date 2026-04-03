@@ -1,15 +1,15 @@
+use crate::FetchError;
 use crate::component::{determine_component_key, fetch_component};
 use crate::retry::{compute_task_backoff_delay, is_infra_retryable, with_request_retry};
-use crate::FetchError;
 use cortexmap_core::blueprint::Blueprint;
 use cortexmap_infra::{
-    ComponentType, ContentType, DatabaseInfra, FetchTask, HttpInfra, InfraContext, InfraError,
-    NewFetchTaskLog, S3Infra, TaskQueueInfra, TaskStatus,
+    ComponentType, ContentType, DatabaseInfra, FetchTask, HttpInfra, InfraContext, NewFetchTaskLog,
+    S3Infra, TaskQueueInfra, TaskStatus,
 };
 use std::time::Duration;
 
 /// Process a single task from the queue
-/// 
+///
 /// This function:
 /// 1. Gets all pending components for the task
 /// 2. For each component: fetch → upload to S3 → update status
@@ -22,7 +22,7 @@ pub async fn process_task<I>(
 ) -> Result<(), FetchError>
 where
     I: HttpInfra + DatabaseInfra + S3Infra + TaskQueueInfra + Send + Sync + 'static,
-{  
+{
     let task_id = task.id;
     let pmc_id = task.pmc_id.clone();
 
@@ -47,7 +47,10 @@ where
     let pending_components = ctx.infra.get_pending_components(task_id).await?;
 
     if pending_components.is_empty() {
-        tracing::info!("No pending components for task {}, marking as completed", task_id);
+        tracing::info!(
+            "No pending components for task {}, marking as completed",
+            task_id
+        );
         ctx.infra.mark_task_completed(task_id).await?;
         return Ok(());
     }
@@ -60,8 +63,12 @@ where
 
     // Process each pending component
     for component in pending_components {
-        let component_type: ComponentType = component.component_type.parse()
-            .map_err(|_| FetchError::NotFound(format!("Invalid component type: {}", component.component_type)))?;
+        let component_type: ComponentType = component.component_type.parse().map_err(|_| {
+            FetchError::NotFound(format!(
+                "Invalid component type: {}",
+                component.component_type
+            ))
+        })?;
 
         // Use per-component retry limits from Blueprint config, falling back to global max
         let max_attempts = blueprint.fetcher.retry_config.get_component_max_retries(
@@ -85,13 +92,7 @@ where
 
         // Mark component as in progress
         ctx.infra
-            .update_component_status(
-                task_id,
-                component_type,
-                TaskStatus::InProgress,
-                None,
-                None,
-            )
+            .update_component_status(task_id, component_type, TaskStatus::InProgress, None, None)
             .await?;
 
         // Try to fetch the component
@@ -112,7 +113,10 @@ where
 
                 match result.into_byte_stream() {
                     Err(e) => {
-                        let error_msg = format!("Failed to convert {:?} to byte stream: {}", component_type, e);
+                        let error_msg = format!(
+                            "Failed to convert {:?} to byte stream: {}",
+                            component_type, e
+                        );
                         tracing::warn!("{}", error_msg);
                         handle_component_failure(
                             task_id,
@@ -147,16 +151,13 @@ where
                                     let data = data.clone();
                                     async move {
                                         let stream = futures::stream::once(async move { data });
-                                        infra
-                                            .put_s3(&key, ct, Box::pin(stream))
-                                            .await
-                                            .map_err(|e| InfraError::from(e))
+                                        infra.put_s3(&key, ct, Box::pin(stream)).await
                                     }
                                 },
-                                |e| is_infra_retryable(e),
+                                is_infra_retryable,
                                 "S3 upload",
                             )
-                                .await
+                            .await
                         };
 
                         match upload_result {
@@ -184,7 +185,10 @@ where
                                         task_id,
                                         component_type: Some(component_type.as_str().to_string()),
                                         log_level: "info".to_string(),
-                                        message: format!("Successfully fetched and uploaded {:?}", component_type),
+                                        message: format!(
+                                            "Successfully fetched and uploaded {:?}",
+                                            component_type
+                                        ),
                                         metadata: Some(serde_json::json!({
                                             "s3_key": s3_key,
                                             "attempt": new_attempt_count
@@ -194,7 +198,8 @@ where
                                     .ok();
                             }
                             Err(e) => {
-                                let error_msg = format!("Failed to upload {:?} to S3: {}", component_type, e);
+                                let error_msg =
+                                    format!("Failed to upload {:?} to S3: {}", component_type, e);
                                 tracing::warn!("{}", error_msg);
                                 handle_component_failure(
                                     task_id,
@@ -204,7 +209,7 @@ where
                                     max_attempts,
                                     &ctx,
                                 )
-                                    .await?;
+                                .await?;
                             }
                         }
                     }
@@ -243,21 +248,22 @@ where
             .await
             .ok();
     } else {
-        tracing::info!("Task {} has incomplete components, releasing back to pending for retry", task_id);
-        
+        tracing::info!(
+            "Task {} has incomplete components, releasing back to pending for retry",
+            task_id
+        );
+
         // Release task back to pending so it can be picked up again for retry
         // This clears worker_id, heartbeat_at, started_at and sets status='pending'
-        ctx.infra
-            .release_task(task_id)
-            .await?;
-        
+        ctx.infra.release_task(task_id).await?;
+
         // Log that task needs retry
         ctx.infra
             .log_task_event(NewFetchTaskLog {
                 task_id,
                 component_type: None,
                 log_level: "warn".to_string(),
-                message: format!("Task has incomplete components, released for retry"),
+                message: "Task has incomplete components, released for retry".to_string(),
                 metadata: None,
             })
             .await
@@ -394,33 +400,56 @@ where
         // Try to claim next pending task
         match ctx.infra.get_next_pending_task(timeout_secs).await {
             Ok(Some(task)) => {
-                tracing::info!("Worker {} claimed task {} for PMC {}", worker_id, task.id, task.pmc_id);
+                tracing::info!(
+                    "Worker {} claimed task {} for PMC {}",
+                    worker_id,
+                    task.id,
+                    task.pmc_id
+                );
 
                 // Claim the task for this worker (sets worker_id, heartbeat, status)
-                if let Err(e) = ctx.infra.claim_task_for_worker(
-                    task.id,
-                    worker_id.clone(),
-                    Some(env!("CARGO_PKG_VERSION").to_string()),
-                ).await {
-                    tracing::error!("Failed to claim task {} for worker {}: {}", task.id, worker_id, e);
+                if let Err(e) = ctx
+                    .infra
+                    .claim_task_for_worker(
+                        task.id,
+                        worker_id.clone(),
+                        Some(env!("CARGO_PKG_VERSION").to_string()),
+                    )
+                    .await
+                {
+                    tracing::error!(
+                        "Failed to claim task {} for worker {}: {}",
+                        task.id,
+                        worker_id,
+                        e
+                    );
                     consecutive_failures += 1;
-                    let delay = compute_task_backoff_delay(backoff_strategy, timeout_secs, consecutive_failures);
-                    tracing::debug!("Worker {} backing off for {:?} (consecutive failures: {})", worker_id, delay, consecutive_failures);
+                    let delay = compute_task_backoff_delay(
+                        backoff_strategy,
+                        timeout_secs,
+                        consecutive_failures,
+                    );
+                    tracing::debug!(
+                        "Worker {} backing off for {:?} (consecutive failures: {})",
+                        worker_id,
+                        delay,
+                        consecutive_failures
+                    );
                     tokio::time::sleep(delay).await;
                     continue;
                 }
 
                 // Process the task
-                let task_succeeded = match process_task(task.clone(), ctx.clone(), &blueprint).await {
-                    Ok(()) => {
-                        // Check if all components completed (full success) or some failed (partial)
-                        match ctx.infra.all_components_completed(task.id).await {
-                            Ok(true) => true,
-                            _ => false,
-                        }
-                    }
+                let task_succeeded = match process_task(task.clone(), ctx.clone(), &blueprint).await
+                {
+                    Ok(()) => matches!(ctx.infra.all_components_completed(task.id).await, Ok(true)),
                     Err(e) => {
-                        tracing::error!("Worker {} error processing task {}: {}", worker_id, task.id, e);
+                        tracing::error!(
+                            "Worker {} error processing task {}: {}",
+                            worker_id,
+                            task.id,
+                            e
+                        );
                         ctx.infra
                             .mark_task_failed(task.id, format!("{}", e))
                             .await
@@ -433,15 +462,26 @@ where
                     // Reset consecutive failure counter on success
                     consecutive_failures = 0;
                     // Use base timeout for inter-task delay on success
-                    tracing::debug!("Worker {} sleeping for {}s before next task", worker_id, timeout_secs);
+                    tracing::debug!(
+                        "Worker {} sleeping for {}s before next task",
+                        worker_id,
+                        timeout_secs
+                    );
                     tokio::time::sleep(Duration::from_secs(timeout_secs)).await;
                 } else {
                     // Escalate backoff on failure
                     consecutive_failures += 1;
-                    let delay = compute_task_backoff_delay(backoff_strategy, timeout_secs, consecutive_failures);
+                    let delay = compute_task_backoff_delay(
+                        backoff_strategy,
+                        timeout_secs,
+                        consecutive_failures,
+                    );
                     tracing::info!(
                         "Worker {} task failed, backing off for {:?} (consecutive failures: {}, strategy: {:?})",
-                        worker_id, delay, consecutive_failures, backoff_strategy
+                        worker_id,
+                        delay,
+                        consecutive_failures,
+                        backoff_strategy
                     );
                     tokio::time::sleep(delay).await;
                 }
@@ -449,14 +489,25 @@ where
             Ok(None) => {
                 // No tasks available -- reset failure counter since this isn't a failure
                 consecutive_failures = 0;
-                tracing::debug!("No tasks available, sleeping for {}s", empty_queue_sleep_secs);
+                tracing::debug!(
+                    "No tasks available, sleeping for {}s",
+                    empty_queue_sleep_secs
+                );
                 tokio::time::sleep(Duration::from_secs(empty_queue_sleep_secs)).await;
             }
             Err(e) => {
                 tracing::error!("Error claiming task from queue: {}", e);
                 consecutive_failures += 1;
-                let delay = compute_task_backoff_delay(backoff_strategy, timeout_secs, consecutive_failures);
-                tracing::debug!("Worker {} backing off for {:?} after queue error", worker_id, delay);
+                let delay = compute_task_backoff_delay(
+                    backoff_strategy,
+                    timeout_secs,
+                    consecutive_failures,
+                );
+                tracing::debug!(
+                    "Worker {} backing off for {:?} after queue error",
+                    worker_id,
+                    delay
+                );
                 tokio::time::sleep(delay).await;
             }
         }

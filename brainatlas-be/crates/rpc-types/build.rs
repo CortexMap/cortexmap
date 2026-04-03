@@ -26,16 +26,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for t in &types {
         config = config.type_attribute(t, derive);
     }
-    
+
     // Add serde(default) to paper_metadata field for backward compatibility
     config = config.field_attribute(
         "com.cortexmap.ProcessRegionRequest.paper_metadata",
-        "#[serde(default)]"
+        "#[serde(default)]",
     );
-    
-    config.compile_protos(
-        &["../../../proto/llm/brain.proto"],
-        &["../../../proto"],
-    )?;
+
+    config.compile_protos(&["../../../proto/llm/brain.proto"], &["../../../proto"])?;
     Ok(())
 }

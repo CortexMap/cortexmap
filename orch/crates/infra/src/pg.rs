@@ -560,7 +560,7 @@ impl BatchManagement for OrchPostgresql {
                      INNER JOIN fetch_tasks ft ON ft.id = ftc.task_id
                      LEFT JOIN papers p ON p.pmc_id = ft.pmc_id
                      WHERE ftc.task_id = ANY($1)
-                       AND ftc.s3_key IS NOT NULL"
+                       AND ftc.s3_key IS NOT NULL",
                 )
                 .bind::<diesel::sql_types::Array<diesel::sql_types::BigInt>, _>(&task_ids_vec)
                 .load::<PaperMetadataRow>(c)

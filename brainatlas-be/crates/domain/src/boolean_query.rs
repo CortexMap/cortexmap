@@ -112,13 +112,6 @@ impl BooleanQuery {
         BooleanQuery::Or(queries)
     }
 
-    /// Create a NOT query
-    pub fn not(query: BooleanQuery) -> Self {
-        BooleanQuery::Not(NotQuery {
-            query: Box::new(query),
-        })
-    }
-
     /// Create a field query
     pub fn field(name: impl Into<String>, value: impl Into<String>) -> Self {
         BooleanQuery::Field(FieldQuery {
@@ -234,5 +227,84 @@ impl BooleanQuery {
 
     pub fn to_query_string(&self) -> String {
         self.to_string_inner().replace(" ", "+")
+    }
+}
+
+impl std::ops::Not for BooleanQuery {
+    type Output = BooleanQuery;
+
+    fn not(self) -> Self::Output {
+        BooleanQuery::Not(NotQuery {
+            query: Box::new(self),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_term_escapes_spaces_and_quotes() {
+        let query = BooleanQuery::term("motor \"cortex\"");
+        assert_eq!(query.to_string_inner(), "\"motor \\\"cortex\\\"\"");
+    }
+
+    #[test]
+    fn test_field_query_escapes_quotes_and_applies_boost() {
+        let query = BooleanQuery::Field(FieldQuery {
+            name: "title".to_string(),
+            value: "Layer \"2/3\" neurons".to_string(),
+            boost: Some(1.5),
+        });
+
+        assert_eq!(
+            query.to_string_inner(),
+            "title:\"Layer \\\"2/3\\\" neurons\"^1.5"
+        );
+    }
+
+    #[test]
+    fn test_single_and_or_queries_do_not_add_parentheses() {
+        assert_eq!(
+            BooleanQuery::and(vec![BooleanQuery::term("rust")]).to_string_inner(),
+            "rust"
+        );
+        assert_eq!(
+            BooleanQuery::or(vec![BooleanQuery::term("axum")]).to_string_inner(),
+            "axum"
+        );
+    }
+
+    #[test]
+    fn test_empty_and_or_queries_return_empty_strings() {
+        assert_eq!(BooleanQuery::and(vec![]).to_string_inner(), "");
+        assert_eq!(BooleanQuery::or(vec![]).to_string_inner(), "");
+    }
+
+    #[test]
+    fn test_range_query_supports_exclusive_bounds() {
+        let query = BooleanQuery::Range(RangeQuery {
+            field: "year".to_string(),
+            gte: None,
+            gt: Some("2020".to_string()),
+            lte: None,
+            lt: Some("2024".to_string()),
+        });
+
+        assert_eq!(query.to_string_inner(), "year:{2020 TO 2024}");
+    }
+
+    #[test]
+    fn test_to_query_string_replaces_spaces_with_pluses() {
+        let query = BooleanQuery::and(vec![
+            BooleanQuery::term("motor cortex"),
+            !BooleanQuery::field("species", "mouse"),
+        ]);
+
+        assert_eq!(
+            query.to_query_string(),
+            "(\"motor+cortex\"+AND+NOT+species:mouse)"
+        );
     }
 }

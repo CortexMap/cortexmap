@@ -13,6 +13,12 @@ impl FetcherEnvInfra {
     }
 }
 
+impl Default for FetcherEnvInfra {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EnvInfra for FetcherEnvInfra {
     fn get_env_var(&self, key: &str) -> Result<String, InfraError> {
         self.vars

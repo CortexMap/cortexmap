@@ -1,17 +1,22 @@
-mod fetcher;
+mod component;
+mod enqueue;
 mod error;
 mod fetch;
-mod upload;
-mod component;
-mod worker;
-mod enqueue;
+mod fetcher;
 mod retry;
+mod upload;
+mod worker;
 
-pub use fetcher::*;
-pub use error::*;
-pub use fetch::pdf::{fetch_pdf, PdfStream};
-pub use fetch::metadata::{fetch_metadata, fetch_summary, fetch_abstract, MetadataCollection, ArticleWithMetadata, ArticleMetadata};
-pub use component::{fetch_component, determine_component_key, ComponentResult};
-pub use worker::{worker_loop, process_task, reset_stale_tasks};
+pub use component::{ComponentResult, determine_component_key, fetch_component};
 pub use enqueue::enqueue_query;
-pub use retry::{with_request_retry, is_infra_retryable, is_fetch_retryable, compute_task_backoff_delay};
+pub use error::*;
+pub use fetch::metadata::{
+    ArticleMetadata, ArticleWithMetadata, MetadataCollection, fetch_abstract, fetch_metadata,
+    fetch_summary,
+};
+pub use fetch::pdf::{PdfStream, fetch_pdf};
+pub use fetcher::*;
+pub use retry::{
+    compute_task_backoff_delay, is_fetch_retryable, is_infra_retryable, with_request_retry,
+};
+pub use worker::{process_task, reset_stale_tasks, worker_loop};

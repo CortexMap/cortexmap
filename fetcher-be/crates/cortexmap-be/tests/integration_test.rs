@@ -1,13 +1,15 @@
 // Integration tests for the fetcher service
 // These tests require a running PostgreSQL database and S3 (MinIO) instance
 
-use cortexmap_be::server::QueueServer;
 use cortexmap_be::proto::{EnqueueRequest, EnqueueResponse};
+use cortexmap_be::server::QueueServer;
 use std::env;
+use std_infra::StdInfraContext;
 
 fn get_test_database_url() -> String {
-    env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://test_user:test_password@localhost:5433/test_db".to_string())
+    env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+        "postgresql://test_user:test_password@localhost:5433/test_db".to_string()
+    })
 }
 
 fn get_test_s3_config() -> (String, String, String, String) {
@@ -18,19 +20,24 @@ fn get_test_s3_config() -> (String, String, String, String) {
     (endpoint, access_key, secret_key, bucket)
 }
 
-#[tokio::test]
-async fn test_queue_server_initialization() {
+fn get_test_infra_ctx() -> StdInfraContext {
     let database_url = get_test_database_url();
-    let (s3_endpoint, s3_access_key, s3_secret_key, s3_bucket) = get_test_s3_config();
-
-    let result = QueueServer::new(
+    let (endpoint, access_key, secret_key, bucket) = get_test_s3_config();
+    StdInfraContext {
         database_url,
-        s3_endpoint,
-        s3_access_key,
-        s3_secret_key,
-        s3_bucket,
-    )
-    .await;
+        endpoint,
+        access_key,
+        secret_key,
+        bucket,
+    }
+}
+
+#[tokio::test]
+#[ignore] // requires PostgreSQL + S3 infrastructure
+async fn test_queue_server_initialization() {
+    let infra_ctx = get_test_infra_ctx();
+
+    let result = QueueServer::new(infra_ctx).await;
 
     // Should succeed if database and S3 are available
     match result {
@@ -39,7 +46,10 @@ async fn test_queue_server_initialization() {
             assert!(server.blueprint_template.fetcher.query.is_empty());
         }
         Err(e) => {
-            println!("⚠️  QueueServer initialization failed (expected if test infrastructure not running): {}", e);
+            println!(
+                "⚠️  QueueServer initialization failed (expected if test infrastructure not running): {}",
+                e
+            );
         }
     }
 }
@@ -47,18 +57,11 @@ async fn test_queue_server_initialization() {
 #[tokio::test]
 #[ignore] // Run with --ignored when test infrastructure is available
 async fn test_enqueue_task_workflow() {
-    let database_url = get_test_database_url();
-    let (s3_endpoint, s3_access_key, s3_secret_key, s3_bucket) = get_test_s3_config();
+    let infra_ctx = get_test_infra_ctx();
 
-    let _server = QueueServer::new(
-        database_url.clone(),
-        s3_endpoint,
-        s3_access_key,
-        s3_secret_key,
-        s3_bucket,
-    )
-    .await
-    .expect("Failed to create QueueServer");
+    let _server = QueueServer::new(infra_ctx)
+        .await
+        .expect("Failed to create QueueServer");
 
     // Test enqueue request
     let request = EnqueueRequest {
@@ -85,8 +88,7 @@ fn test_enqueue_request_serialization() {
     let json = serde_json::to_string(&request).expect("Failed to serialize");
     println!("Serialized EnqueueRequest: {}", json);
 
-    let deserialized: EnqueueRequest =
-        serde_json::from_str(&json).expect("Failed to deserialize");
+    let deserialized: EnqueueRequest = serde_json::from_str(&json).expect("Failed to deserialize");
 
     assert_eq!(deserialized.query, "neuroplasticity");
     assert_eq!(deserialized.page_size, 10);
@@ -106,8 +108,7 @@ fn test_enqueue_response_serialization() {
     let json = serde_json::to_string(&response).expect("Failed to serialize");
     println!("Serialized EnqueueResponse: {}", json);
 
-    let deserialized: EnqueueResponse =
-        serde_json::from_str(&json).expect("Failed to deserialize");
+    let deserialized: EnqueueResponse = serde_json::from_str(&json).expect("Failed to deserialize");
 
     assert!(deserialized.success);
     assert_eq!(deserialized.tasks_enqueued, 3);

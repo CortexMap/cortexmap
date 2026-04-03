@@ -1,7 +1,7 @@
-mod services;
-mod error;
 mod app;
+mod error;
+mod services;
 
 pub use app::*;
-pub use services::*;
 pub use error::*;
+pub use services::*;

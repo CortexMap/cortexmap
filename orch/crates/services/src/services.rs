@@ -8,9 +8,9 @@ use app::{
     WorkerManagement,
 };
 use domain::{
-    AllocateWorkersRequest, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult, ProcessResult,
-    ProcessingBatch, RegionQuery, RegionSummary, StopWorkersRequest, WorkerAllocationResponse,
-    WorkerStatus, WorkerStopResponse,
+    AllocateWorkersRequest, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult,
+    ProcessResult, ProcessingBatch, RegionQuery, RegionSummary, StopWorkersRequest,
+    WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
 };
 use std::error::Error;
 use std::sync::Arc;
@@ -246,7 +246,9 @@ where
     }
 
     async fn count_completed_tasks(&self, task_ids: Vec<i64>) -> Result<i32, Self::Error> {
-        self.batch_orchestration.count_completed_tasks(task_ids).await
+        self.batch_orchestration
+            .count_completed_tasks(task_ids)
+            .await
     }
 }
 
@@ -326,11 +328,17 @@ where
         self.batch_orchestration.get_worker_status().await
     }
 
-    async fn allocate_workers(&self, req: AllocateWorkersRequest) -> Result<WorkerAllocationResponse, Self::Error> {
+    async fn allocate_workers(
+        &self,
+        req: AllocateWorkersRequest,
+    ) -> Result<WorkerAllocationResponse, Self::Error> {
         self.batch_orchestration.allocate_workers(req).await
     }
 
-    async fn stop_workers(&self, req: StopWorkersRequest) -> Result<WorkerStopResponse, Self::Error> {
+    async fn stop_workers(
+        &self,
+        req: StopWorkersRequest,
+    ) -> Result<WorkerStopResponse, Self::Error> {
         self.batch_orchestration.stop_workers(req).await
     }
 }

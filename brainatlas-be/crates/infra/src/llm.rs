@@ -43,7 +43,7 @@ impl OpenRouterClient {
     }
 
     fn get_client(&self) -> &Client {
-        self.client.get_or_init(|| Client::new())
+        self.client.get_or_init(Client::new)
     }
 }
 
@@ -232,29 +232,28 @@ impl LlmClient for OpenRouterClient {
         })?;
 
         // Check if the LLM returned tool calls
-        if let Some(tool_calls) = &choice.message.tool_calls {
-            if !tool_calls.is_empty() {
-                let calls: Vec<ToolCall> = tool_calls
-                    .iter()
-                    .map(|tc| ToolCall {
-                        id: tc.id.clone(),
-                        name: tc.function.name.clone(),
-                        arguments: tc.function.arguments.clone(),
-                    })
-                    .collect();
-                info!("LLM requested {} tool call(s)", calls.len());
-                return Ok(LlmResponse::ToolCalls(calls));
-            }
+        if let Some(tool_calls) = &choice.message.tool_calls
+            && !tool_calls.is_empty()
+        {
+            let calls: Vec<ToolCall> = tool_calls
+                .iter()
+                .map(|tc| ToolCall {
+                    id: tc.id.clone(),
+                    name: tc.function.name.clone(),
+                    arguments: tc.function.arguments.clone(),
+                })
+                .collect();
+            info!("LLM requested {} tool call(s)", calls.len());
+            return Ok(LlmResponse::ToolCalls(calls));
         }
 
         // Otherwise, return the final text content
-        let content = choice
-            .message
-            .content
-            .clone()
-            .unwrap_or_default();
+        let content = choice.message.content.clone().unwrap_or_default();
 
-        info!("LLM returned final response of {} characters", content.len());
+        info!(
+            "LLM returned final response of {} characters",
+            content.len()
+        );
         Ok(LlmResponse::Final(content))
     }
 
@@ -363,107 +362,98 @@ impl LlmClient for OpenRouterClient {
             })?;
 
             // Check for tool calls
-            if let Some(tool_calls) = &choice.message.tool_calls {
-                if !tool_calls.is_empty() {
-                    // Add assistant message with tool_calls to conversation
-                    messages.push(serde_json::json!({
-                        "role": "assistant",
-                        "content": null,
-                        "tool_calls": tool_calls.iter().map(|tc| serde_json::json!({
-                            "id": tc.id,
-                            "type": tc.call_type.as_deref().unwrap_or("function"),
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments
-                            }
-                        })).collect::<Vec<_>>()
-                    }));
+            if let Some(tool_calls) = &choice.message.tool_calls
+                && !tool_calls.is_empty()
+            {
+                // Add assistant message with tool_calls to conversation
+                messages.push(serde_json::json!({
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": tool_calls.iter().map(|tc| serde_json::json!({
+                        "id": tc.id,
+                        "type": tc.call_type.as_deref().unwrap_or("function"),
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
+                    })).collect::<Vec<_>>()
+                }));
 
-                    for tc in tool_calls {
-                        if tc.function.name == "create_pubmed_query" {
-                            // Parse arguments as {"query": BooleanQuery}
-                            match serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
-                            {
-                                Ok(args) => {
-                                    let query_json = args
-                                        .get("query")
-                                        .cloned()
-                                        .unwrap_or(args.clone());
+                for tc in tool_calls {
+                    if tc.function.name == "create_pubmed_query" {
+                        // Parse arguments as {"query": BooleanQuery}
+                        match serde_json::from_str::<serde_json::Value>(&tc.function.arguments) {
+                            Ok(args) => {
+                                let query_json = args.get("query").cloned().unwrap_or(args.clone());
 
-                                    match serde_json::from_value::<BooleanQuery>(query_json) {
-                                        Ok(bq) => {
-                                            let formatted = bq.to_query_string();
-                                            info!(
-                                                "Parsed BooleanQuery -> PubMed query: {}",
-                                                formatted
-                                            );
-                                            collected_queries.push(formatted.clone());
+                                match serde_json::from_value::<BooleanQuery>(query_json) {
+                                    Ok(bq) => {
+                                        let formatted = bq.to_query_string();
+                                        info!("Parsed BooleanQuery -> PubMed query: {}", formatted);
+                                        collected_queries.push(formatted.clone());
 
-                                            // Add tool response to conversation
-                                            messages.push(serde_json::json!({
-                                                "role": "tool",
-                                                "tool_call_id": tc.id,
-                                                "content": format!("Query created successfully: {}", formatted)
-                                            }));
-                                        }
-                                        Err(e) => {
-                                            warn!(
-                                                "Failed to parse BooleanQuery from tool call args: {}. \
-                                                 Raw args: {}. Wrapping as simple term.",
-                                                e, tc.function.arguments
-                                            );
-                                            // Fallback: wrap the raw text as a simple term
-                                            let fallback = extract_fallback_query(
-                                                &tc.function.arguments,
-                                            );
-                                            collected_queries.push(fallback.clone());
+                                        // Add tool response to conversation
+                                        messages.push(serde_json::json!({
+                                            "role": "tool",
+                                            "tool_call_id": tc.id,
+                                            "content": format!("Query created successfully: {}", formatted)
+                                        }));
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Failed to parse BooleanQuery from tool call args: {}. \
+                                             Raw args: {}. Wrapping as simple term.",
+                                            e, tc.function.arguments
+                                        );
+                                        // Fallback: wrap the raw text as a simple term
+                                        let fallback =
+                                            extract_fallback_query(&tc.function.arguments);
+                                        collected_queries.push(fallback.clone());
 
-                                            messages.push(serde_json::json!({
-                                                "role": "tool",
-                                                "tool_call_id": tc.id,
-                                                "content": format!("Query created (fallback): {}", fallback)
-                                            }));
-                                        }
+                                        messages.push(serde_json::json!({
+                                            "role": "tool",
+                                            "tool_call_id": tc.id,
+                                            "content": format!("Query created (fallback): {}", fallback)
+                                        }));
                                     }
                                 }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to parse tool call arguments as JSON: {}. Raw: {}",
-                                        e, tc.function.arguments
-                                    );
-                                    let fallback =
-                                        extract_fallback_query(&tc.function.arguments);
-                                    collected_queries.push(fallback.clone());
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to parse tool call arguments as JSON: {}. Raw: {}",
+                                    e, tc.function.arguments
+                                );
+                                let fallback = extract_fallback_query(&tc.function.arguments);
+                                collected_queries.push(fallback.clone());
 
-                                    messages.push(serde_json::json!({
-                                        "role": "tool",
-                                        "tool_call_id": tc.id,
-                                        "content": format!("Query created (fallback): {}", fallback)
-                                    }));
-                                }
+                                messages.push(serde_json::json!({
+                                    "role": "tool",
+                                    "tool_call_id": tc.id,
+                                    "content": format!("Query created (fallback): {}", fallback)
+                                }));
                             }
                         }
                     }
-
-                    // If we've collected enough queries, stop
-                    if collected_queries.len() >= count as usize {
-                        break;
-                    }
-                    continue;
                 }
+
+                // If we've collected enough queries, stop
+                if collected_queries.len() >= count as usize {
+                    break;
+                }
+                continue;
             }
 
             // LLM returned text instead of tool calls — fallback to line-based parsing
-            if let Some(content) = &choice.message.content {
-                if !content.is_empty() {
-                    warn!(
-                        "LLM returned text instead of tool calls for query generation. \
-                         Falling back to line-based parsing. Consider using a model that supports tool calling."
-                    );
-                    let fallback_queries = parse_text_queries(content, count);
-                    collected_queries.extend(fallback_queries);
-                    break;
-                }
+            if let Some(content) = &choice.message.content
+                && !content.is_empty()
+            {
+                warn!(
+                    "LLM returned text instead of tool calls for query generation. \
+                     Falling back to line-based parsing. Consider using a model that supports tool calling."
+                );
+                let fallback_queries = parse_text_queries(content, count);
+                collected_queries.extend(fallback_queries);
+                break;
             }
 
             // No tool calls and no content — nothing more to do
@@ -491,10 +481,7 @@ fn extract_fallback_query(raw_args: &str) -> String {
         }
     }
     // Last resort: use the raw text cleaned up
-    let cleaned = raw_args
-        .trim()
-        .trim_matches('"')
-        .trim();
+    let cleaned = raw_args.trim().trim_matches('"').trim();
     BooleanQuery::term(cleaned).to_query_string()
 }
 

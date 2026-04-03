@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -108,13 +109,6 @@ impl BooleanQuery {
     /// Create an OR query
     pub fn or(queries: Vec<BooleanQuery>) -> Self {
         BooleanQuery::Or(queries)
-    }
-
-    /// Create a NOT query
-    pub fn not(query: BooleanQuery) -> Self {
-        BooleanQuery::Not(NotQuery {
-            query: Box::new(query),
-        })
     }
 
     /// Create a field query
@@ -236,9 +230,21 @@ impl BooleanQuery {
             }
         }
     }
+}
 
-    pub fn to_string(&self) -> String {
-        self.to_string_inner().replace(" ", "+")
+impl std::ops::Not for BooleanQuery {
+    type Output = BooleanQuery;
+
+    fn not(self) -> Self::Output {
+        BooleanQuery::Not(NotQuery {
+            query: Box::new(self),
+        })
+    }
+}
+
+impl Display for BooleanQuery {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string_inner().replace(' ', "+"))
     }
 }
 
@@ -370,7 +376,7 @@ mod tests {
     fn test_builder_methods() {
         let query = BooleanQuery::and(vec![
             BooleanQuery::term("rust"),
-            BooleanQuery::not(BooleanQuery::term("deprecated")),
+            !BooleanQuery::term("deprecated"),
         ]);
         assert!(matches!(query, BooleanQuery::And(ref q) if q.len() == 2));
     }
@@ -426,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_to_query_string_not() {
-        let query = BooleanQuery::not(BooleanQuery::term("deprecated"));
+        let query = !BooleanQuery::term("deprecated");
         assert_eq!(query.to_string_inner(), "NOT deprecated");
     }
 
@@ -456,7 +462,7 @@ mod tests {
                 BooleanQuery::term("async"),
                 BooleanQuery::term("tokio"),
             ]),
-            BooleanQuery::not(BooleanQuery::term("outdated")),
+            !BooleanQuery::term("outdated"),
         ]);
         assert_eq!(
             query.to_string_inner(),

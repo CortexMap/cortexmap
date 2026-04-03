@@ -1,13 +1,14 @@
-use std::fmt::{Display, Formatter};
 use crate::error::InfraError;
 use crate::{FetchTask, FetchTaskComponent, NewFetchTaskLog, NewPaper, Paper};
 use bytes::Bytes;
 use futures::Stream;
 use reqwest::Response;
+use std::fmt::{Display, Formatter};
 use std::pin::Pin;
 
 /// Environment variable access — collect vars once at startup and reuse.
 pub trait EnvInfra: Send + Sync {
+    #[allow(clippy::result_large_err)]
     fn get_env_var(&self, key: &str) -> Result<String, InfraError>;
 }
 
@@ -60,7 +61,7 @@ pub trait S3Infra {
         content_type: ContentType,
         content: Pin<Box<dyn Stream<Item = Bytes> + Send + Sync>>,
     ) -> Result<(), InfraError>;
-    
+
     /// Download content from S3 by key
     async fn get_s3(&self, key: &str) -> Result<String, InfraError>;
 }
@@ -174,30 +175,37 @@ pub trait TaskQueueInfra {
 
     /// Get task statistics (pending, in_progress, completed, failed counts)
     async fn get_task_stats(&self) -> Result<TaskStats, InfraError>;
-    
+
     /// Get detailed task statistics with breakdowns
     async fn get_detailed_task_stats(&self) -> Result<DetailedTaskStats, InfraError>;
-    
+
     /// Get component-level statistics
     async fn get_component_stats(&self) -> Result<ComponentStats, InfraError>;
-    
+
     /// Get recent tasks (limit: most recent N tasks)
     async fn get_recent_tasks(&self, limit: i64) -> Result<Vec<RecentTaskInfo>, InfraError>;
-    
+
     /// Get task details by PMC ID
     async fn get_task_by_pmc_id(&self, pmc_id: &str) -> Result<Option<FetchTask>, InfraError>;
-    
+
     /// Get task details by task ID
     async fn get_task_by_id(&self, task_id: i64) -> Result<Option<FetchTask>, InfraError>;
-    
+
     /// Get tasks by status with limit
-    async fn get_tasks_by_status(&self, status: &str, limit: i32) -> Result<Vec<FetchTask>, InfraError>;
-    
+    async fn get_tasks_by_status(
+        &self,
+        status: &str,
+        limit: i32,
+    ) -> Result<Vec<FetchTask>, InfraError>;
+
     /// Get components for a specific task
-    async fn get_task_components(&self, task_id: i64) -> Result<Vec<FetchTaskComponent>, InfraError>;
-    
+    async fn get_task_components(
+        &self,
+        task_id: i64,
+    ) -> Result<Vec<FetchTaskComponent>, InfraError>;
+
     // ==================== Worker Heartbeat Management ====================
-    
+
     /// Claim a task and assign it to a worker
     /// Sets worker_id, initializes heartbeat, and marks as in_progress
     async fn claim_task_for_worker(
@@ -206,23 +214,26 @@ pub trait TaskQueueInfra {
         worker_id: String,
         worker_version: Option<String>,
     ) -> Result<(), InfraError>;
-    
+
     /// Update the heartbeat timestamp for a task
     /// Should be called periodically while processing to prevent stale task detection
     async fn update_task_heartbeat(&self, task_id: i64) -> Result<(), InfraError>;
-    
+
     /// Release all tasks assigned to a specific worker
     /// Sets status back to 'pending' and clears worker_id/heartbeat
     /// Used for graceful shutdown
     async fn release_worker_tasks(&self, worker_id: String) -> Result<usize, InfraError>;
-    
+
     /// Release a single task back to pending (used when processing fails/incomplete)
     /// Clears worker_id, heartbeat_at, started_at and sets status to 'pending'
     async fn release_task(&self, task_id: i64) -> Result<(), InfraError>;
-    
+
     /// Release tasks with stale heartbeats (worker likely crashed)
     /// Tasks with heartbeat older than timeout_secs are reset to 'pending'
-    async fn release_stale_tasks_by_heartbeat(&self, timeout_secs: u64) -> Result<usize, InfraError>;
+    async fn release_stale_tasks_by_heartbeat(
+        &self,
+        timeout_secs: u64,
+    ) -> Result<usize, InfraError>;
 }
 
 /// Statistics about tasks in the queue

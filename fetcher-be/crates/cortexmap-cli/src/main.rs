@@ -1,10 +1,10 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use cortexmap_core::blueprint::Blueprint;
 use cortexmap_core::blueprint::connections::{
     BackoffStrategy, ComponentRetryConfig, Connections, Database, Fetcher, Postgresql, RetryConfig,
     S3Info,
 };
-use cortexmap_core::blueprint::Blueprint;
 use cortexmap_infra::TaskQueueInfra;
 use futures::StreamExt;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -209,7 +209,8 @@ async fn main() -> Result<()> {
 
             match fetch_with_progress(&blueprint, ctx, multi_progress.clone()).await {
                 Ok(count) => {
-                    main_pb.finish_with_message(format!("✓ Successfully processed {} papers", count));
+                    main_pb
+                        .finish_with_message(format!("✓ Successfully processed {} papers", count));
                     Ok(())
                 }
                 Err(e) => {
@@ -221,7 +222,7 @@ async fn main() -> Result<()> {
         Mode::Enqueue => {
             // Enqueue tasks and exit
             println!("📋 Enqueueing tasks for query: '{}'", args.query);
-            
+
             match cortexmap_fetcher::enqueue_query(&blueprint, ctx).await {
                 Ok(results) => {
                     println!("✓ Successfully enqueued {} tasks", results.len());
@@ -241,12 +242,12 @@ async fn main() -> Result<()> {
             // Run worker loop
             let worker_id = uuid::Uuid::new_v4().to_string();
             tracing::info!(
-                "Starting worker {} (timeout: {}s, max retries: {})", 
+                "Starting worker {} (timeout: {}s, max retries: {})",
                 worker_id,
                 blueprint.fetcher.task_timeout_secs,
                 blueprint.fetcher.max_retry_attempts
             );
-            
+
             match cortexmap_fetcher::worker_loop(worker_id, ctx, blueprint).await {
                 Ok(()) => Ok(()),
                 Err(e) => {
@@ -258,7 +259,7 @@ async fn main() -> Result<()> {
         Mode::Status => {
             // Show queue statistics
             println!("📊 Queue Status\n");
-            
+
             let stats = ctx.infra.get_task_stats().await?;
             println!("Total tasks:      {}", stats.total);
             println!("├─ Pending:       {}", stats.pending);
@@ -307,9 +308,7 @@ where
     let download_pb = multi_progress.add(ProgressBar::new(total as u64));
     download_pb.set_style(
         ProgressStyle::default_bar()
-            .template(
-                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
-            )
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
             .unwrap()
             .progress_chars("#>-"),
     );
@@ -369,11 +368,10 @@ where
         // Upload metadata in JSON format
         if let Some(metadata) = metadata_map.get(&stream.pmc_id) {
             let metadata_json = serde_json::to_vec_pretty(metadata).unwrap_or_default();
-            
-            let metadata_stream = futures::stream::once(async move {
-                bytes::Bytes::from(metadata_json)
-            });
-            
+
+            let metadata_stream =
+                futures::stream::once(async move { bytes::Bytes::from(metadata_json) });
+
             match ctx
                 .infra
                 .put_s3(

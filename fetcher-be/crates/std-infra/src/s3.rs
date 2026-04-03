@@ -43,10 +43,11 @@ impl S3Infra for StdS3Infra {
         while let Some(chunk) = content.next().await {
             buffer.extend_from_slice(&chunk);
         }
-        
+
         let byte_stream = aws_sdk_s3::primitives::ByteStream::from(buffer);
 
-        let result = self.client
+        let result = self
+            .client
             .put_object()
             .bucket(&self.bucket)
             .key(key)
@@ -59,21 +60,25 @@ impl S3Infra for StdS3Infra {
 
         Ok(())
     }
-    
+
     async fn get_s3(&self, key: &str) -> Result<String, InfraError> {
-        let result = self.client
+        let result = self
+            .client
             .get_object()
             .bucket(&self.bucket)
             .key(key)
             .send()
             .await?;
-        
-        let body = result.body.collect().await
+
+        let body = result
+            .body
+            .collect()
+            .await
             .map_err(|e| InfraError::S3Error(e.to_string()))?;
-        
+
         let text = String::from_utf8(body.into_bytes().to_vec())
             .map_err(|e| InfraError::S3Error(e.to_string()))?;
-        
+
         Ok(text)
     }
 }

@@ -4,7 +4,9 @@ use crate::llm::OpenRouterClient;
 use crate::pg::BrainAtlasPostgresql;
 use crate::s3::BrainAtlasS3;
 use crate::vectordb::BrainAtlasVectorDB;
-use domain::{ChunkSource, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary, SimilarChunk};
+use domain::{
+    ChunkSource, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary, SimilarChunk,
+};
 use services::infra::{EmbeddingGenerator, LlmClient, S3Storage, VectorDatabase};
 use services::{EnvInfra, Postgres, Query, QueryResult};
 
@@ -14,6 +16,12 @@ pub struct BrainAtlasInfra {
     s3: BrainAtlasS3,
     llm: OpenRouterClient,
     vectordb: BrainAtlasVectorDB,
+}
+
+impl Default for BrainAtlasInfra {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BrainAtlasInfra {
@@ -79,7 +87,9 @@ impl EmbeddingGenerator for BrainAtlasInfra {
         embedding_model: &str,
         text: &str,
     ) -> Result<Vec<f32>, Self::Error> {
-        self.llm.generate_embedding(api_key, embedding_model, text).await
+        self.llm
+            .generate_embedding(api_key, embedding_model, text)
+            .await
     }
 }
 
@@ -173,8 +183,6 @@ impl VectorDatabase for BrainAtlasInfra {
         database_url: &str,
         chunk_id: uuid::Uuid,
     ) -> Result<Option<ChunkSource>, Self::Error> {
-        self.vectordb
-            .get_chunk_source(database_url, chunk_id)
-            .await
+        self.vectordb.get_chunk_source(database_url, chunk_id).await
     }
 }

@@ -1,8 +1,8 @@
+use crate::cache_keys::{self, invalidate, invalidate_pattern};
 use crate::{
     BatchManagement, CacheClient, EnvInfra, HttpClient, OrchDatabase, PaperMetadataEntry,
     ProcessRegionRequest, ProcessRegionResponse, ServiceError, UuidWrapper,
 };
-use crate::cache_keys::{self, invalidate, invalidate_pattern};
 use app::CompletionOrchestrator;
 use backon::{ExponentialBuilder, Retryable};
 use domain::{
@@ -83,7 +83,8 @@ where
                 // Invalidate caches affected by batch status change
                 invalidate(self.infra.as_ref(), &cache_keys::batch_status(batch.id)).await;
                 invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
-                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern()).await;
+                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern())
+                    .await;
 
                 tracing::info!(
                     batch_id = %batch.id,
@@ -253,8 +254,8 @@ where
                 batch_id = %batch.id,
                 "Skipping invalidated batch"
             );
-            return Err(ServiceError::External { 
-                message: "Batch was invalidated".to_string() 
+            return Err(ServiceError::External {
+                message: "Batch was invalidated".to_string(),
             });
         }
 
@@ -297,7 +298,8 @@ where
         }
 
         // Get S3 keys directly from database instead of calling fetcher API
-        let all_s3_keys = self.infra
+        let all_s3_keys = self
+            .infra
             .get_task_s3_keys(database_url, &batch.fetch_task_ids)
             .await
             .map_err(ServiceError::InfraError)?;
@@ -362,7 +364,7 @@ where
 
         // Call brainatlas /process with retry logic
         let process_url = format!("{}/brainatlas-be/api/process", brainatlas_url);
-        
+
         tracing::info!(
             batch_id = %batch.id,
             url = %process_url,
@@ -402,7 +404,7 @@ where
             chat_model,
             embedding_model,
         };
-        
+
         tracing::debug!(
             batch_id = %batch.id,
             region_id = %region_uuid,
@@ -432,21 +434,23 @@ where
             Ok(response) => {
                 // Mark batch as complete
                 self.infra
-                    .complete_batch(
-                        database_url,
-                        batch.id,
-                    )
+                    .complete_batch(database_url, batch.id)
                     .await
                     .map_err(ServiceError::InfraError)?;
 
                 // Invalidate caches affected by batch completion
                 let region_id = batch.region_id;
-                invalidate(self.infra.as_ref(), &cache_keys::region_summaries(region_id)).await;
+                invalidate(
+                    self.infra.as_ref(),
+                    &cache_keys::region_summaries(region_id),
+                )
+                .await;
                 invalidate(self.infra.as_ref(), &cache_keys::region_status(region_id)).await;
                 invalidate(self.infra.as_ref(), &cache_keys::batch_status(batch.id)).await;
                 invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
                 invalidate(self.infra.as_ref(), &cache_keys::all_regions()).await;
-                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern()).await;
+                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern())
+                    .await;
 
                 tracing::info!(
                     batch_id = %batch.id,
@@ -476,7 +480,8 @@ where
                 // Invalidate caches affected by batch failure
                 invalidate(self.infra.as_ref(), &cache_keys::batch_status(batch.id)).await;
                 invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
-                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern()).await;
+                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern())
+                    .await;
 
                 Err(ServiceError::InfraError(e))
             }

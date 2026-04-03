@@ -1,6 +1,9 @@
-use domain::{BrainRegionEntry, RegionMapping, NewEmbedding, NewRegionSummary, ExistingSummary, SimilarChunk, ChunkSource, LlmResponse};
-use uuid::Uuid;
+use domain::{
+    BrainRegionEntry, ChunkSource, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary,
+    RegionMapping, SimilarChunk,
+};
 use std::error::Error;
+use uuid::Uuid;
 
 /// List all brain regions
 #[async_trait::async_trait]
@@ -36,7 +39,11 @@ pub trait LlmService: Send + Sync {
         chat_model_override: Option<&str>,
     ) -> Result<LlmResponse, Self::Error>;
 
-    async fn generate_queries(&self, region_name: &str, count: u32) -> Result<Vec<String>, Self::Error>;
+    async fn generate_queries(
+        &self,
+        region_name: &str,
+        count: u32,
+    ) -> Result<Vec<String>, Self::Error>;
 }
 
 /// Embedding generation service
@@ -46,14 +53,18 @@ pub trait EmbeddingService: Send + Sync {
 
     /// Generate embedding for text.
     /// `model_override` if Some, overrides the default/env embedding model.
-    async fn generate_embedding(&self, text: &str, model_override: Option<&str>) -> Result<Vec<f32>, Self::Error>;
+    async fn generate_embedding(
+        &self,
+        text: &str,
+        model_override: Option<&str>,
+    ) -> Result<Vec<f32>, Self::Error>;
 }
 
 /// S3 storage service
 #[async_trait::async_trait]
 pub trait S3Storage: Send + Sync {
     type Error: Error + Send + Sync;
-    
+
     async fn download(&self, key: &str) -> Result<String, Self::Error>;
 }
 
@@ -61,8 +72,12 @@ pub trait S3Storage: Send + Sync {
 #[async_trait::async_trait]
 pub trait VectorDatabase: Send + Sync {
     type Error: Error + Send + Sync;
-    
-    async fn check_content_hash(&self, region_id: i32, content_hash: &str) -> Result<Option<ExistingSummary>, Self::Error>;
+
+    async fn check_content_hash(
+        &self,
+        region_id: i32,
+        content_hash: &str,
+    ) -> Result<Option<ExistingSummary>, Self::Error>;
     async fn insert_summary_with_embeddings(
         &self,
         summary: NewRegionSummary,
@@ -79,10 +94,7 @@ pub trait VectorDatabase: Send + Sync {
         summary_id: Uuid,
         summary_text: &str,
     ) -> Result<(), Self::Error>;
-    async fn get_chunk_source(
-        &self,
-        chunk_id: Uuid,
-    ) -> Result<Option<ChunkSource>, Self::Error>;
+    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<Option<ChunkSource>, Self::Error>;
 }
 
 /// Combined services trait

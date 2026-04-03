@@ -1,10 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+fn default_backoff_strategy() -> String {
+    "constant".to_string()
+}
+
 /// Worker status and statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerStatus {
     pub worker_id: String,
-    pub status: String, // "running", "idle", "stopped"
+    pub status: String,               // "running", "idle", "stopped"
     pub current_task: Option<String>, // PMC ID or None
     pub tasks_processed: i64,
     pub started_at: i64, // Unix timestamp

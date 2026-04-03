@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use strum::{Display, EnumString, IntoStaticStr};
+use uuid::Uuid;
 
 mod api_types;
 mod batch_types;

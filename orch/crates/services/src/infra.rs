@@ -1,7 +1,7 @@
-use uuid::Uuid;
-use serde::de::DeserializeOwned;
+use domain::{BatchStatus, ConfigKey, ProcessingBatch, RegionQuery};
 use serde::Serialize;
-use domain::{ConfigKey, RegionQuery, ProcessingBatch, BatchStatus};
+use serde::de::DeserializeOwned;
+use uuid::Uuid;
 
 pub trait EnvInfra: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -37,21 +37,21 @@ pub struct OrchConfig {
 #[async_trait::async_trait]
 pub trait OrchDatabase: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
-    
+
     /// Check if a fetch task has already been processed
     async fn get_processed_task(
         &self,
         database_url: &str,
         fetch_task_id: i64,
     ) -> Result<Option<ProcessedFetchTask>, Self::Error>;
-    
+
     /// Insert a new processed task
     async fn insert_processed_task(
         &self,
         database_url: &str,
         task: NewProcessedFetchTask,
     ) -> Result<(), Self::Error>;
-    
+
     /// Update brainatlas processing status
     async fn update_brainatlas_status(
         &self,
@@ -60,20 +60,17 @@ pub trait OrchDatabase: Send + Sync {
         status: &str,
         error: Option<String>,
     ) -> Result<(), Self::Error>;
-    
+
     /// Get a configuration value
     async fn get_config(
         &self,
         database_url: &str,
         key: ConfigKey,
     ) -> Result<Option<String>, Self::Error>;
-    
+
     /// Get all configuration
-    async fn get_all_config(
-        &self,
-        database_url: &str,
-    ) -> Result<Vec<OrchConfig>, Self::Error>;
-    
+    async fn get_all_config(&self, database_url: &str) -> Result<Vec<OrchConfig>, Self::Error>;
+
     /// Update a configuration value
     async fn update_config(
         &self,
@@ -86,17 +83,17 @@ pub trait OrchDatabase: Send + Sync {
 #[async_trait::async_trait]
 pub trait HttpClient: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
-    
+
     /// Make a GET request and deserialize the response
     async fn get<T: DeserializeOwned + Send>(&self, url: &str) -> Result<T, Self::Error>;
-    
+
     /// Make a POST request with a JSON body and deserialize the response
     async fn post<Req: Serialize + Send + Sync, Res: DeserializeOwned + Send + Sync>(
         &self,
         url: &str,
         body: &Req,
     ) -> Result<Res, Self::Error>;
-    
+
     /// Check if a service is healthy by calling its health endpoint
     async fn check_health(&self, base_url: &str, service_name: &str) -> Result<(), Self::Error>;
 }
@@ -105,14 +102,14 @@ pub trait HttpClient: Send + Sync {
 #[async_trait::async_trait]
 pub trait BatchManagement: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
-    
+
     /// Get queries for a region
     async fn get_queries(
         &self,
         database_url: &str,
         region_id: Uuid,
     ) -> Result<Vec<RegionQuery>, Self::Error>;
-    
+
     /// Insert generated queries for a region
     async fn insert_queries(
         &self,
@@ -120,14 +117,10 @@ pub trait BatchManagement: Send + Sync {
         region_id: Uuid,
         queries: Vec<String>,
     ) -> Result<Vec<Uuid>, Self::Error>;
-    
+
     /// Delete all queries for a region
-    async fn delete_queries(
-        &self,
-        database_url: &str,
-        region_id: Uuid,
-    ) -> Result<(), Self::Error>;
-    
+    async fn delete_queries(&self, database_url: &str, region_id: Uuid) -> Result<(), Self::Error>;
+
     /// Create a new processing batch
     async fn create_batch(
         &self,
@@ -135,7 +128,7 @@ pub trait BatchManagement: Send + Sync {
         region_id: Uuid,
         expected_count: i32,
     ) -> Result<Uuid, Self::Error>;
-    
+
     /// Add fetch task IDs to a batch
     async fn add_tasks_to_batch(
         &self,
@@ -143,7 +136,7 @@ pub trait BatchManagement: Send + Sync {
         batch_id: Uuid,
         task_ids: Vec<i64>,
     ) -> Result<(), Self::Error>;
-    
+
     /// Update the expected task count for a batch
     async fn update_batch_expected_count(
         &self,
@@ -158,21 +151,21 @@ pub trait BatchManagement: Send + Sync {
         database_url: &str,
         batch_id: Uuid,
     ) -> Result<Option<domain::ProcessingBatch>, Self::Error>;
-    
+
     /// Get batches by status
     async fn get_batches_by_status(
         &self,
         database_url: &str,
         status: BatchStatus,
     ) -> Result<Vec<ProcessingBatch>, Self::Error>;
-    
+
     /// Count completed fetch tasks from a list of task IDs
     async fn count_completed_tasks(
         &self,
         database_url: &str,
         task_ids: &[i64],
     ) -> Result<usize, Self::Error>;
-    
+
     /// Get S3 keys for completed fetch tasks
     async fn get_task_s3_keys(
         &self,
@@ -187,7 +180,7 @@ pub trait BatchManagement: Send + Sync {
         database_url: &str,
         task_ids: &[i64],
     ) -> Result<Vec<crate::PaperMetadataRecord>, Self::Error>;
-    
+
     /// Update batch status
     async fn update_batch_status(
         &self,
@@ -196,21 +189,17 @@ pub trait BatchManagement: Send + Sync {
         status: BatchStatus,
         error: Option<String>,
     ) -> Result<(), Self::Error>;
-    
+
     /// Mark batch complete with summary
-    async fn complete_batch(
-        &self,
-        database_url: &str,
-        batch_id: Uuid,
-    ) -> Result<(), Self::Error>;
-    
+    async fn complete_batch(&self, database_url: &str, batch_id: Uuid) -> Result<(), Self::Error>;
+
     /// Get active batch for a region
     async fn get_active_batch(
         &self,
         database_url: &str,
         region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error>;
-    
+
     /// Get most recent batch for a region (regardless of status)
     async fn get_recent_batch(
         &self,
@@ -276,32 +265,23 @@ pub struct SearchHitRecord {
 #[async_trait::async_trait]
 pub trait RegionMappingQueries: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
-    
+
     /// Get region mapping by UUID
     async fn get_region_mapping(
         &self,
         database_url: &str,
         region_uuid: Uuid,
     ) -> Result<Option<RegionMapping>, Self::Error>;
-    
+
     /// Get all regions from region_mapping table
-    async fn get_all_regions(
-        &self,
-        database_url: &str,
-    ) -> Result<Vec<RegionMapping>, Self::Error>;
-    
+    async fn get_all_regions(&self, database_url: &str) -> Result<Vec<RegionMapping>, Self::Error>;
+
     /// Get total count of regions in region_mapping table
-    async fn get_total_region_count(
-        &self,
-        database_url: &str,
-    ) -> Result<i64, Self::Error>;
-    
+    async fn get_total_region_count(&self, database_url: &str) -> Result<i64, Self::Error>;
+
     /// Count regions that have no batches at all
-    async fn count_regions_without_batches(
-        &self,
-        database_url: &str,
-    ) -> Result<i64, Self::Error>;
-    
+    async fn count_regions_without_batches(&self, database_url: &str) -> Result<i64, Self::Error>;
+
     /// Get region summaries by region_id (Int4)
     async fn get_region_summaries(
         &self,
@@ -348,19 +328,24 @@ pub trait CacheClient: Send + Sync {
 
 /// Blanket: any `T: OrchDatabase + EnvInfra + HttpClient + BatchManagement + RegionMappingQueries + CacheClient` automatically satisfies `Infra`.
 pub trait Infra:
-   EnvInfra<Error = <Self as Infra>::Error>
-   + OrchDatabase<Error = <Self as Infra>::Error>
-   + HttpClient<Error = <Self as Infra>::Error>
-   + BatchManagement<Error = <Self as Infra>::Error>
-   + RegionMappingQueries<Error = <Self as Infra>::Error>
-   + CacheClient<Error = <Self as Infra>::Error>
+    EnvInfra<Error = <Self as Infra>::Error>
+    + OrchDatabase<Error = <Self as Infra>::Error>
+    + HttpClient<Error = <Self as Infra>::Error>
+    + BatchManagement<Error = <Self as Infra>::Error>
+    + RegionMappingQueries<Error = <Self as Infra>::Error>
+    + CacheClient<Error = <Self as Infra>::Error>
 {
     type Error: std::error::Error + Send + Sync + 'static;
 }
 
 impl<E, T> Infra for T
 where
-    T: EnvInfra<Error = E> + OrchDatabase<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + RegionMappingQueries<Error = E> + CacheClient<Error = E>,
+    T: EnvInfra<Error = E>
+        + OrchDatabase<Error = E>
+        + HttpClient<Error = E>
+        + BatchManagement<Error = E>
+        + RegionMappingQueries<Error = E>
+        + CacheClient<Error = E>,
     E: std::error::Error + Send + Sync + 'static,
 {
     type Error = E;

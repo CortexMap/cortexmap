@@ -23,6 +23,7 @@ pub struct StdInfraContext {
 
 impl StdInfraContext {
     /// Create from runtime environment variables (collected once, reused).
+    #[allow(clippy::result_large_err)]
     pub fn from_env() -> Result<Self, InfraError> {
         let env = FetcherEnvInfra::new();
         Ok(Self {
@@ -34,6 +35,7 @@ impl StdInfraContext {
         })
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn get(&self) -> Result<InfraContext<StdInfra>, InfraError> {
         Ok(InfraContext {
             infra: Arc::new(StdInfra::new(

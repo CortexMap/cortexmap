@@ -1,11 +1,11 @@
 use crate::{ApiError, BrainRegionApi};
 use app::{AppError, BrainAtlasApp, Services};
+use domain::ChunkSource;
 use domain::rpc_types;
 use domain::rpc_types::{
-    BrainRegionListResponse, ProcessRegionResponse, SearchBrainRegionResponse, StatusResponse,
-    GenerateQueriesResponse, PaperMetadata,
+    BrainRegionListResponse, GenerateQueriesResponse, PaperMetadata, ProcessRegionResponse,
+    SearchBrainRegionResponse, StatusResponse,
 };
-use domain::ChunkSource;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -71,7 +71,14 @@ where
         // Call the full processing pipeline
         let summary_id = self
             .app()
-            .process_region(region_uuid, batch_uuid, s3_keys, paper_metadata, chat_model, embedding_model)
+            .process_region(
+                region_uuid,
+                batch_uuid,
+                s3_keys,
+                paper_metadata,
+                chat_model,
+                embedding_model,
+            )
             .await
             .map_err(ApiError::AppError)?;
 

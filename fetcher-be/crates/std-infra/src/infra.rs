@@ -7,8 +7,7 @@ use crate::task_queue::StdTaskQueue;
 use bytes::Bytes;
 use cortexmap_infra::{
     ComponentType, ContentType, DatabaseInfra, EnvInfra, FetchTask, FetchTaskComponent, HttpInfra,
-    InfraError, NewFetchTaskLog, NewPaper, Paper, S3Infra,
-    TaskQueueInfra, TaskStats, TaskStatus,
+    InfraError, NewFetchTaskLog, NewPaper, Paper, S3Infra, TaskQueueInfra, TaskStats, TaskStatus,
 };
 use futures::Stream;
 use reqwest::Response;
@@ -23,6 +22,7 @@ pub struct StdInfra {
 }
 
 impl StdInfra {
+    #[allow(clippy::result_large_err)]
     pub fn new(
         database_url: &str,
         endpoint: &str,
@@ -34,10 +34,10 @@ impl StdInfra {
         let http_infra = StdHttpInfra::new();
         let db_infra = StdDatabaseInfra::new(database_url)?;
         let s3_infra = StdS3Infra::new(endpoint, access_key, secret_key, bucket);
-        
+
         // Reuse the database pool for task queue
         let task_queue = StdTaskQueue::new(db_infra.pool.clone());
-        
+
         Ok(Self {
             env_infra,
             http_infra,
@@ -46,7 +46,7 @@ impl StdInfra {
             task_queue,
         })
     }
-    
+
     /// Get the database connection pool for direct queries
     pub fn db_pool(&self) -> &DbPool {
         &self.db_infra.pool
@@ -87,7 +87,7 @@ impl S3Infra for StdInfra {
     ) -> Result<(), InfraError> {
         self.s3_infra.put_s3(key, content_type, content).await
     }
-    
+
     async fn get_s3(&self, key: &str) -> Result<String, InfraError> {
         self.s3_infra.get_s3(key).await
     }
@@ -101,7 +101,9 @@ impl TaskQueueInfra for StdInfra {
         query: String,
         max_attempts: i32,
     ) -> Result<FetchTask, InfraError> {
-        self.task_queue.enqueue_task(pmc_id, query, max_attempts).await
+        self.task_queue
+            .enqueue_task(pmc_id, query, max_attempts)
+            .await
     }
 
     async fn get_next_pending_task(
@@ -168,35 +170,47 @@ impl TaskQueueInfra for StdInfra {
     async fn get_task_stats(&self) -> Result<TaskStats, InfraError> {
         self.task_queue.get_task_stats().await
     }
-    
-    async fn get_detailed_task_stats(&self) -> Result<cortexmap_infra::DetailedTaskStats, InfraError> {
+
+    async fn get_detailed_task_stats(
+        &self,
+    ) -> Result<cortexmap_infra::DetailedTaskStats, InfraError> {
         self.task_queue.get_detailed_task_stats().await
     }
-    
+
     async fn get_component_stats(&self) -> Result<cortexmap_infra::ComponentStats, InfraError> {
         self.task_queue.get_component_stats().await
     }
-    
-    async fn get_recent_tasks(&self, limit: i64) -> Result<Vec<cortexmap_infra::RecentTaskInfo>, InfraError> {
+
+    async fn get_recent_tasks(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<cortexmap_infra::RecentTaskInfo>, InfraError> {
         self.task_queue.get_recent_tasks(limit).await
     }
-    
+
     async fn get_task_by_pmc_id(&self, pmc_id: &str) -> Result<Option<FetchTask>, InfraError> {
         self.task_queue.get_task_by_pmc_id(pmc_id).await
     }
-    
+
     async fn get_task_by_id(&self, task_id: i64) -> Result<Option<FetchTask>, InfraError> {
         self.task_queue.get_task_by_id(task_id).await
     }
-    
-    async fn get_tasks_by_status(&self, status: &str, limit: i32) -> Result<Vec<FetchTask>, InfraError> {
+
+    async fn get_tasks_by_status(
+        &self,
+        status: &str,
+        limit: i32,
+    ) -> Result<Vec<FetchTask>, InfraError> {
         self.task_queue.get_tasks_by_status(status, limit).await
     }
-    
-    async fn get_task_components(&self, task_id: i64) -> Result<Vec<FetchTaskComponent>, InfraError> {
+
+    async fn get_task_components(
+        &self,
+        task_id: i64,
+    ) -> Result<Vec<FetchTaskComponent>, InfraError> {
         self.task_queue.get_task_components(task_id).await
     }
-    
+
     // Worker heartbeat management
     async fn claim_task_for_worker(
         &self,
@@ -204,22 +218,29 @@ impl TaskQueueInfra for StdInfra {
         worker_id: String,
         worker_version: Option<String>,
     ) -> Result<(), InfraError> {
-        self.task_queue.claim_task_for_worker(task_id, worker_id, worker_version).await
+        self.task_queue
+            .claim_task_for_worker(task_id, worker_id, worker_version)
+            .await
     }
-    
+
     async fn update_task_heartbeat(&self, task_id: i64) -> Result<(), InfraError> {
         self.task_queue.update_task_heartbeat(task_id).await
     }
-    
+
     async fn release_worker_tasks(&self, worker_id: String) -> Result<usize, InfraError> {
         self.task_queue.release_worker_tasks(worker_id).await
     }
-    
+
     async fn release_task(&self, task_id: i64) -> Result<(), InfraError> {
         self.task_queue.release_task(task_id).await
     }
-    
-    async fn release_stale_tasks_by_heartbeat(&self, timeout_secs: u64) -> Result<usize, InfraError> {
-        self.task_queue.release_stale_tasks_by_heartbeat(timeout_secs).await
+
+    async fn release_stale_tasks_by_heartbeat(
+        &self,
+        timeout_secs: u64,
+    ) -> Result<usize, InfraError> {
+        self.task_queue
+            .release_stale_tasks_by_heartbeat(timeout_secs)
+            .await
     }
 }

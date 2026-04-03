@@ -1,9 +1,9 @@
 use crate::{ApiError, OrchApi};
 use app::{AppError, OrchApp, Services};
 use domain::{
-    AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult,
-    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult, SearchResponse, StopWorkersRequest,
-    WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
+    AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
+    GenerateSummaryResult, PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult,
+    SearchResponse, StopWorkersRequest, WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -46,7 +46,10 @@ where
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
-    async fn generate_summary(&self, region_id: Uuid) -> Result<GenerateSummaryResult, Self::Error> {
+    async fn generate_summary(
+        &self,
+        region_id: Uuid,
+    ) -> Result<GenerateSummaryResult, Self::Error> {
         self.app()
             .generate_summary(region_id)
             .await
@@ -104,14 +107,14 @@ where
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
-    
+
     async fn fetcher_health(&self) -> Result<(), Self::Error> {
         self.services
             .fetcher_health()
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
-    
+
     async fn brainatlas_health(&self) -> Result<(), Self::Error> {
         self.services
             .brainatlas_health()
@@ -133,14 +136,20 @@ where
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
-    async fn allocate_workers(&self, req: AllocateWorkersRequest) -> Result<WorkerAllocationResponse, Self::Error> {
+    async fn allocate_workers(
+        &self,
+        req: AllocateWorkersRequest,
+    ) -> Result<WorkerAllocationResponse, Self::Error> {
         self.services
             .allocate_workers(req)
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
-    async fn stop_workers(&self, req: StopWorkersRequest) -> Result<WorkerStopResponse, Self::Error> {
+    async fn stop_workers(
+        &self,
+        req: StopWorkersRequest,
+    ) -> Result<WorkerStopResponse, Self::Error> {
         self.services
             .stop_workers(req)
             .await

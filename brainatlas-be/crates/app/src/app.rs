@@ -84,7 +84,7 @@ where
                 .download(key)
                 .await
                 .map_err(AppError::ServiceError)?;
-            
+
             let start_idx = all_chunks.len();
             let key_chunks = self.services.chunk(&content, chunk_size, chunk_overlap);
 
@@ -105,7 +105,7 @@ where
             all_chunks.extend(key_chunks);
             let end_idx = all_chunks.len();
             chunks_with_source.push((key.clone(), start_idx, end_idx));
-            
+
             full_text.push_str(&content);
             full_text.push_str("\n\n---\n\n");
         }
@@ -137,7 +137,7 @@ where
             .enumerate()
             .map(|(idx, result)| {
                 let embedding = result.map_err(AppError::ServiceError)?;
-                
+
                 // Find which S3 key this chunk belongs to
                 let (s3_key, metadata) = chunks_with_source
                     .iter()
@@ -149,11 +149,8 @@ where
                     .unwrap_or_else(|| (String::new(), None));
 
                 // Get character offsets for this chunk within its source file
-                let (char_start, char_end) = chunk_char_offsets
-                    .get(idx)
-                    .copied()
-                    .unwrap_or((0, 0));
-                
+                let (char_start, char_end) = chunk_char_offsets.get(idx).copied().unwrap_or((0, 0));
+
                 Ok(NewEmbedding {
                     region_id: region.region_id,
                     summary_id: Uuid::nil(), // Placeholder - set by insert_summary_with_embeddings
@@ -298,19 +295,18 @@ where
                             continue;
                         }
 
-                        let args: SearchEmbeddingsArgs =
-                            match serde_json::from_str(&tc.arguments) {
-                                Ok(a) => a,
-                                Err(e) => {
-                                    error!("Failed to parse tool call arguments: {}", e);
-                                    messages.push(serde_json::json!({
-                                        "role": "tool",
-                                        "tool_call_id": tc.id,
-                                        "content": format!("Error parsing arguments: {}", e)
-                                    }));
-                                    continue;
-                                }
-                            };
+                        let args: SearchEmbeddingsArgs = match serde_json::from_str(&tc.arguments) {
+                            Ok(a) => a,
+                            Err(e) => {
+                                error!("Failed to parse tool call arguments: {}", e);
+                                messages.push(serde_json::json!({
+                                    "role": "tool",
+                                    "tool_call_id": tc.id,
+                                    "content": format!("Error parsing arguments: {}", e)
+                                }));
+                                continue;
+                            }
+                        };
 
                         info!(
                             "Executing search_embeddings(query='{}', top_k={})",

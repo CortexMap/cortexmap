@@ -1,9 +1,9 @@
+use crate::InfraError;
 use crate::models::{RegionMappingRow, RegionSummaryRow};
 use crate::schema::region_mapping::dsl;
 use crate::schema::region_summary::dsl as summary_dsl;
-use crate::InfraError;
-use deadpool_diesel::postgres::{BuildError, Manager, Pool};
 use deadpool_diesel::Runtime;
+use deadpool_diesel::postgres::{BuildError, Manager, Pool};
 use diesel::prelude::*;
 use services::{Postgres, Query, QueryResult};
 use tokio::sync::OnceCell;
@@ -34,7 +34,11 @@ impl BrainAtlasPostgresql {
 impl Postgres for BrainAtlasPostgresql {
     type Error = InfraError;
 
-    async fn execute_query(&self, database_uri: &str, query: Query) -> Result<QueryResult, Self::Error> {
+    async fn execute_query(
+        &self,
+        database_uri: &str,
+        query: Query,
+    ) -> Result<QueryResult, Self::Error> {
         let conn = self.pool(database_uri).await?.get().await?;
 
         match query {
@@ -71,7 +75,9 @@ impl Postgres for BrainAtlasPostgresql {
                             .load::<RegionSummaryRow>(c)
                     })
                     .await??;
-                Ok(QueryResult::Region(rows.into_iter().map(Into::into).collect()))
+                Ok(QueryResult::Region(
+                    rows.into_iter().map(Into::into).collect(),
+                ))
             }
 
             Query::RegionExists(id) => {

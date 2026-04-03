@@ -153,29 +153,28 @@ pub async fn fetch_metadata<I: HttpInfra>(
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
 
-            if let Some(article) = result_obj.get(id) {
-                if let Ok(mut metadata) = serde_json::from_value::<ArticleMetadata>(article.clone())
-                {
-                    // Fetch abstract for this article
-                    match fetch_abstract(id, ctx.clone()).await {
-                        Ok(abstract_text) => {
-                            metadata.abstract_text = Some(abstract_text);
-                        }
-                        Err(e) => {
-                            tracing::debug!("Failed to fetch abstract for PMC {}: {}", id, e);
-                            metadata.abstract_text = None;
-                        }
+            if let Some(article) = result_obj.get(id)
+                && let Ok(mut metadata) = serde_json::from_value::<ArticleMetadata>(article.clone())
+            {
+                // Fetch abstract for this article
+                match fetch_abstract(id, ctx.clone()).await {
+                    Ok(abstract_text) => {
+                        metadata.abstract_text = Some(abstract_text);
                     }
+                    Err(e) => {
+                        tracing::debug!("Failed to fetch abstract for PMC {}: {}", id, e);
+                        metadata.abstract_text = None;
+                    }
+                }
 
-                    // Find PMCID in articleids
-                    if let Some(article_id) =
-                        metadata.articleids.iter().find(|aid| aid.idtype == "pmcid")
-                    {
-                        articles.push(ArticleWithMetadata {
-                            pmcid: article_id.value.clone(),
-                            metadata,
-                        });
-                    }
+                // Find PMCID in articleids
+                if let Some(article_id) =
+                    metadata.articleids.iter().find(|aid| aid.idtype == "pmcid")
+                {
+                    articles.push(ArticleWithMetadata {
+                        pmcid: article_id.value.clone(),
+                        metadata,
+                    });
                 }
             }
         }
@@ -213,12 +212,12 @@ pub async fn fetch_summary<I: HttpInfra>(
     let summary_result: ESummaryResponse = serde_json::from_slice(&summary_resp.bytes().await?)?;
 
     // Extract metadata for this specific ID (use numeric_id for lookup)
-    if let Some(result_obj) = summary_result.result.as_object() {
-        if let Some(article) = result_obj.get(numeric_id) {
-            let metadata = serde_json::from_value::<ArticleMetadata>(article.clone())
-                .map_err(|e| FetchError::SerdeError(e))?;
-            return Ok(metadata);
-        }
+    if let Some(result_obj) = summary_result.result.as_object()
+        && let Some(article) = result_obj.get(numeric_id)
+    {
+        let metadata = serde_json::from_value::<ArticleMetadata>(article.clone())
+            .map_err(FetchError::SerdeError)?;
+        return Ok(metadata);
     }
 
     Err(FetchError::NotFound(format!(
@@ -260,49 +259,49 @@ pub async fn fetch_abstract<I: HttpInfra>(
 // Extract abstract text from XML, removing all HTML/XML tags
 fn extract_abstract_from_xml(xml: &str) -> Result<String, FetchError> {
     // Find the abstract section
-    if let Some(start) = xml.find("<abstract") {
-        if let Some(abs_start) = xml[start..].find('>') {
-            let content_start = start + abs_start + 1;
-            if let Some(end) = xml[content_start..].find("</abstract>") {
-                let abstract_xml = &xml[content_start..content_start + end];
+    if let Some(start) = xml.find("<abstract")
+        && let Some(abs_start) = xml[start..].find('>')
+    {
+        let content_start = start + abs_start + 1;
+        if let Some(end) = xml[content_start..].find("</abstract>") {
+            let abstract_xml = &xml[content_start..content_start + end];
 
-                // Split by common section tags and join with paragraph breaks
-                let mut result = abstract_xml.to_string();
+            // Split by common section tags and join with paragraph breaks
+            let mut result = abstract_xml.to_string();
 
-                // Add paragraph breaks before common abstract section tags
-                result = result.replace("<sec>", "\n\n");
-                result = result.replace("</sec>", "");
-                result = result.replace("<title>", "**");
-                result = result.replace("</title>", ":**\n\n");
-                result = result.replace("<p>", "");
-                result = result.replace("</p>", "\n\n");
+            // Add paragraph breaks before common abstract section tags
+            result = result.replace("<sec>", "\n\n");
+            result = result.replace("</sec>", "");
+            result = result.replace("<title>", "**");
+            result = result.replace("</title>", ":**\n\n");
+            result = result.replace("<p>", "");
+            result = result.replace("</p>", "\n\n");
 
-                // Remove all remaining XML/HTML tags
-                let cleaned = result
-                    .split('<')
-                    .map(|s| {
-                        if let Some(pos) = s.find('>') {
-                            &s[pos + 1..]
-                        } else {
-                            s
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("")
-                    .replace("&#8239;", " ")
-                    .replace("&#x202f;", " ")
-                    .replace("&lt;", "<")
-                    .replace("&gt;", ">")
-                    .replace("&amp;", "&")
-                    // Replace multiple newlines with double newlines for cleaner formatting
-                    .lines()
-                    .filter(|line| !line.trim().is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
+            // Remove all remaining XML/HTML tags
+            let cleaned = result
+                .split('<')
+                .map(|s| {
+                    if let Some(pos) = s.find('>') {
+                        &s[pos + 1..]
+                    } else {
+                        s
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("")
+                .replace("&#8239;", " ")
+                .replace("&#x202f;", " ")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                // Replace multiple newlines with double newlines for cleaner formatting
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n");
 
-                if !cleaned.trim().is_empty() {
-                    return Ok(cleaned.trim().to_string());
-                }
+            if !cleaned.trim().is_empty() {
+                return Ok(cleaned.trim().to_string());
             }
         }
     }

@@ -12,6 +12,7 @@ pub struct StdDatabaseInfra {
 }
 
 impl StdDatabaseInfra {
+    #[allow(clippy::result_large_err)]
     pub fn new(database_url: &str) -> Result<Self, InfraError> {
         let manager = ConnectionManager::<PgConnection>::new(database_url);
         let pool = Pool::builder()
