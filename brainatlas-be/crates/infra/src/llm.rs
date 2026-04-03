@@ -535,3 +535,75 @@ fn parse_text_queries(text: &str, count: u32) -> Vec<String> {
         .take(count as usize)
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_template_replaces_multiple_occurrences() {
+        let rendered = render_template(
+            "Generate {count} queries for {region}. {region} should be specific.",
+            &[("count", "3"), ("region", "hippocampus")],
+        );
+
+        assert_eq!(
+            rendered,
+            "Generate 3 queries for hippocampus. hippocampus should be specific."
+        );
+    }
+
+    #[test]
+    fn test_extract_first_string_finds_nested_values() {
+        let value = serde_json::json!({
+            "query": {
+                "or": [1, {"field": {"value": "motor cortex"}}]
+            }
+        });
+
+        assert_eq!(
+            extract_first_string(&value),
+            Some("motor cortex".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_first_string_returns_none_when_no_strings_exist() {
+        let value = serde_json::json!({"items": [1, true, null, {"value": 4}]});
+        assert_eq!(extract_first_string(&value), None);
+    }
+
+    #[test]
+    fn test_extract_fallback_query_uses_nested_json_string_value() {
+        let raw_args = "{\"query\":{\"field\":{\"value\":\"motor cortex\"}}}";
+
+        assert_eq!(
+            extract_fallback_query(raw_args),
+            BooleanQuery::term("motor cortex").to_query_string()
+        );
+    }
+
+    #[test]
+    fn test_extract_fallback_query_trims_raw_text_when_json_is_invalid() {
+        assert_eq!(
+            extract_fallback_query("  \"basal ganglia\"  "),
+            BooleanQuery::term("basal ganglia").to_query_string()
+        );
+    }
+
+    #[test]
+    fn test_parse_text_queries_handles_lists_and_limits_count() {
+        let text = "1. motor cortex\n- hippocampus\n* thalamus\n\n4) cerebellum";
+
+        let queries = parse_text_queries(text, 3);
+
+        assert_eq!(
+            queries,
+            vec![
+                BooleanQuery::term("motor cortex").to_query_string(),
+                BooleanQuery::term("hippocampus").to_query_string(),
+                BooleanQuery::term("thalamus").to_query_string(),
+            ]
+        );
+    }
+}

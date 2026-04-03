@@ -80,3 +80,74 @@ pub struct WorkerStopResponse {
     pub workers_stopped: u32,
     pub error_message: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fetcher_retry_config_defaults_backoff_strategy_when_missing() {
+        let config: FetcherRetryConfig = serde_json::from_str("{}").unwrap();
+
+        assert_eq!(config.backoff_strategy, "constant");
+        assert!(config.max_delay_secs.is_none());
+        assert!(config.jitter.is_none());
+        assert!(config.empty_queue_sleep_secs.is_none());
+        assert!(config.stale_task_multiplier.is_none());
+        assert!(config.summary_max_retries.is_none());
+        assert!(config.abstract_max_retries.is_none());
+        assert!(config.pdf_max_retries.is_none());
+    }
+
+    #[test]
+    fn test_fetcher_retry_config_serialization_skips_none_fields() {
+        let config = FetcherRetryConfig {
+            backoff_strategy: "exponential".to_string(),
+            max_delay_secs: Some(30),
+            jitter: Some(0.25),
+            empty_queue_sleep_secs: None,
+            stale_task_multiplier: None,
+            summary_max_retries: None,
+            abstract_max_retries: Some(4),
+            pdf_max_retries: None,
+        };
+
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["backoff_strategy"], "exponential");
+        assert_eq!(json["max_delay_secs"], 30);
+        assert_eq!(json["jitter"], 0.25);
+        assert_eq!(json["abstract_max_retries"], 4);
+        assert!(json.get("empty_queue_sleep_secs").is_none());
+        assert!(json.get("stale_task_multiplier").is_none());
+        assert!(json.get("summary_max_retries").is_none());
+        assert!(json.get("pdf_max_retries").is_none());
+    }
+
+    #[test]
+    fn test_allocate_workers_request_defaults_retry_config_to_none() {
+        let request: AllocateWorkersRequest = serde_json::from_str(
+            "{\"worker_count\":2,\"task_timeout_secs\":30,\"max_retry_attempts\":3}",
+        )
+        .unwrap();
+
+        assert_eq!(request.worker_count, 2);
+        assert_eq!(request.task_timeout_secs, 30);
+        assert_eq!(request.max_retry_attempts, 3);
+        assert!(request.retry_config.is_none());
+    }
+
+    #[test]
+    fn test_allocate_workers_request_preserves_nested_retry_config() {
+        let request: AllocateWorkersRequest = serde_json::from_str(
+            "{\"worker_count\":4,\"task_timeout_secs\":45,\"max_retry_attempts\":5,\"retry_config\":{\"backoff_strategy\":\"linear\",\"max_delay_secs\":20,\"summary_max_retries\":7}}",
+        )
+        .unwrap();
+
+        let retry = request.retry_config.unwrap();
+        assert_eq!(retry.backoff_strategy, "linear");
+        assert_eq!(retry.max_delay_secs, Some(20));
+        assert_eq!(retry.summary_max_retries, Some(7));
+        assert!(retry.abstract_max_retries.is_none());
+        assert!(retry.pdf_max_retries.is_none());
+    }
+}
