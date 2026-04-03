@@ -1,5 +1,5 @@
-use crate::{CacheClient, EnvInfra, ServiceError};
 use crate::cache_keys::{self, cached_or_fetch, invalidate};
+use crate::{CacheClient, EnvInfra, ServiceError};
 use app::ConfigManagement;
 use domain::{ConfigEntry, ConfigEntryUpdate, ConfigKey};
 use std::error::Error;
@@ -69,11 +69,13 @@ where
         // Update each config entry
         for entry in &entries {
             // Try to parse as ConfigKey to validate
-            let config_key = entry.key.parse::<ConfigKey>().map_err(|_| {
-                ServiceError::InvalidConfig {
-                    reason: format!("Invalid config key: {}", entry.key),
-                }
-            })?;
+            let config_key =
+                entry
+                    .key
+                    .parse::<ConfigKey>()
+                    .map_err(|_| ServiceError::InvalidConfig {
+                        reason: format!("Invalid config key: {}", entry.key),
+                    })?;
 
             self.infra
                 .update_config(&database_url, config_key, &entry.value)

@@ -1,12 +1,11 @@
 /// Text chunking implementation for BrainAtlasServices
-
 pub struct TextChunker;
 
 impl TextChunker {
     pub fn new() -> Self {
         Self
     }
-    
+
     /// Chunk text into overlapping segments
     ///
     /// # Arguments
@@ -36,12 +35,12 @@ impl TextChunker {
 
         while start < text_len {
             let mut end = (start + chunk_size).min(text_len);
-            
+
             // Ensure we don't split in the middle of a UTF-8 character
             while end < text_len && !text.is_char_boundary(end) {
                 end -= 1;
             }
-            
+
             let chunk = &text[start..end];
             chunks.push(chunk.to_string());
 
@@ -58,6 +57,12 @@ impl TextChunker {
         }
 
         chunks
+    }
+}
+
+impl Default for TextChunker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -110,7 +115,7 @@ mod tests {
         assert_eq!(chunks[0], "ABCDEFGHIJ");
         assert_eq!(chunks[1], "HIJKLMNOPQ"); // overlaps HIJ
         assert_eq!(chunks[2], "OPQRSTUVWX"); // overlaps OPQ
-        assert_eq!(chunks[3], "VWXYZ");      // overlaps VWX (partial)
+        assert_eq!(chunks[3], "VWXYZ"); // overlaps VWX (partial)
     }
 
     #[test]
@@ -139,19 +144,19 @@ mod tests {
         let text = "The hippocampus is a crucial structure in the brain. \
                     It plays a vital role in memory formation. \
                     Research shows it's particularly important for spatial navigation.";
-        
+
         let chunks = chunker.chunk(text, 50, 10);
-        
+
         // Should create overlapping chunks
         assert!(chunks.len() > 1);
-        
+
         // Each chunk should be <= 50 chars (except possibly the last)
         for (i, chunk) in chunks.iter().enumerate() {
             if i < chunks.len() - 1 {
                 assert!(chunk.len() <= 50, "Chunk {} is {} chars", i, chunk.len());
             }
         }
-        
+
         // Adjacent chunks should overlap
         if chunks.len() > 1 {
             let overlap_text = &chunks[0][chunks[0].len() - 10..];

@@ -5,7 +5,9 @@ use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use domain::rpc_types::{ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest, GenerateQueriesRequest};
+use domain::rpc_types::{
+    GenerateQueriesRequest, ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest,
+};
 use infra::{BrainAtlasInfra, InfraError};
 use services::{BrainAtlasServices, ServiceError};
 use std::sync::Arc;
@@ -62,7 +64,10 @@ impl BrainAtlasServer {
             .route("/api/status", post(status_handler))
             .route("/api/process", post(process_region_handler))
             .route("/api/generate-queries", post(generate_queries_handler))
-            .route("/api/chunks/{chunk_id}/source", get(get_chunk_source_handler))
+            .route(
+                "/api/chunks/{chunk_id}/source",
+                get(get_chunk_source_handler),
+            )
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()

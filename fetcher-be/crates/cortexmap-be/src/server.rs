@@ -36,9 +36,7 @@ impl QueueServer {
         Self::new(infra_ctx).await
     }
 
-    pub async fn new(
-        infra_ctx: StdInfraContext,
-    ) -> Result<Self, anyhow::Error> {
+    pub async fn new(infra_ctx: StdInfraContext) -> Result<Self, anyhow::Error> {
         let ctx = infra_ctx.get()?;
 
         let blueprint_template = Blueprint {
@@ -66,10 +64,17 @@ impl QueueServer {
 
         info!(
             "Database: {}",
-            blueprint_template.connections.db_url()
-                .split('@').last().unwrap_or("unknown")
+            blueprint_template
+                .connections
+                .db_url()
+                .split('@')
+                .next_back()
+                .unwrap_or("unknown")
         );
-        info!("S3 Bucket: {}", blueprint_template.connections.s3_info.bucket);
+        info!(
+            "S3 Bucket: {}",
+            blueprint_template.connections.s3_info.bucket
+        );
 
         let worker_manager = Arc::new(RwLock::new(WorkerManager::new()));
 
@@ -426,20 +431,30 @@ async fn allocate_workers_handler(
 
     // Apply retry config from the request (sent by orch from its DB config)
     if let Some(rc) = req.retry_config {
-        use cortexmap_core::blueprint::connections::{
-            BackoffStrategy, ComponentRetryConfig,
-        };
+        use cortexmap_core::blueprint::connections::{BackoffStrategy, ComponentRetryConfig};
 
         blueprint.fetcher.retry_config.backoff_strategy = match rc.backoff_strategy.as_str() {
             "linear" => BackoffStrategy::Linear {
-                max_delay_secs: if rc.max_delay_secs > 0 { rc.max_delay_secs } else { 60 },
+                max_delay_secs: if rc.max_delay_secs > 0 {
+                    rc.max_delay_secs
+                } else {
+                    60
+                },
             },
             "exponential" => BackoffStrategy::Exponential {
-                max_delay_secs: if rc.max_delay_secs > 0 { rc.max_delay_secs } else { 60 },
+                max_delay_secs: if rc.max_delay_secs > 0 {
+                    rc.max_delay_secs
+                } else {
+                    60
+                },
                 jitter: rc.jitter,
             },
             "fibonacci" => BackoffStrategy::Fibonacci {
-                max_delay_secs: if rc.max_delay_secs > 0 { rc.max_delay_secs } else { 60 },
+                max_delay_secs: if rc.max_delay_secs > 0 {
+                    rc.max_delay_secs
+                } else {
+                    60
+                },
             },
             _ => BackoffStrategy::Constant,
         };
@@ -452,14 +467,25 @@ async fn allocate_workers_handler(
         }
 
         // Apply per-component retry overrides (0 means "use global")
-        let has_overrides = rc.summary_max_retries > 0
-            || rc.abstract_max_retries > 0
-            || rc.pdf_max_retries > 0;
+        let has_overrides =
+            rc.summary_max_retries > 0 || rc.abstract_max_retries > 0 || rc.pdf_max_retries > 0;
         if has_overrides {
             blueprint.fetcher.retry_config.component_max_retries = Some(ComponentRetryConfig {
-                summary_max_retries: if rc.summary_max_retries > 0 { Some(rc.summary_max_retries) } else { None },
-                abstract_max_retries: if rc.abstract_max_retries > 0 { Some(rc.abstract_max_retries) } else { None },
-                pdf_max_retries: if rc.pdf_max_retries > 0 { Some(rc.pdf_max_retries) } else { None },
+                summary_max_retries: if rc.summary_max_retries > 0 {
+                    Some(rc.summary_max_retries)
+                } else {
+                    None
+                },
+                abstract_max_retries: if rc.abstract_max_retries > 0 {
+                    Some(rc.abstract_max_retries)
+                } else {
+                    None
+                },
+                pdf_max_retries: if rc.pdf_max_retries > 0 {
+                    Some(rc.pdf_max_retries)
+                } else {
+                    None
+                },
             });
         }
 

@@ -4,7 +4,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum FetchError {
     #[error("Infra Error: {0}")]
-    InfraError(#[from] InfraError),
+    InfraError(#[from] Box<InfraError>),
 
     #[error("Reqwest Error: {0}")]
     ReqwestError(#[from] reqwest::Error),
@@ -17,7 +17,13 @@ pub enum FetchError {
 
     #[error("Invalid PDF Source: {0}")]
     InvalidPdfSource(String),
-    
+
     #[error("Not Found: {0}")]
     NotFound(String),
+}
+
+impl From<InfraError> for FetchError {
+    fn from(error: InfraError) -> Self {
+        FetchError::InfraError(Box::new(error))
+    }
 }

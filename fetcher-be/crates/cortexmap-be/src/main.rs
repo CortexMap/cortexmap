@@ -1,14 +1,11 @@
 use anyhow::Result;
 use cortexmap_be::server::QueueServer;
 use std::net::SocketAddr;
-use tracing::{info, Level};
-use tracing_subscriber;
+use tracing::{Level, info};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .init();
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
     let queue_server = QueueServer::from_env().await?;
 

@@ -112,13 +112,6 @@ impl BooleanQuery {
         BooleanQuery::Or(queries)
     }
 
-    /// Create a NOT query
-    pub fn not(query: BooleanQuery) -> Self {
-        BooleanQuery::Not(NotQuery {
-            query: Box::new(query),
-        })
-    }
-
     /// Create a field query
     pub fn field(name: impl Into<String>, value: impl Into<String>) -> Self {
         BooleanQuery::Field(FieldQuery {
@@ -234,5 +227,15 @@ impl BooleanQuery {
 
     pub fn to_query_string(&self) -> String {
         self.to_string_inner().replace(" ", "+")
+    }
+}
+
+impl std::ops::Not for BooleanQuery {
+    type Output = BooleanQuery;
+
+    fn not(self) -> Self::Output {
+        BooleanQuery::Not(NotQuery {
+            query: Box::new(self),
+        })
     }
 }

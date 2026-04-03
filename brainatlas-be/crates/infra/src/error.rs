@@ -1,4 +1,3 @@
-
 /// Newtype wrapper that makes `InteractError` `Sync`-safe.
 /// `InteractError` holds a `Box<dyn Any + Send>` which is not `Sync`,
 /// but we never share the inner value across threads — we only propagate it.

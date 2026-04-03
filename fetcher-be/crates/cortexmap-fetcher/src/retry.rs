@@ -36,13 +36,14 @@ pub fn is_infra_retryable(err: &InfraError) -> bool {
             }
             // Retry on server errors (5xx) and rate limiting (429)
             if let Some(status) = e.status() {
-                return status.as_u16() == 429
-                    || status.is_server_error();
+                return status.as_u16() == 429 || status.is_server_error();
             }
             false
         }
         // S3 operations can fail transiently
-        InfraError::PutObjectError(_) | InfraError::GetObjectError(_) | InfraError::S3Error(_) => true,
+        InfraError::PutObjectError(_) | InfraError::GetObjectError(_) | InfraError::S3Error(_) => {
+            true
+        }
         // Pool exhaustion is transient
         InfraError::R2D2PoolError(_) => true,
         // Database errors and env var errors are not retryable
@@ -58,8 +59,11 @@ pub fn is_fetch_retryable(err: &FetchError) -> bool {
     match err {
         FetchError::InfraError(e) => is_infra_retryable(e),
         FetchError::ReqwestError(e) => {
-            e.is_timeout() || e.is_connect() || e.is_request()
-                || e.status().is_some_and(|s| s.as_u16() == 429 || s.is_server_error())
+            e.is_timeout()
+                || e.is_connect()
+                || e.is_request()
+                || e.status()
+                    .is_some_and(|s| s.as_u16() == 429 || s.is_server_error())
         }
         // Deserialization errors are not transient
         FetchError::SerdeError(_) => false,
@@ -102,12 +106,7 @@ where
         )
         .when(when)
         .notify(move |err: &E, dur: Duration| {
-            tracing::warn!(
-                "Retrying {} after {:?} due to: {}",
-                name,
-                dur,
-                err
-            );
+            tracing::warn!("Retrying {} after {:?} due to: {}", name, dur, err);
         })
         .await
 }
@@ -134,14 +133,15 @@ pub fn compute_task_backoff_delay(
     let attempt = attempt.max(1); // Ensure at least 1
 
     match strategy {
-        BackoffStrategy::Constant => {
-            Duration::from_secs(base_delay_secs)
-        }
+        BackoffStrategy::Constant => Duration::from_secs(base_delay_secs),
         BackoffStrategy::Linear { max_delay_secs } => {
             let delay = base_delay_secs.saturating_mul(attempt as u64);
             Duration::from_secs(delay.min(*max_delay_secs))
         }
-        BackoffStrategy::Exponential { max_delay_secs, jitter } => {
+        BackoffStrategy::Exponential {
+            max_delay_secs,
+            jitter,
+        } => {
             let exp_delay = base_delay_secs.saturating_mul(2u64.saturating_pow(attempt - 1));
             let capped = exp_delay.min(*max_delay_secs);
             if *jitter > 0.0 {
@@ -201,29 +201,74 @@ mod tests {
     #[test]
     fn test_linear_backoff() {
         let strategy = BackoffStrategy::Linear { max_delay_secs: 30 };
-        assert_eq!(compute_task_backoff_delay(&strategy, 2, 1), Duration::from_secs(2));
-        assert_eq!(compute_task_backoff_delay(&strategy, 2, 5), Duration::from_secs(10));
-        assert_eq!(compute_task_backoff_delay(&strategy, 2, 20), Duration::from_secs(30)); // capped
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 2, 1),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 2, 5),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 2, 20),
+            Duration::from_secs(30)
+        ); // capped
     }
 
     #[test]
     fn test_exponential_backoff_no_jitter() {
-        let strategy = BackoffStrategy::Exponential { max_delay_secs: 60, jitter: 0.0 };
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 1), Duration::from_secs(1));  // 1 * 2^0
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 2), Duration::from_secs(2));  // 1 * 2^1
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 3), Duration::from_secs(4));  // 1 * 2^2
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 4), Duration::from_secs(8));  // 1 * 2^3
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 7), Duration::from_secs(60)); // capped
+        let strategy = BackoffStrategy::Exponential {
+            max_delay_secs: 60,
+            jitter: 0.0,
+        };
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 1),
+            Duration::from_secs(1)
+        ); // 1 * 2^0
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 2),
+            Duration::from_secs(2)
+        ); // 1 * 2^1
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 3),
+            Duration::from_secs(4)
+        ); // 1 * 2^2
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 4),
+            Duration::from_secs(8)
+        ); // 1 * 2^3
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 7),
+            Duration::from_secs(60)
+        ); // capped
     }
 
     #[test]
     fn test_fibonacci_backoff() {
         let strategy = BackoffStrategy::Fibonacci { max_delay_secs: 60 };
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 1), Duration::from_secs(1));
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 2), Duration::from_secs(1));
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 3), Duration::from_secs(2));
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 4), Duration::from_secs(3));
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 5), Duration::from_secs(5));
-        assert_eq!(compute_task_backoff_delay(&strategy, 1, 6), Duration::from_secs(8));
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 1),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 2),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 3),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 4),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 5),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            compute_task_backoff_delay(&strategy, 1, 6),
+            Duration::from_secs(8)
+        );
     }
 }

@@ -10,7 +10,7 @@ use tracing::info;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // dotenvy::dotenv().ok();
-    
+
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -23,27 +23,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let infra = Arc::new(OrchInfra::new());
     let services = Arc::new(OrchServices::new(infra));
     let api = Arc::new(Orch::new(services));
-    
+
     // Perform health checks on dependent services before starting
     info!("Checking health of dependent services...");
-    
+
     if let Err(e) = api.fetcher_health().await {
         tracing::error!("❌ Fatal: Fetcher service health check failed: {}", e);
         tracing::error!("   Make sure fetcher is running and FETCHER_HTTP_ADDR is set correctly");
         std::process::exit(1);
     }
     info!("✅ Fetcher service is healthy");
-    
+
     if let Err(e) = api.brainatlas_health().await {
         tracing::error!("❌ Fatal: BrainAtlas service health check failed: {}", e);
-        tracing::error!("   Make sure brainatlas is running and BRAINATLAS_HTTP_ADDR is set correctly");
+        tracing::error!(
+            "   Make sure brainatlas is running and BRAINATLAS_HTTP_ADDR is set correctly"
+        );
         std::process::exit(1);
     }
     info!("✅ BrainAtlas service is healthy");
-    
+
     // Initialize the orch (spawns background loop)
     api.init().await?;
-    
+
     let orch_server = OrchServer::new(api);
 
     let router = orch_server.into_router();

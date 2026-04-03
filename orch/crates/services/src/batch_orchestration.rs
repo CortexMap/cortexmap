@@ -1,5 +1,5 @@
-use crate::{BatchManagement, CacheClient, EnvInfra, HttpClient, ServiceError};
 use crate::cache_keys::{self, cached_or_fetch, invalidate, invalidate_pattern};
+use crate::{BatchManagement, CacheClient, EnvInfra, HttpClient, ServiceError};
 use app::BatchOrchestration;
 use domain::ConfigKey;
 use serde::{Deserialize, Serialize};
@@ -39,50 +39,58 @@ where
         &self,
         database_url: &str,
     ) -> Result<domain::FetcherRetryConfig, ServiceError<E>> {
-        let backoff_strategy = self.infra
+        let backoff_strategy = self
+            .infra
             .get_config(database_url, ConfigKey::FetcherBackoffStrategy)
             .await
             .map_err(ServiceError::InfraError)?
             .unwrap_or_else(|| "constant".to_string());
 
-        let max_delay_secs: Option<u64> = self.infra
+        let max_delay_secs: Option<u64> = self
+            .infra
             .get_config(database_url, ConfigKey::FetcherMaxDelaySecs)
             .await
             .map_err(ServiceError::InfraError)?
             .and_then(|s| s.parse().ok());
 
-        let jitter: Option<f64> = self.infra
+        let jitter: Option<f64> = self
+            .infra
             .get_config(database_url, ConfigKey::FetcherBackoffJitter)
             .await
             .map_err(ServiceError::InfraError)?
             .and_then(|s| s.parse().ok())
             .filter(|&v: &f64| v > 0.0);
 
-        let empty_queue_sleep_secs: Option<u64> = self.infra
+        let empty_queue_sleep_secs: Option<u64> = self
+            .infra
             .get_config(database_url, ConfigKey::FetcherEmptyQueueSleepSecs)
             .await
             .map_err(ServiceError::InfraError)?
             .and_then(|s| s.parse().ok());
 
-        let stale_task_multiplier: Option<u64> = self.infra
+        let stale_task_multiplier: Option<u64> = self
+            .infra
             .get_config(database_url, ConfigKey::FetcherStaleTaskMultiplier)
             .await
             .map_err(ServiceError::InfraError)?
             .and_then(|s| s.parse().ok());
 
-        let summary_max_retries: Option<u32> = self.infra
+        let summary_max_retries: Option<u32> = self
+            .infra
             .get_config(database_url, ConfigKey::FetcherSummaryMaxRetries)
             .await
             .map_err(ServiceError::InfraError)?
             .and_then(|s| s.parse().ok());
 
-        let abstract_max_retries: Option<u32> = self.infra
+        let abstract_max_retries: Option<u32> = self
+            .infra
             .get_config(database_url, ConfigKey::FetcherAbstractMaxRetries)
             .await
             .map_err(ServiceError::InfraError)?
             .and_then(|s| s.parse().ok());
 
-        let pdf_max_retries: Option<u32> = self.infra
+        let pdf_max_retries: Option<u32> = self
+            .infra
             .get_config(database_url, ConfigKey::FetcherPdfMaxRetries)
             .await
             .map_err(ServiceError::InfraError)?
@@ -160,22 +168,32 @@ struct WorkerInfo {
     success_rate: f64,
 }
 
-
 #[async_trait::async_trait]
 impl<E, I> BatchOrchestration for OrchBatchOrchestration<I>
 where
     E: Error + Send + Sync + 'static,
-    I: EnvInfra<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + crate::OrchDatabase<Error = E> + CacheClient<Error = E> + Send + Sync,
+    I: EnvInfra<Error = E>
+        + HttpClient<Error = E>
+        + BatchManagement<Error = E>
+        + crate::OrchDatabase<Error = E>
+        + CacheClient<Error = E>
+        + Send
+        + Sync,
 {
     type Error = ServiceError<E>;
 
-    async fn create_batch(&self, region_id: Uuid, expected_count: usize) -> Result<Uuid, Self::Error> {
+    async fn create_batch(
+        &self,
+        region_id: Uuid,
+        expected_count: usize,
+    ) -> Result<Uuid, Self::Error> {
         let database_url = self
             .infra
             .get_env_var("DATABASE_URL")
             .map_err(ServiceError::InfraError)?;
 
-        let batch_id = self.infra
+        let batch_id = self
+            .infra
             .create_batch(&database_url, region_id, expected_count as i32)
             .await
             .map_err(ServiceError::InfraError)?;
@@ -202,7 +220,7 @@ where
                     .infra
                     .get_env_var("DATABASE_URL")
                     .map_err(ServiceError::InfraError)?;
-                
+
                 self.infra
                     .get_config(&database_url, ConfigKey::FetcherBaseUrl)
                     .await
@@ -213,7 +231,10 @@ where
             }
         };
 
-        let url = format!("{}/fetcher-be/api/queue/enqueue", fetcher_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/fetcher-be/api/queue/enqueue",
+            fetcher_url.trim_end_matches('/')
+        );
 
         let request = EnqueueRequest {
             query: query.clone(),
@@ -247,7 +268,11 @@ where
         Ok(response.task_ids)
     }
 
-    async fn add_tasks_to_batch(&self, batch_id: Uuid, task_ids: Vec<i64>) -> Result<(), Self::Error> {
+    async fn add_tasks_to_batch(
+        &self,
+        batch_id: Uuid,
+        task_ids: Vec<i64>,
+    ) -> Result<(), Self::Error> {
         let database_url = self
             .infra
             .get_env_var("DATABASE_URL")
@@ -259,7 +284,11 @@ where
             .map_err(ServiceError::InfraError)
     }
 
-    async fn update_batch_expected_count(&self, batch_id: Uuid, count: i32) -> Result<(), Self::Error> {
+    async fn update_batch_expected_count(
+        &self,
+        batch_id: Uuid,
+        count: i32,
+    ) -> Result<(), Self::Error> {
         let database_url = self
             .infra
             .get_env_var("DATABASE_URL")
@@ -271,7 +300,10 @@ where
             .map_err(ServiceError::InfraError)
     }
 
-    async fn get_batch_by_id(&self, batch_id: Uuid) -> Result<Option<domain::ProcessingBatch>, Self::Error> {
+    async fn get_batch_by_id(
+        &self,
+        batch_id: Uuid,
+    ) -> Result<Option<domain::ProcessingBatch>, Self::Error> {
         let infra = &self.infra;
         cached_or_fetch(
             infra.as_ref(),
@@ -315,7 +347,7 @@ where
                     .infra
                     .get_env_var("DATABASE_URL")
                     .map_err(ServiceError::InfraError)?;
-                
+
                 self.infra
                     .get_config(&database_url, ConfigKey::FetcherBaseUrl)
                     .await
@@ -327,10 +359,13 @@ where
         };
 
         // Check current worker status
-        let worker_status_url = format!("{}/fetcher-be/api/queue/workers/status", fetcher_url.trim_end_matches('/'));
-        
+        let worker_status_url = format!(
+            "{}/fetcher-be/api/queue/workers/status",
+            fetcher_url.trim_end_matches('/')
+        );
+
         tracing::debug!(url = %worker_status_url, "Checking worker status");
-        
+
         let worker_status: WorkerStatusResponse = self
             .infra
             .get(&worker_status_url)
@@ -338,7 +373,9 @@ where
             .map_err(ServiceError::InfraError)?;
 
         // Count active workers
-        let active_workers = worker_status.workers.iter()
+        let active_workers = worker_status
+            .workers
+            .iter()
             .filter(|w| w.status == "running")
             .count();
 
@@ -350,29 +387,38 @@ where
                 .infra
                 .get_env_var("DATABASE_URL")
                 .map_err(ServiceError::InfraError)?;
-            
-            let default_worker_count: u32 = self.infra
+
+            let default_worker_count: u32 = self
+                .infra
                 .get_config(&database_url, ConfigKey::DefaultWorkerCount)
                 .await
                 .map_err(ServiceError::InfraError)?
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(2); // Fallback to 2 if not configured
 
-            tracing::info!(worker_count = default_worker_count, "No workers active, allocating default workers");
+            tracing::info!(
+                worker_count = default_worker_count,
+                "No workers active, allocating default workers"
+            );
 
-            let allocate_url = format!("{}/fetcher-be/api/queue/workers/allocate", fetcher_url.trim_end_matches('/'));
-            
+            let allocate_url = format!(
+                "{}/fetcher-be/api/queue/workers/allocate",
+                fetcher_url.trim_end_matches('/')
+            );
+
             // Read retry configuration from orch_config
             let retry_config = self.build_retry_config_from_db(&database_url).await?;
-            
-            let task_timeout_secs: u64 = self.infra
+
+            let task_timeout_secs: u64 = self
+                .infra
                 .get_config(&database_url, ConfigKey::FetcherTaskTimeoutSecs)
                 .await
                 .map_err(ServiceError::InfraError)?
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(2);
 
-            let max_retry_attempts: u32 = self.infra
+            let max_retry_attempts: u32 = self
+                .infra
                 .get_config(&database_url, ConfigKey::FetcherMaxRetryAttempts)
                 .await
                 .map_err(ServiceError::InfraError)?
@@ -404,7 +450,10 @@ where
                 "Successfully allocated workers"
             );
         } else {
-            tracing::info!(active_workers = active_workers, "Workers already active, skipping allocation");
+            tracing::info!(
+                active_workers = active_workers,
+                "Workers already active, skipping allocation"
+            );
         }
 
         Ok(())
@@ -415,7 +464,13 @@ where
 impl<E, I> app::WorkerManagement for OrchBatchOrchestration<I>
 where
     E: Error + Send + Sync + 'static,
-    I: EnvInfra<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + crate::OrchDatabase<Error = E> + CacheClient<Error = E> + Send + Sync,
+    I: EnvInfra<Error = E>
+        + HttpClient<Error = E>
+        + BatchManagement<Error = E>
+        + crate::OrchDatabase<Error = E>
+        + CacheClient<Error = E>
+        + Send
+        + Sync,
 {
     type Error = ServiceError<E>;
 
@@ -428,7 +483,7 @@ where
                     .infra
                     .get_env_var("DATABASE_URL")
                     .map_err(ServiceError::InfraError)?;
-                
+
                 self.infra
                     .get_config(&database_url, ConfigKey::FetcherBaseUrl)
                     .await
@@ -439,10 +494,13 @@ where
             }
         };
 
-        let url = format!("{}/fetcher-be/api/queue/workers/status", fetcher_url.trim_end_matches('/'));
-        
+        let url = format!(
+            "{}/fetcher-be/api/queue/workers/status",
+            fetcher_url.trim_end_matches('/')
+        );
+
         tracing::debug!(url = %url, "Getting worker status");
-        
+
         let response: WorkerStatusResponse = self
             .infra
             .get(&url)
@@ -450,8 +508,10 @@ where
             .map_err(ServiceError::InfraError)?;
 
         // Transform proto-style response to domain types
-        let workers = response.workers.into_iter().map(|w| {
-            domain::WorkerStatus {
+        let workers = response
+            .workers
+            .into_iter()
+            .map(|w| domain::WorkerStatus {
                 worker_id: w.worker_id,
                 status: w.status,
                 current_task: w.current_task,
@@ -462,13 +522,16 @@ where
                 uptime_seconds: w.uptime_seconds,
                 tasks_failed: w.tasks_failed,
                 success_rate: w.success_rate,
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(workers)
     }
 
-    async fn allocate_workers(&self, req: domain::AllocateWorkersRequest) -> Result<domain::WorkerAllocationResponse, Self::Error> {
+    async fn allocate_workers(
+        &self,
+        req: domain::AllocateWorkersRequest,
+    ) -> Result<domain::WorkerAllocationResponse, Self::Error> {
         // Validate request
         if req.worker_count == 0 {
             return Err(ServiceError::InvalidInput {
@@ -490,7 +553,7 @@ where
                     .infra
                     .get_env_var("DATABASE_URL")
                     .map_err(ServiceError::InfraError)?;
-                
+
                 self.infra
                     .get_config(&database_url, ConfigKey::FetcherBaseUrl)
                     .await
@@ -501,8 +564,11 @@ where
             }
         };
 
-        let url = format!("{}/fetcher-be/api/queue/workers/allocate", fetcher_url.trim_end_matches('/'));
-        
+        let url = format!(
+            "{}/fetcher-be/api/queue/workers/allocate",
+            fetcher_url.trim_end_matches('/')
+        );
+
         // If user didn't provide retry config, load from DB
         let retry_config = match req.retry_config {
             Some(rc) => Some(rc),
@@ -552,7 +618,10 @@ where
         })
     }
 
-    async fn stop_workers(&self, req: domain::StopWorkersRequest) -> Result<domain::WorkerStopResponse, Self::Error> {
+    async fn stop_workers(
+        &self,
+        req: domain::StopWorkersRequest,
+    ) -> Result<domain::WorkerStopResponse, Self::Error> {
         // Get fetcher URL
         let fetcher_url = match self.infra.get_env_var("FETCHER_HTTP_ADDR") {
             Ok(addr) => Self::normalize_url(&addr),
@@ -561,7 +630,7 @@ where
                     .infra
                     .get_env_var("DATABASE_URL")
                     .map_err(ServiceError::InfraError)?;
-                
+
                 self.infra
                     .get_config(&database_url, ConfigKey::FetcherBaseUrl)
                     .await
@@ -572,8 +641,11 @@ where
             }
         };
 
-        let url = format!("{}/fetcher-be/api/queue/workers/stop", fetcher_url.trim_end_matches('/'));
-        
+        let url = format!(
+            "{}/fetcher-be/api/queue/workers/stop",
+            fetcher_url.trim_end_matches('/')
+        );
+
         #[derive(Serialize)]
         struct StopWorkersRequest {
             worker_ids: Vec<String>,

@@ -120,7 +120,7 @@ pub struct ProcessingBatchRow {
     pub completed_at: Option<NaiveDateTime>,
     pub summary_id: Option<Uuid>,
     pub error_message: Option<String>,
-    pub region_id: Uuid,  // Moved to end to match schema
+    pub region_id: Uuid, // Moved to end to match schema
 }
 
 #[derive(Insertable, Debug)]
@@ -159,9 +159,15 @@ impl From<ProcessingBatchRow> for domain::ProcessingBatch {
             expected_task_count: row.expected_task_count,
             content_hash: row.content_hash,
             created_at: DateTime::<Utc>::from_naive_utc_and_offset(row.created_at, Utc),
-            ready_at: row.ready_at.map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t, Utc)),
-            processing_started_at: row.processing_started_at.map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t, Utc)),
-            completed_at: row.completed_at.map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t, Utc)),
+            ready_at: row
+                .ready_at
+                .map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t, Utc)),
+            processing_started_at: row
+                .processing_started_at
+                .map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t, Utc)),
+            completed_at: row
+                .completed_at
+                .map(|t| DateTime::<Utc>::from_naive_utc_and_offset(t, Utc)),
             summary_id: row.summary_id,
             error_message: row.error_message,
         }

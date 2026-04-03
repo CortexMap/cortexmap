@@ -1,7 +1,7 @@
 use domain::{
-    AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate, GenerateSummaryResult,
-    PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult, SearchResponse, StopWorkersRequest,
-    WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
+    AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
+    GenerateSummaryResult, PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult,
+    SearchResponse, StopWorkersRequest, WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
 };
 use uuid::Uuid;
 
@@ -10,45 +10,49 @@ use uuid::Uuid;
 #[async_trait::async_trait]
 pub trait OrchApi: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
-    
+
     /// Initialize the orchestrator
     /// Spawns background tasks (completion watcher loop)
     async fn init(&self) -> Result<(), Self::Error>;
-    
+
     /// List all summaries for a region (just returns summaries with metadata)
     async fn list_summaries(&self, region_id: Uuid) -> Result<SearchRegionResult, Self::Error>;
-    
+
     /// Generate a new summary for a region
     /// Creates a new batch, generates queries, enqueues tasks
     /// Returns batch_id immediately for tracking progress
-    async fn generate_summary(&self, region_id: Uuid) -> Result<GenerateSummaryResult, Self::Error>;
-    
+    async fn generate_summary(&self, region_id: Uuid)
+    -> Result<GenerateSummaryResult, Self::Error>;
+
     /// Get the status of a specific batch
     async fn get_batch_status(&self, batch_id: Uuid) -> Result<BatchStatusResult, Self::Error>;
-    
+
     /// Get the active batch for a region (if one is in progress)
     /// Returns the batch ID if there's an active batch (collecting, ready, or processing)
     /// Returns None if no active batch exists
     async fn get_active_batch(&self, region_id: Uuid) -> Result<Option<Uuid>, Self::Error>;
-    
+
     /// Get the end-to-end pipeline status for a single region
     async fn get_region_status(&self, region_id: Uuid) -> Result<RegionStatusResult, Self::Error>;
-    
+
     /// Get high-level count breakdown across all regions
     async fn get_pipeline_stats(&self) -> Result<PipelineStatsResult, Self::Error>;
-    
+
     /// Read current orch configuration
     async fn get_config(&self) -> Result<Vec<ConfigEntry>, Self::Error>;
-    
+
     /// Update one or more config entries at runtime without restart
-    async fn update_config(&self, entries: Vec<ConfigEntryUpdate>) -> Result<Vec<ConfigEntry>, Self::Error>;
-    
+    async fn update_config(
+        &self,
+        entries: Vec<ConfigEntryUpdate>,
+    ) -> Result<Vec<ConfigEntry>, Self::Error>;
+
     /// Get all brain regions from region_mapping table
     async fn get_all_regions(&self) -> Result<Vec<Region>, Self::Error>;
-    
+
     /// Health check for fetcher service
     async fn fetcher_health(&self) -> Result<(), Self::Error>;
-    
+
     /// Health check for brainatlas service
     async fn brainatlas_health(&self) -> Result<(), Self::Error>;
 
@@ -62,11 +66,17 @@ pub trait OrchApi: Send + Sync {
 
     /// Allocate workers in the fetcher service
     /// Forwards to fetcher-be: POST /fetcher-be/api/queue/workers/allocate
-    async fn allocate_workers(&self, req: AllocateWorkersRequest) -> Result<WorkerAllocationResponse, Self::Error>;
+    async fn allocate_workers(
+        &self,
+        req: AllocateWorkersRequest,
+    ) -> Result<WorkerAllocationResponse, Self::Error>;
 
     /// Stop workers in the fetcher service
     /// Forwards to fetcher-be: POST /fetcher-be/api/queue/workers/stop
-    async fn stop_workers(&self, req: StopWorkersRequest) -> Result<WorkerStopResponse, Self::Error>;
+    async fn stop_workers(
+        &self,
+        req: StopWorkersRequest,
+    ) -> Result<WorkerStopResponse, Self::Error>;
 
     /// Reverse search: find brain regions by natural language query
     /// Searches across region names, acronyms, and latest summaries

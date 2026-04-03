@@ -67,10 +67,7 @@ impl S3Storage for BrainAtlasS3 {
             .send()
             .await
             .map_err(|e| {
-                error!(
-                    "S3 download failed for s3://{}/{}: {}",
-                    self.bucket, key, e
-                );
+                error!("S3 download failed for s3://{}/{}: {}", self.bucket, key, e);
                 InfraError::S3(e.to_string())
             })?;
 

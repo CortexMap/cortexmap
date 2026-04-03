@@ -3,7 +3,7 @@ use crate::models::*;
 use crate::schema;
 use diesel::prelude::*;
 use diesel::sql_types::{Float8, Int4, Text};
-use domain::{ExistingSummary, NewEmbedding, NewRegionSummary, SimilarChunk, ChunkSource};
+use domain::{ChunkSource, ExistingSummary, NewEmbedding, NewRegionSummary, SimilarChunk};
 use services::infra::VectorDatabase;
 use std::sync::{Arc, Mutex, OnceLock};
 use uuid::Uuid;

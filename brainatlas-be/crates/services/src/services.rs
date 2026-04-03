@@ -1,11 +1,17 @@
-use crate::list_brain_regions::BrainAtlasListBrainRegions;
-use crate::region_info::BrainAtlasRegionInfo;
 use crate::chunker::TextChunker;
-use crate::llm_service::BrainAtlasLlmService;
 use crate::embedding_service::BrainAtlasEmbeddingService;
+use crate::list_brain_regions::BrainAtlasListBrainRegions;
+use crate::llm_service::BrainAtlasLlmService;
+use crate::region_info::BrainAtlasRegionInfo;
 use crate::{Infra, ServiceError};
-use app::{BrainRegionInfo, ListBrainRegions, Chunker, LlmService, EmbeddingService, S3Storage, VectorDatabase};
-use domain::{BrainRegionEntry, RegionMapping, NewEmbedding, NewRegionSummary, ExistingSummary, SimilarChunk, ChunkSource, LlmResponse};
+use app::{
+    BrainRegionInfo, Chunker, EmbeddingService, ListBrainRegions, LlmService, S3Storage,
+    VectorDatabase,
+};
+use domain::{
+    BrainRegionEntry, ChunkSource, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary,
+    RegionMapping, SimilarChunk,
+};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -57,10 +63,16 @@ where
         tools: &[serde_json::Value],
         chat_model_override: Option<&str>,
     ) -> Result<LlmResponse, Self::Error> {
-        self.llm_service.summarize_with_tools(messages, tools, chat_model_override).await
+        self.llm_service
+            .summarize_with_tools(messages, tools, chat_model_override)
+            .await
     }
 
-    async fn generate_queries(&self, region_name: &str, count: u32) -> Result<Vec<String>, Self::Error> {
+    async fn generate_queries(
+        &self,
+        region_name: &str,
+        count: u32,
+    ) -> Result<Vec<String>, Self::Error> {
         self.llm_service.generate_queries(region_name, count).await
     }
 }
@@ -74,8 +86,14 @@ where
 {
     type Error = ServiceError<E>;
 
-    async fn generate_embedding(&self, text: &str, model_override: Option<&str>) -> Result<Vec<f32>, Self::Error> {
-        self.embedding_service.generate_embedding(text, model_override).await
+    async fn generate_embedding(
+        &self,
+        text: &str,
+        model_override: Option<&str>,
+    ) -> Result<Vec<f32>, Self::Error> {
+        self.embedding_service
+            .generate_embedding(text, model_override)
+            .await
     }
 }
 
@@ -115,7 +133,10 @@ where
     type Error = ServiceError<E>;
 
     async fn download(&self, key: &str) -> Result<String, Self::Error> {
-        self.infra.download(key).await.map_err(ServiceError::InfraError)
+        self.infra
+            .download(key)
+            .await
+            .map_err(ServiceError::InfraError)
     }
 }
 
@@ -128,11 +149,16 @@ where
 {
     type Error = ServiceError<E>;
 
-    async fn check_content_hash(&self, region_id: i32, content_hash: &str) -> Result<Option<ExistingSummary>, Self::Error> {
-        let database_url = self.infra
+    async fn check_content_hash(
+        &self,
+        region_id: i32,
+        content_hash: &str,
+    ) -> Result<Option<ExistingSummary>, Self::Error> {
+        let database_url = self
+            .infra
             .get("DATABASE_URL")
             .map_err(ServiceError::InfraError)?;
-        
+
         self.infra
             .check_content_hash(&database_url, region_id, content_hash)
             .await
@@ -144,27 +170,29 @@ where
         summary: NewRegionSummary,
         mut embeddings: Vec<NewEmbedding>,
     ) -> Result<Uuid, Self::Error> {
-        let database_url = self.infra
+        let database_url = self
+            .infra
             .get("DATABASE_URL")
             .map_err(ServiceError::InfraError)?;
-        
+
         // 1. Insert the summary first
-        let summary_id = self.infra
+        let summary_id = self
+            .infra
             .insert_summary(&database_url, summary)
             .await
             .map_err(ServiceError::InfraError)?;
-        
+
         // 2. Update all embeddings with the summary_id
         for embedding in &mut embeddings {
             embedding.summary_id = summary_id;
         }
-        
+
         // 3. Insert all embeddings
         self.infra
             .insert_embeddings(&database_url, embeddings)
             .await
             .map_err(ServiceError::InfraError)?;
-        
+
         Ok(summary_id)
     }
 
@@ -201,10 +229,7 @@ where
             .map_err(ServiceError::InfraError)
     }
 
-    async fn get_chunk_source(
-        &self,
-        chunk_id: Uuid,
-    ) -> Result<Option<ChunkSource>, Self::Error> {
+    async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<Option<ChunkSource>, Self::Error> {
         let database_url = self
             .infra
             .get("DATABASE_URL")

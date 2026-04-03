@@ -87,7 +87,11 @@ fn main() {
         .name("Lint")
         .runs_on("ubuntu-latest")
         .permissions(Permissions::default().contents(Level::Read))
-        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "34e114876b0b11c390a56381ad16ebd13914f8d5"))
+        .add_step(Step::new("Checkout Code").uses(
+            "actions",
+            "checkout",
+            "34e114876b0b11c390a56381ad16ebd13914f8d5",
+        ))
         .add_step(protoc_install())
         .add_step(
             Step::new("Setup Rust Toolchain")
@@ -116,17 +120,15 @@ fn main() {
     let workflow = Workflow::new("ci")
         .name("ci")
         .env(Env::from(("RUSTFLAGS", "-Dwarnings")))
-        .on(
-            Event::default()
-                .pull_request(
-                    PullRequest::default()
-                        .add_branch("main")
-                        .add_type(PullRequestType::Opened)
-                        .add_type(PullRequestType::Synchronize)
-                        .add_type(PullRequestType::Reopened),
-                )
-                .push(Push::default().add_branch("main")),
-        )
+        .on(Event::default()
+            .pull_request(
+                PullRequest::default()
+                    .add_branch("main")
+                    .add_type(PullRequestType::Opened)
+                    .add_type(PullRequestType::Synchronize)
+                    .add_type(PullRequestType::Reopened),
+            )
+            .push(Push::default().add_branch("main")))
         .add_job("build", build_job)
         .add_job("lint", lint_job);
 

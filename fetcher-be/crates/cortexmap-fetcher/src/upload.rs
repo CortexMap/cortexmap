@@ -25,11 +25,11 @@ pub async fn upload<I: DatabaseInfra + S3Infra + Send + Sync + 'static>(
 
         let pdf_key = determine_pdf_key(&stream.pmc_id, blueprint);
         let metadata_key = determine_metadata_key(&stream.pmc_id, blueprint);
-        
+
         // Upload metadata to S3 as JSON with retry
         if let Some(metadata) = metadata_map.get(&stream.pmc_id) {
-            let metadata_json = serde_json::to_vec_pretty(metadata)
-                .map_err(|e| FetchError::SerdeError(e))?;
+            let metadata_json =
+                serde_json::to_vec_pretty(metadata).map_err(FetchError::SerdeError)?;
             let metadata_bytes = bytes::Bytes::from(metadata_json);
 
             let upload_result = {
@@ -43,10 +43,12 @@ pub async fn upload<I: DatabaseInfra + S3Infra + Send + Sync + 'static>(
                         let data = data.clone();
                         async move {
                             let stream = futures::stream::once(async move { data });
-                            infra.put_s3(&key, ContentType::Json, Box::pin(stream)).await
+                            infra
+                                .put_s3(&key, ContentType::Json, Box::pin(stream))
+                                .await
                         }
                     },
-                    |e| is_infra_retryable(e),
+                    is_infra_retryable,
                     "S3 metadata upload (legacy)",
                 )
                 .await
@@ -54,20 +56,22 @@ pub async fn upload<I: DatabaseInfra + S3Infra + Send + Sync + 'static>(
 
             match upload_result {
                 Ok(_) => tracing::info!("Uploaded metadata to S3: {}", metadata_key),
-                Err(e) => tracing::warn!("Failed to upload metadata for {}: {:?}", stream.pmc_id, e),
+                Err(e) => {
+                    tracing::warn!("Failed to upload metadata for {}: {:?}", stream.pmc_id, e)
+                }
             }
         }
-        
+
         // Upload PDF to S3 (streaming -- cannot easily retry mid-stream)
         let byte_stream = stream
             .stream
             .filter_map(|result| async move { result.ok() });
-            
+
         let res = ctx
             .infra
             .put_s3(&pdf_key, ContentType::Pdf, Box::pin(byte_stream))
             .await;
-            
+
         if let Ok(()) = res {
             // Insert minimal record into PostgreSQL as an index
             ctx.infra

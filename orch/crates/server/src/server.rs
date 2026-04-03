@@ -59,14 +59,20 @@ impl OrchServer {
             .route("/api/regions", get(get_all_regions_handler))
             .route("/api/regions/{id}/summaries", get(list_summaries_handler))
             .route("/api/regions/{id}/generate", post(generate_summary_handler))
-            .route("/api/regions/{id}/active-batch", get(get_active_batch_handler))
+            .route(
+                "/api/regions/{id}/active-batch",
+                get(get_active_batch_handler),
+            )
             .route("/api/search", post(reverse_search_handler))
             .route("/api/batches/{id}/status", get(get_batch_status_handler))
             .route("/api/regions/{id}/status", get(get_region_status_handler))
             .route("/api/pipeline/stats", get(get_pipeline_stats_handler))
             .route("/api/config", get(get_config_handler))
             .route("/api/config", patch(update_config_handler))
-            .route("/api/chunks/{chunk_id}/source", get(get_chunk_source_handler))
+            .route(
+                "/api/chunks/{chunk_id}/source",
+                get(get_chunk_source_handler),
+            )
             .route("/api/workers/status", get(get_worker_status_handler))
             .route("/api/workers/allocate", post(allocate_workers_handler))
             .route("/api/workers/stop", post(stop_workers_handler))

@@ -1,8 +1,8 @@
-use uuid::Uuid;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use std::future::Future;
 use crate::CacheClient;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use std::future::Future;
+use uuid::Uuid;
 
 // ── TTL constants (seconds) ─────────────────────────────────────────────────
 
@@ -114,10 +114,10 @@ where
     let value = fetch_fn().await?;
 
     // Best-effort populate cache
-    if let Ok(json) = serde_json::to_string(&value) {
-        if let Err(e) = cache.cache_set(key, &json, ttl_secs).await {
-            tracing::warn!(key, error = %e, "failed to populate cache");
-        }
+    if let Ok(json) = serde_json::to_string(&value)
+        && let Err(e) = cache.cache_set(key, &json, ttl_secs).await
+    {
+        tracing::warn!(key, error = %e, "failed to populate cache");
     }
 
     Ok(value)

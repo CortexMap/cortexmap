@@ -1,12 +1,11 @@
-use serde::{Deserialize, Serialize};
 use crate::config::BooleanQuery;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
     pub query: Option<BooleanQuery>,
 }
-
 
 impl Config {
     /// Parse configuration from a YAML string

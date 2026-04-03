@@ -1,7 +1,13 @@
-use crate::{BatchManagement, CacheClient, EnvInfra, HttpClient, ServiceError, GenerateQueriesRequest, GenerateQueriesResponse};
 use crate::cache_keys::{self, cached_or_fetch, invalidate, invalidate_pattern};
+use crate::{
+    BatchManagement, CacheClient, EnvInfra, GenerateQueriesRequest, GenerateQueriesResponse,
+    HttpClient, ServiceError,
+};
 use app::RegionManagement;
-use domain::{BatchStatus, ChunkSourceResponse, ConfigKey, ProcessingBatch, RegionQuery, RegionSummary, SummarySource};
+use domain::{
+    BatchStatus, ChunkSourceResponse, ConfigKey, ProcessingBatch, RegionQuery, RegionSummary,
+    SummarySource,
+};
 use std::error::Error;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -20,7 +26,14 @@ impl<I> OrchRegionManagement<I> {
 impl<E, I> RegionManagement for OrchRegionManagement<I>
 where
     E: Error + Send + Sync + 'static,
-    I: EnvInfra<Error = E> + HttpClient<Error = E> + BatchManagement<Error = E> + crate::OrchDatabase<Error = E> + crate::RegionMappingQueries<Error = E> + CacheClient<Error = E> + Send + Sync,
+    I: EnvInfra<Error = E>
+        + HttpClient<Error = E>
+        + BatchManagement<Error = E>
+        + crate::OrchDatabase<Error = E>
+        + crate::RegionMappingQueries<Error = E>
+        + CacheClient<Error = E>
+        + Send
+        + Sync,
 {
     type Error = ServiceError<E>;
 
@@ -163,9 +176,17 @@ where
             .map_err(ServiceError::InfraError)
     }
 
-    async fn generate_queries(&self, region_name: &str, count: u32) -> Result<Vec<String>, Self::Error> {
-        tracing::info!(region_name, count, "Generating queries using LLM via brainatlas");
-        
+    async fn generate_queries(
+        &self,
+        region_name: &str,
+        count: u32,
+    ) -> Result<Vec<String>, Self::Error> {
+        tracing::info!(
+            region_name,
+            count,
+            "Generating queries using LLM via brainatlas"
+        );
+
         // Normalize URL helper
         fn normalize_url(addr: &str) -> String {
             if addr.starts_with("http://") || addr.starts_with("https://") {
@@ -175,74 +196,72 @@ where
                 format!("http://{}", replaced)
             }
         }
-        
+
         // Get brainatlas URL from env or config
         let database_url = self
             .infra
             .get_env_var("DATABASE_URL")
             .map_err(ServiceError::InfraError)?;
-        
+
         let brainatlas_url = match self.infra.get_env_var("BRAINATLAS_HTTP_ADDR") {
             Ok(addr) => normalize_url(&addr),
-            Err(_) => {
-                self.infra
-                    .get_config(&database_url, ConfigKey::BrainatlasBaseUrl)
-                    .await
-                    .map_err(ServiceError::InfraError)?
-                    .ok_or_else(|| ServiceError::ConfigNotFound {
-                        key: "brainatlas_base_url".to_string(),
-                    })?
-            }
+            Err(_) => self
+                .infra
+                .get_config(&database_url, ConfigKey::BrainatlasBaseUrl)
+                .await
+                .map_err(ServiceError::InfraError)?
+                .ok_or_else(|| ServiceError::ConfigNotFound {
+                    key: "brainatlas_base_url".to_string(),
+                })?,
         };
-        
-        let url = format!("{}/brainatlas-be/api/generate-queries", brainatlas_url.trim_end_matches('/'));
-        
+
+        let url = format!(
+            "{}/brainatlas-be/api/generate-queries",
+            brainatlas_url.trim_end_matches('/')
+        );
+
         let request = GenerateQueriesRequest {
             region_name: region_name.to_string(),
             count,
         };
-        
+
         tracing::info!(url = %url, region_name, count, "Calling brainatlas generate-queries endpoint");
-        
-        let response: GenerateQueriesResponse = self.infra
+
+        let response: GenerateQueriesResponse = self
+            .infra
             .post(&url, &request)
             .await
             .map_err(ServiceError::InfraError)?;
-        
+
         tracing::info!(
             region_name,
             query_count = response.queries.len(),
             queries = ?response.queries,
             "Successfully generated LLM queries"
         );
-        
+
         Ok(response.queries)
     }
-    
+
     async fn get_batches_by_status(
         &self,
         status: BatchStatus,
     ) -> Result<Vec<ProcessingBatch>, Self::Error> {
         let infra = &self.infra;
         let key = cache_keys::batches_by_status(status.as_str());
-        cached_or_fetch(
-            infra.as_ref(),
-            &key,
-            cache_keys::TTL_SHORT,
-            || async {
-                let database_url = infra
-                    .get_env_var("DATABASE_URL")
-                    .map_err(ServiceError::InfraError)?;
+        cached_or_fetch(infra.as_ref(), &key, cache_keys::TTL_SHORT, || async {
+            let database_url = infra
+                .get_env_var("DATABASE_URL")
+                .map_err(ServiceError::InfraError)?;
 
-                infra
-                    .get_batches_by_status(&database_url, status)
-                    .await
-                    .map_err(ServiceError::InfraError)
-            },
-        )
+            infra
+                .get_batches_by_status(&database_url, status)
+                .await
+                .map_err(ServiceError::InfraError)
+        })
         .await
     }
-    
+
     async fn get_region_name(&self, region_id: Uuid) -> Result<String, Self::Error> {
         let database_url = self
             .infra
@@ -258,7 +277,7 @@ where
 
         Ok(region.name)
     }
-    
+
     async fn get_total_regions(&self) -> Result<i64, Self::Error> {
         let database_url = self
             .infra
@@ -270,7 +289,7 @@ where
             .await
             .map_err(ServiceError::InfraError)
     }
-    
+
     async fn count_regions_without_batches(&self) -> Result<i64, Self::Error> {
         let database_url = self
             .infra
@@ -282,7 +301,7 @@ where
             .await
             .map_err(ServiceError::InfraError)
     }
-    
+
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error> {
         let database_url = self
             .infra
@@ -297,7 +316,7 @@ where
 
         Ok(value.and_then(|v| v.parse::<u32>().ok()))
     }
-    
+
     async fn get_all_regions(&self) -> Result<Vec<domain::Region>, Self::Error> {
         let infra = &self.infra;
         cached_or_fetch(
@@ -321,7 +340,9 @@ where
                         region_id: r.region_id,
                         name: r.name,
                         acronym: r.acronym,
-                        color: if let (Some(red), Some(green), Some(blue)) = (r.red, r.green, r.blue) {
+                        color: if let (Some(red), Some(green), Some(blue)) =
+                            (r.red, r.green, r.blue)
+                        {
                             Some(domain::RegionColor { red, green, blue })
                         } else {
                             None
@@ -335,7 +356,7 @@ where
         )
         .await
     }
-    
+
     async fn delete_queries(&self, region_id: Uuid) -> Result<(), Self::Error> {
         let database_url = self
             .infra
@@ -348,7 +369,11 @@ where
             .map_err(ServiceError::InfraError)?;
 
         // Invalidate region-level caches (queries deleted implies region reset)
-        invalidate(self.infra.as_ref(), &cache_keys::region_summaries(region_id)).await;
+        invalidate(
+            self.infra.as_ref(),
+            &cache_keys::region_summaries(region_id),
+        )
+        .await;
         invalidate(self.infra.as_ref(), &cache_keys::region_status(region_id)).await;
         invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
 

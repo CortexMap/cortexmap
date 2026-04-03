@@ -1,15 +1,15 @@
 // Re-export rpc-types for convenience
 pub use rpc_types;
 
-mod processing;
-mod hash;
-mod tool_calling;
 pub mod boolean_query;
+mod hash;
+mod processing;
+mod tool_calling;
 
-pub use processing::*;
-pub use hash::compute_hash;
-pub use tool_calling::*;
 pub use boolean_query::BooleanQuery;
+pub use hash::compute_hash;
+pub use processing::*;
+pub use tool_calling::*;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -154,7 +154,9 @@ impl From<RegionMapping> for rpc_types::RegionMapping {
             structure_order: region.structure_order.unwrap_or(0),
             parent_region_id: region.parent_region_id.map(|id| rpc_types::RegionId { id }),
             acronym: region.acronym.map(|a| rpc_types::Acronym { acronym: a }),
-            parent_acronym: region.parent_acronym.map(|a| rpc_types::Acronym { acronym: a }),
+            parent_acronym: region
+                .parent_acronym
+                .map(|a| rpc_types::Acronym { acronym: a }),
         }
     }
 }
@@ -185,7 +187,9 @@ impl From<BrainRegionEntry> for rpc_types::BrainRegionEntry {
     fn from(entry: BrainRegionEntry) -> Self {
         use rpc_types::proto::RegionId;
         Self {
-            region_id: Some(RegionId { id: entry.region_id }),
+            region_id: Some(RegionId {
+                id: entry.region_id,
+            }),
             name: entry.name,
             acronym: entry.acronym,
             summary: entry.summary,

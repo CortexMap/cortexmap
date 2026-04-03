@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 /// A tool call request from the LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]

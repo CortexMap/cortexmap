@@ -29,7 +29,7 @@ pub async fn fetch_pdf<I: HttpInfra + Send + Sync + 'static>(
 ) -> Result<PdfStream, FetchError> {
     // Ensure PMC prefix (OA service requires "PMC" prefix)
     let pmc_id_with_prefix = ensure_pmc_prefix(&pmc_id);
-    
+
     // Step 1: Query the OA Service API to get the PDF URL
     let oa_url = OA_API_URL.replace("{PMCID}", &pmc_id_with_prefix);
     let oa_response = {
@@ -41,25 +41,26 @@ pub async fn fetch_pdf<I: HttpInfra + Send + Sync + 'static>(
                 let url = url.clone();
                 async move { Ok::<_, FetchError>(infra.get(&url).await?) }
             },
-            |e| is_fetch_retryable(e),
+            is_fetch_retryable,
             "OA Service",
         )
         .await?
     };
-    
+
     if !oa_response.status().is_success() {
         return Err(FetchError::InvalidPdfSource(format!(
             "Failed to query OA service for {}: HTTP {}",
-            pmc_id, oa_response.status()
+            pmc_id,
+            oa_response.status()
         )));
     }
-    
+
     // Parse the XML response to extract the PDF URL
     let xml_text = oa_response.text().await?;
     let pdf_url = extract_pdf_url_from_xml(&xml_text, &pmc_id)?;
-    
+
     tracing::info!("Fetching PDF from: {}", pdf_url);
-    
+
     // Step 2: Download the PDF from the FTP/HTTP URL
     let response = {
         let infra = ctx.infra.clone();
@@ -70,12 +71,12 @@ pub async fn fetch_pdf<I: HttpInfra + Send + Sync + 'static>(
                 let url = url.clone();
                 async move { Ok::<_, FetchError>(infra.get(&url).await?) }
             },
-            |e| is_fetch_retryable(e),
+            is_fetch_retryable,
             "PDF download",
         )
         .await?
     };
-    
+
     // Check if the response was successful
     let status = response.status();
     if !status.is_success() {
@@ -84,11 +85,13 @@ pub async fn fetch_pdf<I: HttpInfra + Send + Sync + 'static>(
             pmc_id, status
         )));
     }
-    
+
     // Verify content type is PDF
     if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
         let content_type_str = content_type.to_str().unwrap_or("");
-        if !content_type_str.contains("application/pdf") && !content_type_str.contains("application/octet-stream") {
+        if !content_type_str.contains("application/pdf")
+            && !content_type_str.contains("application/octet-stream")
+        {
             tracing::warn!(
                 "Unexpected content type for {}: {}",
                 pmc_id,
@@ -116,7 +119,7 @@ fn extract_pdf_url_from_xml(xml: &str, pmc_id: &str) -> Result<String, FetchErro
     // Look for <link format="pdf" href="..."/>
     // Example: <link format="pdf" updated="2017-03-03 06:05:17"
     //           href="ftp://ftp.ncbi.nlm.nih.gov/pub/pmc/oa_pdf/8e/71/WJR-9-27.PMC5334499.pdf"/>
-    
+
     // Check if there's an error in the response
     if xml.contains("<error>") {
         let error_msg = xml
@@ -129,7 +132,7 @@ fn extract_pdf_url_from_xml(xml: &str, pmc_id: &str) -> Result<String, FetchErro
             pmc_id, error_msg
         )));
     }
-    
+
     // Check if article is retracted
     if xml.contains("retracted=\"yes\"") {
         return Err(FetchError::InvalidPdfSource(format!(
@@ -137,33 +140,41 @@ fn extract_pdf_url_from_xml(xml: &str, pmc_id: &str) -> Result<String, FetchErro
             pmc_id
         )));
     }
-    
+
     // Find the PDF link - handle multi-line XML elements
     // Collapse whitespace to handle attributes split across lines
-    let normalized = xml.split('\n').map(|line| line.trim()).collect::<Vec<_>>().join(" ");
-    
+    let normalized = xml
+        .split('\n')
+        .map(|line| line.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+
     // Look for <link format="pdf" ... href="..." />
     if let Some(link_start) = normalized.find("<link") {
         let remaining = &normalized[link_start..];
-        
+
         // Split by link tags and process each
         for segment in remaining.split("<link") {
-            if segment.contains("format=\"pdf\"") && segment.contains("href=\"") {
-                if let Some(href_start) = segment.find("href=\"") {
-                    let url_start = href_start + 6; // length of 'href="'
-                    if let Some(url_end) = segment[url_start..].find('"') {
-                        let mut url = segment[url_start..url_start + url_end].to_string();
-                        // Convert FTP URLs to HTTPS
-                        if url.starts_with("ftp://ftp.ncbi.nlm.nih.gov/") {
-                            url = url.replace("ftp://ftp.ncbi.nlm.nih.gov/", "https://ftp.ncbi.nlm.nih.gov/");
-                        }
-                        return Ok(url);
+            if segment.contains("format=\"pdf\"")
+                && segment.contains("href=\"")
+                && let Some(href_start) = segment.find("href=\"")
+            {
+                let url_start = href_start + 6; // length of 'href="'
+                if let Some(url_end) = segment[url_start..].find('"') {
+                    let mut url = segment[url_start..url_start + url_end].to_string();
+                    // Convert FTP URLs to HTTPS
+                    if url.starts_with("ftp://ftp.ncbi.nlm.nih.gov/") {
+                        url = url.replace(
+                            "ftp://ftp.ncbi.nlm.nih.gov/",
+                            "https://ftp.ncbi.nlm.nih.gov/",
+                        );
                     }
+                    return Ok(url);
                 }
             }
         }
     }
-    
+
     Err(FetchError::NotFound(format!(
         "No PDF available for {} in OA subset",
         pmc_id
@@ -189,11 +200,14 @@ mod tests {
     </record>
   </records>
 </OA>"#;
-        
+
         let result = extract_pdf_url_from_xml(xml, "PMC5334499");
         assert!(result.is_ok());
         let url = result.unwrap();
-        assert_eq!(url, "https://ftp.ncbi.nlm.nih.gov/pub/pmc/oa_pdf/8e/71/WJR-9-27.PMC5334499.pdf");
+        assert_eq!(
+            url,
+            "https://ftp.ncbi.nlm.nih.gov/pub/pmc/oa_pdf/8e/71/WJR-9-27.PMC5334499.pdf"
+        );
     }
 
     #[test]
@@ -205,10 +219,13 @@ mod tests {
     </record>
   </records>
 </OA>"#;
-        
+
         let result = extract_pdf_url_from_xml(xml, "PMC1234567");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), FetchError::InvalidPdfSource(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            FetchError::InvalidPdfSource(_)
+        ));
     }
 
     #[test]
@@ -217,7 +234,7 @@ mod tests {
   <records returned-count="0" total-count="0">
   </records>
 </OA>"#;
-        
+
         let result = extract_pdf_url_from_xml(xml, "PMC9999999");
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), FetchError::NotFound(_)));
@@ -228,7 +245,7 @@ mod tests {
         let xml = r#"<OA>
   <error>Invalid PMC ID format</error>
 </OA>"#;
-        
+
         let result = extract_pdf_url_from_xml(xml, "INVALID");
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), FetchError::NotFound(_)));
@@ -243,7 +260,7 @@ mod tests {
     </record>
   </records>
 </OA>"#;
-        
+
         let result = extract_pdf_url_from_xml(xml, "PMC1234567");
         assert!(result.is_ok());
         let url = result.unwrap();

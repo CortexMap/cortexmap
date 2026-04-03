@@ -2,9 +2,9 @@ use crate::proto::WorkerInfo;
 use cortexmap_core::blueprint::Blueprint;
 use cortexmap_fetcher::worker_loop;
 use cortexmap_infra::InfraContext;
-use std_infra::StdInfra;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std_infra::StdInfra;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -18,6 +18,12 @@ pub struct WorkerHandle {
 pub struct WorkerManager {
     workers: HashMap<String, WorkerHandle>,
     ctx: Option<InfraContext<StdInfra>>,
+}
+
+impl Default for WorkerManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WorkerManager {
@@ -38,14 +44,14 @@ impl WorkerManager {
         if self.ctx.is_none() {
             self.ctx = Some(ctx.clone());
         }
-        
+
         let mut worker_ids = Vec::new();
 
         for _ in 0..count {
             let worker_id = Uuid::new_v4().to_string();
             let ctx_clone = ctx.clone();
             let blueprint_clone = blueprint.clone();
-            
+
             // Create cancellation channel
             let (cancel_tx, mut cancel_rx) = tokio::sync::mpsc::channel::<()>(1);
 
@@ -91,13 +97,13 @@ impl WorkerManager {
             if let Some(worker) = self.workers.remove(worker_id) {
                 // Send cancellation signal
                 let _ = worker.cancel_token.send(()).await;
-                
+
                 // Wait a bit for graceful shutdown
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                
+
                 // Abort if still running
                 worker.handle.abort();
-                
+
                 stopped += 1;
             }
         }
@@ -116,17 +122,17 @@ impl WorkerManager {
 
     pub fn get_worker_info(&self) -> Vec<WorkerInfo> {
         use std::time::{SystemTime, UNIX_EPOCH};
-        
+
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        
+
         self.workers
             .values()
             .map(|worker| {
                 let uptime_secs = (current_time - worker.started_at) as f64;
-                
+
                 WorkerInfo {
                     worker_id: worker.worker_id.clone(),
                     status: if worker.handle.is_finished() {
@@ -146,15 +152,15 @@ impl WorkerManager {
             })
             .collect()
     }
-    
+
     /// Get detailed worker info with task counts from database
     pub async fn get_worker_info_with_stats(&self) -> Vec<WorkerInfo> {
         let mut infos = self.get_worker_info();
-        
+
         if let Some(ref ctx) = self.ctx {
             // Query database for each worker's stats in parallel
             let worker_ids: Vec<String> = infos.iter().map(|i| i.worker_id.clone()).collect();
-            
+
             for (info, worker_id) in infos.iter_mut().zip(worker_ids.iter()) {
                 // Get stats from database using a raw SQL query via task queue infrastructure
                 if let Ok(stats) = self.query_worker_stats(worker_id, ctx).await {
@@ -163,7 +169,7 @@ impl WorkerManager {
                     info.tasks_failed = stats.failed_count;
                     info.worker_version = stats.worker_version;
                     info.last_heartbeat_at = stats.last_heartbeat_ts;
-                    
+
                     // Calculate success rate
                     let total_processed = stats.completed_count + stats.failed_count;
                     if total_processed > 0 {
@@ -172,14 +178,18 @@ impl WorkerManager {
                 }
             }
         }
-        
+
         infos
     }
-    
-    async fn query_worker_stats(&self, worker_id: &str, ctx: &InfraContext<StdInfra>) -> Result<WorkerStatsResult, anyhow::Error> {
+
+    async fn query_worker_stats(
+        &self,
+        worker_id: &str,
+        ctx: &InfraContext<StdInfra>,
+    ) -> Result<WorkerStatsResult, anyhow::Error> {
         use diesel::prelude::*;
-        use diesel::sql_types::{Text, BigInt, Nullable};
-        
+        use diesel::sql_types::{BigInt, Nullable, Text};
+
         #[derive(QueryableByName)]
         struct WorkerStats {
             #[diesel(sql_type = BigInt)]
@@ -193,13 +203,13 @@ impl WorkerManager {
             #[diesel(sql_type = Nullable<BigInt>)]
             last_heartbeat_ts: Option<i64>,
         }
-        
+
         let worker_id = worker_id.to_string();
         let pool = ctx.infra.db_pool().clone();
-        
+
         let stats = tokio::task::spawn_blocking(move || -> Result<WorkerStats, anyhow::Error> {
             let mut conn = pool.get()?;
-            
+
             let query = diesel::sql_query(
                 "SELECT 
                     COUNT(*) FILTER (WHERE status = 'completed') as completed_count,
@@ -208,15 +218,15 @@ impl WorkerManager {
                     MAX(worker_version) as worker_version,
                     MAX(EXTRACT(EPOCH FROM heartbeat_at))::BIGINT as last_heartbeat_ts
                  FROM fetch_tasks 
-                 WHERE worker_id = $1"
+                 WHERE worker_id = $1",
             )
             .bind::<Text, _>(&worker_id);
-            
+
             let result = query.get_result::<WorkerStats>(&mut conn)?;
             Ok(result)
         })
         .await??;
-        
+
         Ok(WorkerStatsResult {
             completed_count: stats.completed_count,
             failed_count: stats.failed_count,
