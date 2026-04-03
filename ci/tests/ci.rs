@@ -40,12 +40,17 @@ fn main() {
         )
         .add_step(Step::new("Install cargo-llvm-cov").run("cargo install cargo-llvm-cov || true"))
         .add_step(
+            Step::new("Wait for Test Infrastructure")
+                .run("docker compose -f docker-compose.test.yml wait postgres-test redis-test minio-test || sleep 10"),
+        )
+        .add_step(
             Step::new("Generate coverage (main branch or expensive)")
                 .run(
                     "(cd fetcher-be && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-fetcher.info) && \
 (cd brainatlas-be && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-brainatlas.info) && \
 (cd orch && cargo +nightly llvm-cov --release --all-features --workspace --lcov --output-path ../lcov-orch.info)",
                 )
+                .env(test_env())
                 .if_condition(Expression::new(
                     "${{ github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'ci: expensive') }}",
                 )),
@@ -57,6 +62,7 @@ fn main() {
 (cd brainatlas-be && cargo +nightly llvm-cov --workspace --lcov --output-path ../lcov-brainatlas.info) && \
 (cd orch && cargo +nightly llvm-cov --workspace --lcov --output-path ../lcov-orch.info)",
                 )
+                .env(test_env())
                 .if_condition(Expression::new(
                     "${{ github.ref != 'refs/heads/main' && !contains(github.event.pull_request.labels.*.name, 'ci: expensive') }}",
                 )),
@@ -180,4 +186,22 @@ fn test_infrastructure() -> Step<Run> {
         "docker compose -f docker-compose.test.yml up -d && \
 sleep 5",
     )
+}
+
+fn test_env() -> Env {
+    Env::default()
+        .add(
+            "DATABASE_URL",
+            "postgresql://test_user:test_password@localhost:5433/test_db",
+        )
+        .add(
+            "TEST_DATABASE_URL",
+            "postgresql://test_user:test_password@localhost:5433/test_db",
+        )
+        .add("RUN_INTEGRATION_TESTS", "1")
+        .add("REDIS_URL", "redis://127.0.0.1:6380")
+        .add("S3_ENDPOINT", "http://localhost:9000")
+        .add("S3_ACCESS_KEY", "test_access_key")
+        .add("S3_SECRET_KEY", "test_secret_key")
+        .add("S3_BUCKET", "test-bucket")
 }
