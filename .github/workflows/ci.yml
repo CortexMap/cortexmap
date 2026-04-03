@@ -42,6 +42,44 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler lcov
     - name: Start Test Infrastructure
       run: docker compose -f docker-compose.test.yml up -d --wait postgres-test redis-test minio-test && docker compose -f docker-compose.test.yml run --rm minio-setup
+    - name: Run Database Migrations
+      run: |-
+        export PGPASSWORD=test_password
+        PSQL="psql -h localhost -p 5433 -U test_user -d test_db"
+        $PSQL -v ON_ERROR_STOP=1 -c "
+        CREATE TABLE IF NOT EXISTS region_mapping (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            region_id INTEGER NOT NULL UNIQUE,
+            name VARCHAR(255) NOT NULL UNIQUE,
+            acronym VARCHAR(50),
+            red INTEGER,
+            green INTEGER,
+            blue INTEGER,
+            structure_order INTEGER,
+            parent_region_id INTEGER,
+            parent_acronym VARCHAR(50),
+            created_at TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS region_summary (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            region_id INTEGER NOT NULL UNIQUE,
+            name VARCHAR(255) NOT NULL UNIQUE,
+            acronym VARCHAR(50),
+            summary TEXT,
+            created_at TIMESTAMP
+        );"
+        for f in fetcher-be/migrations/*/up.sql; do
+          echo "Running migration: $f"
+          $PSQL -f "$f" || true
+        done
+        for f in orch/migrations/*/up.sql; do
+          echo "Running migration: $f"
+          $PSQL -f "$f" || true
+        done
+        for f in brainatlas-be/migrations/*/up.sql; do
+          echo "Running migration: $f"
+          $PSQL -f "$f" || true
+        done
     - name: Setup Rust Toolchain
       uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c
       with:

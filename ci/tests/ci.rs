@@ -11,6 +11,7 @@ fn main() {
         .add_step(Step::new("Checkout Code").uses("actions", "checkout", "34e114876b0b11c390a56381ad16ebd13914f8d5"))
         .add_step(protoc_and_lcov_install())
         .add_step(test_infrastructure())
+        .add_step(run_migrations())
         .add_step(
             Step::new("Setup Rust Toolchain")
                 .uses(
@@ -182,6 +183,46 @@ fn test_infrastructure() -> Step<Run> {
         "docker compose -f docker-compose.test.yml up -d --wait postgres-test redis-test minio-test && \
 docker compose -f docker-compose.test.yml run --rm minio-setup",
     )
+}
+
+fn run_migrations() -> Step<Run> {
+    Step::new("Run Database Migrations")
+        .run(r#"export PGPASSWORD=test_password
+PSQL="psql -h localhost -p 5433 -U test_user -d test_db"
+$PSQL -v ON_ERROR_STOP=1 -c "
+CREATE TABLE IF NOT EXISTS region_mapping (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    region_id INTEGER NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    acronym VARCHAR(50),
+    red INTEGER,
+    green INTEGER,
+    blue INTEGER,
+    structure_order INTEGER,
+    parent_region_id INTEGER,
+    parent_acronym VARCHAR(50),
+    created_at TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS region_summary (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    region_id INTEGER NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    acronym VARCHAR(50),
+    summary TEXT,
+    created_at TIMESTAMP
+);"
+for f in fetcher-be/migrations/*/up.sql; do
+  echo "Running migration: $f"
+  $PSQL -f "$f" || true
+done
+for f in orch/migrations/*/up.sql; do
+  echo "Running migration: $f"
+  $PSQL -f "$f" || true
+done
+for f in brainatlas-be/migrations/*/up.sql; do
+  echo "Running migration: $f"
+  $PSQL -f "$f" || true
+done"#)
 }
 
 fn test_env() -> Env {
