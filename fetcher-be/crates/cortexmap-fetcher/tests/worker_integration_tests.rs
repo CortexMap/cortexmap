@@ -6,8 +6,23 @@ use cortexmap_fetcher::enqueue_query;
 use cortexmap_infra::{InfraContext, TaskQueueInfra};
 use std_infra::{StdInfra, StdInfraContext};
 
+fn get_test_database_url() -> String {
+    std::env::var("TEST_DATABASE_URL").or_else(|_| std::env::var("DATABASE_URL")).unwrap_or_else(|_| {
+        "postgresql://test_user:test_password@localhost:5433/test_db".to_string()
+    })
+}
+
+fn get_test_s3_config() -> (String, String, String, String) {
+    let endpoint = std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
+    let access_key = std::env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "test_access_key".to_string());
+    let secret_key = std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "test_secret_key".to_string());
+    let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "test-bucket".to_string());
+    (endpoint, access_key, secret_key, bucket)
+}
+
 /// Helper function to create a test blueprint
 fn create_test_blueprint(query: &str) -> Blueprint {
+    let (endpoint, access_key, secret_key, bucket) = get_test_s3_config();
     Blueprint {
         fetcher: Fetcher {
             query: query.to_string(),
@@ -20,15 +35,13 @@ fn create_test_blueprint(query: &str) -> Blueprint {
         },
         connections: Connections {
             db: Database::Postgresql(Postgresql {
-                url: std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-                    "postgres://cortexmap:cortexmap_dev@localhost:5432/cortexmap".to_string()
-                }),
+                url: get_test_database_url(),
             }),
             s3_info: S3Info {
-                endpoint: "http://localhost:9000".to_string(),
-                access_key: "minioadmin".to_string(),
-                secret_key: "minioadmin".to_string(),
-                bucket: "cortexmap-test".to_string(),
+                endpoint,
+                access_key,
+                secret_key,
+                bucket,
             },
         },
     }
@@ -36,16 +49,13 @@ fn create_test_blueprint(query: &str) -> Blueprint {
 
 /// Helper function to create test infrastructure context
 async fn setup_test_context() -> InfraContext<StdInfra> {
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://cortexmap:cortexmap_dev@localhost:5432/cortexmap".to_string()
-    });
-
+    let (endpoint, access_key, secret_key, bucket) = get_test_s3_config();
     let ctx = StdInfraContext {
-        database_url,
-        endpoint: "http://localhost:9000".to_string(),
-        access_key: "minioadmin".to_string(),
-        secret_key: "minioadmin".to_string(),
-        bucket: "cortexmap-test".to_string(),
+        database_url: get_test_database_url(),
+        endpoint,
+        access_key,
+        secret_key,
+        bucket,
     };
 
     ctx.get()
@@ -95,7 +105,6 @@ async fn test_enqueue_query_integration() {
 }
 
 #[tokio::test]
-#[ignore] // requires PostgreSQL infrastructure
 async fn test_process_task_lifecycle() {
     let blueprint = create_test_blueprint("test_process_lifecycle");
     let ctx = setup_test_context().await;
@@ -132,7 +141,6 @@ async fn test_process_task_lifecycle() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: passes task.id vs component.id incorrectly + needs test isolation
 async fn test_partial_failure_retry() {
     let blueprint = create_test_blueprint("test_partial_failure");
     let ctx = setup_test_context().await;
@@ -221,7 +229,6 @@ async fn test_partial_failure_retry() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: needs test isolation - stale data from other tests interferes
 async fn test_timeout_prevents_immediate_retry() {
     let blueprint = create_test_blueprint("test_timeout_prevents_retry");
     let ctx = setup_test_context().await;
@@ -271,7 +278,6 @@ async fn test_timeout_prevents_immediate_retry() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: passes task.id vs component.id incorrectly + needs test isolation
 async fn test_max_retry_exhaustion() {
     let blueprint = create_test_blueprint("test_max_retry");
     let ctx = setup_test_context().await;
@@ -346,7 +352,6 @@ async fn test_max_retry_exhaustion() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: needs test isolation - stale data from other tests interferes
 async fn test_concurrent_workers_no_duplicate() {
     let blueprint = create_test_blueprint("test_concurrent_workers");
     let ctx = setup_test_context().await;

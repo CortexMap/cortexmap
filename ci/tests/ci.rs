@@ -59,7 +59,7 @@ fn main() {
         .add_step(
             Step::new("Generate coverage")
                 .run(
-                    "cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --all-features --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info",
+                    "cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --all-features --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info -- --test-threads=1",
                 )
                 .env(test_env()),
         )
