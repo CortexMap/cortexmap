@@ -24,5 +24,3 @@ fastrand = "2"
 std-infra = { path = "../std-infra" }
 diesel = { version = "2.2.9", features = ["postgres"] }
 futures = "0.3"
-serial_test = "3"
-tokio = { version = "1.48.0", features = ["macros", "rt"] }
