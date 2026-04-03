@@ -179,7 +179,8 @@ fn protoc_and_lcov_install() -> Step<Run> {
 
 fn test_infrastructure() -> Step<Run> {
     Step::new("Start Test Infrastructure").run(
-        "docker compose -f docker-compose.test.yml up -d --wait",
+        "docker compose -f docker-compose.test.yml up -d --wait postgres-test redis-test minio-test && \
+docker compose -f docker-compose.test.yml run --rm minio-setup",
     )
 }
 
