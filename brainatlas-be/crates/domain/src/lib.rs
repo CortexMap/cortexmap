@@ -201,6 +201,7 @@ impl From<BrainRegionEntry> for rpc_types::BrainRegionEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
     fn test_rgb_conversion() {
@@ -238,5 +239,93 @@ mod tests {
 
         let back: Status = proto_status.into();
         assert_eq!(back, status);
+    }
+
+    #[test]
+    fn test_rgb_from_proto_clamps_out_of_range_values() {
+        let proto_rgb = rpc_types::Rgb {
+            r: -10,
+            g: 42,
+            b: 999,
+        };
+
+        let rgb: Rgb = proto_rgb.into();
+        assert_eq!(rgb, Rgb::new(0, 42, 255));
+    }
+
+    #[test]
+    fn test_region_mapping_proto_conversion_preserves_optional_fields() {
+        let created_at = Utc.with_ymd_and_hms(2025, 1, 15, 9, 30, 0).unwrap();
+        let region = RegionMapping {
+            id: Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap(),
+            region_id: 42,
+            name: "Primary Visual Cortex".to_string(),
+            acronym: Some("V1".to_string()),
+            color: Some(Rgb::new(12, 34, 56)),
+            structure_order: Some(7),
+            parent_region_id: Some(5),
+            parent_acronym: Some("CTX".to_string()),
+            created_at,
+        };
+
+        let proto: rpc_types::RegionMapping = region.into();
+        let color = proto.color.clone().unwrap();
+        assert_eq!(
+            proto.id.unwrap().value,
+            "123e4567-e89b-12d3-a456-426614174000"
+        );
+        assert_eq!(proto.region_id.unwrap().id, 42);
+        assert_eq!(proto.status, rpc_types::Status::FetcherQueue as i32);
+        assert_eq!(color.r, 12);
+        assert_eq!(color.g, 34);
+        assert_eq!(color.b, 56);
+        assert_eq!(proto.structure_order, 7);
+        assert_eq!(proto.parent_region_id.unwrap().id, 5);
+        assert_eq!(proto.acronym.unwrap().acronym, "V1");
+        assert_eq!(proto.parent_acronym.unwrap().acronym, "CTX");
+    }
+
+    #[test]
+    fn test_region_mapping_proto_conversion_applies_default_values() {
+        let region = RegionMapping {
+            id: Uuid::nil(),
+            region_id: 9,
+            name: "Thalamus".to_string(),
+            acronym: None,
+            color: None,
+            structure_order: None,
+            parent_region_id: None,
+            parent_acronym: None,
+            created_at: Utc.with_ymd_and_hms(2025, 2, 1, 0, 0, 0).unwrap(),
+        };
+
+        let proto: rpc_types::RegionMapping = region.into();
+        assert_eq!(proto.id.unwrap().value, Uuid::nil().to_string());
+        assert_eq!(proto.region_id.unwrap().id, 9);
+        assert_eq!(proto.status, rpc_types::Status::FetcherQueue as i32);
+        assert!(proto.color.is_none());
+        assert_eq!(proto.structure_order, 0);
+        assert!(proto.parent_region_id.is_none());
+        assert!(proto.acronym.is_none());
+        assert!(proto.parent_acronym.is_none());
+    }
+
+    #[test]
+    fn test_brain_region_entry_proto_conversion_formats_created_at_as_rfc3339() {
+        let created_at = Utc.with_ymd_and_hms(2024, 6, 10, 14, 5, 30).unwrap();
+        let entry = BrainRegionEntry {
+            region_id: 101,
+            name: "Hippocampus".to_string(),
+            acronym: "HPC".to_string(),
+            summary: "Supports memory formation".to_string(),
+            created_at,
+        };
+
+        let proto: rpc_types::BrainRegionEntry = entry.into();
+        assert_eq!(proto.region_id.unwrap().id, 101);
+        assert_eq!(proto.name, "Hippocampus");
+        assert_eq!(proto.acronym, "HPC");
+        assert_eq!(proto.summary, "Supports memory formation");
+        assert_eq!(proto.created_at, created_at.to_rfc3339());
     }
 }
