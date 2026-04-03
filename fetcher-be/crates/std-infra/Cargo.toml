@@ -18,5 +18,9 @@ http-body-util.workspace = true
 http-body.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+redis.workspace = true
+deadpool-redis.workspace = true
+sha2.workspace = true
+tracing.workspace = true
 
 cortexmap-infra.workspace = true

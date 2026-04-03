@@ -26,6 +26,10 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET}
       FETCHER_HTTP_ADDR: ${FETCHER_HTTP_ADDR:-0.0.0.0:8080}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/fetcher-be/health"]
       interval: 30s

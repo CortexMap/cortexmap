@@ -99,7 +99,7 @@ pub struct NewRegionSummaryRow {
 #[diesel(table_name = brain_region_embeddings)]
 pub struct NewEmbeddingRow {
     pub region_id: i32,
-    pub summary_id: Uuid,
+    pub summary_id: Option<Uuid>,
     pub chunk_index: i32,
     pub chunk_text: String,
     pub embedding: pgvector::Vector,
@@ -118,7 +118,7 @@ pub struct NewEmbeddingRow {
 pub struct EmbeddingRow {
     pub id: Uuid,
     pub region_id: i32,
-    pub summary_id: Uuid,
+    pub summary_id: Option<Uuid>,
     pub chunk_index: i32,
     pub chunk_text: String,
     pub embedding: pgvector::Vector,

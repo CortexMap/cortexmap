@@ -52,6 +52,12 @@ pub enum ConfigKey {
     FetcherAbstractMaxRetries,
     /// Max retry attempts specifically for PDF component (overrides global)
     FetcherPdfMaxRetries,
+    /// Interval in seconds between periodic ingestion cycles (default: 3600 = 1 hour)
+    IngestionIntervalSecs,
+    /// Maximum number of regions to process per ingestion cycle (default: 0 = all regions)
+    IngestionBatchSize,
+    /// Whether periodic ingestion is enabled (default: "true")
+    IngestionEnabled,
 }
 
 /// Result of polling for completed fetch tasks

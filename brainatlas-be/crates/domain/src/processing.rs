@@ -6,7 +6,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewEmbedding {
     pub region_id: i32,
-    pub summary_id: Uuid,
+    pub summary_id: Option<Uuid>,
     pub chunk_index: i32,
     pub chunk_text: String,
     pub embedding: Vec<f32>,

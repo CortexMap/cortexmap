@@ -156,7 +156,7 @@ where
         
         // 2. Update all embeddings with the summary_id
         for embedding in &mut embeddings {
-            embedding.summary_id = summary_id;
+            embedding.summary_id = Some(summary_id);
         }
         
         // 3. Insert all embeddings

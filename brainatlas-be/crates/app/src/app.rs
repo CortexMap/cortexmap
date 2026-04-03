@@ -88,7 +88,13 @@ where
             let start_idx = all_chunks.len();
             let key_chunks = self.services.chunk(&content, chunk_size, chunk_overlap);
 
-            // Compute character offsets for each chunk within this file
+            // Compute character offsets for each chunk within this file.
+            //
+            // IMPORTANT: do NOT break early when char_end >= content_len.
+            // With any chunk overlap the last char boundary is reached before
+            // the final *chunk* boundary, so an early break would leave the
+            // remaining chunks without offsets and they would fall back to the
+            // wrong (0, 0) sentinel via chunk_char_offsets.get(idx).unwrap_or.
             let content_len = content.len();
             let step = chunk_size.saturating_sub(chunk_overlap).max(1);
             let mut offset = 0usize;
@@ -96,9 +102,6 @@ where
                 let char_start = offset;
                 let char_end = (offset + chunk_size).min(content_len);
                 chunk_char_offsets.push((char_start as i32, char_end as i32));
-                if char_end >= content_len {
-                    break;
-                }
                 offset += step;
             }
 
@@ -156,7 +159,7 @@ where
                 
                 Ok(NewEmbedding {
                     region_id: region.region_id,
-                    summary_id: Uuid::nil(), // Placeholder - set by insert_summary_with_embeddings
+                    summary_id: None, // Set by insert_summary_with_embeddings
                     chunk_index: idx as i32,
                     chunk_text: all_chunks[idx].clone(),
                     embedding,
@@ -357,6 +360,197 @@ where
             MAX_TOOL_CALL_ITERATIONS, region_name
         );
         Err(AppError::MaxToolCallsExceeded(MAX_TOOL_CALL_ITERATIONS))
+    }
+
+    /// Ingest region: download S3 files, chunk, embed, and store embeddings.
+    /// Does NOT generate a summary (no RAG loop).
+    /// Used by the periodic ingestion scheduler.
+    pub async fn ingest_region(
+        &self,
+        uuid: Uuid,
+        batch_id: Uuid,
+        s3_keys: Vec<String>,
+        paper_metadata: Vec<PaperMetadata>,
+        embedding_model: Option<String>,
+    ) -> Result<Uuid, AppError<E>> {
+        let region = self.get_region_by_uuid(uuid).await?;
+        let embedding_model_ref = embedding_model.as_deref();
+
+        // Build a map: s3_key -> metadata for quick lookup
+        let metadata_map: HashMap<String, &PaperMetadata> = paper_metadata
+            .iter()
+            .map(|m| (m.s3_key.clone(), m))
+            .collect();
+
+        // 1. Download all S3 files and chunk
+        let mut chunks_with_source: Vec<(String, usize, usize)> = Vec::new();
+        let mut all_chunks = Vec::new();
+        let mut chunk_char_offsets: Vec<(i32, i32)> = Vec::new();
+        let mut full_text = String::new();
+
+        let chunk_size: usize = 1000;
+        let chunk_overlap: usize = 200;
+
+        for key in &s3_keys {
+            let content = self
+                .services
+                .download(key)
+                .await
+                .map_err(AppError::ServiceError)?;
+
+            let start_idx = all_chunks.len();
+            let key_chunks = self.services.chunk(&content, chunk_size, chunk_overlap);
+
+            let content_len = content.len();
+            let step = chunk_size.saturating_sub(chunk_overlap).max(1);
+            let mut offset = 0usize;
+            for _ in 0..key_chunks.len() {
+                let char_start = offset;
+                let char_end = (offset + chunk_size).min(content_len);
+                chunk_char_offsets.push((char_start as i32, char_end as i32));
+                offset += step;
+            }
+
+            all_chunks.extend(key_chunks);
+            let end_idx = all_chunks.len();
+            chunks_with_source.push((key.clone(), start_idx, end_idx));
+
+            full_text.push_str(&content);
+            full_text.push_str("\n\n---\n\n");
+        }
+
+        // 2. Content deduplication via SHA-256
+        let content_hash = compute_hash(&full_text);
+
+        if let Some(existing) = self
+            .services
+            .check_content_hash(region.region_id, &content_hash)
+            .await
+            .map_err(AppError::ServiceError)?
+        {
+            info!(
+                "Content hash match for region {}, skipping re-embedding (summary_id={})",
+                region.name, existing.summary_id
+            );
+            return Ok(existing.summary_id);
+        }
+
+        // 3. Generate embeddings for all chunks in parallel
+        let embedding_futures: Vec<_> = all_chunks
+            .iter()
+            .map(|chunk| self.services.generate_embedding(chunk, embedding_model_ref))
+            .collect();
+
+        let embedding_results = join_all(embedding_futures).await;
+
+        // 4. Build NewEmbedding structs with source metadata
+        let new_embeddings: Vec<_> = embedding_results
+            .into_iter()
+            .enumerate()
+            .map(|(idx, result)| {
+                let embedding = result.map_err(AppError::ServiceError)?;
+
+                let (s3_key, metadata) = chunks_with_source
+                    .iter()
+                    .find(|(_, start, end)| idx >= *start && idx < *end)
+                    .map(|(key, _, _)| {
+                        let meta = metadata_map.get(key);
+                        (key.clone(), meta)
+                    })
+                    .unwrap_or_else(|| (String::new(), None));
+
+                let (char_start, char_end) = chunk_char_offsets
+                    .get(idx)
+                    .copied()
+                    .unwrap_or((0, 0));
+
+                Ok(NewEmbedding {
+                    region_id: region.region_id,
+                    summary_id: None, // Ingestion-only: no summary yet
+                    chunk_index: idx as i32,
+                    chunk_text: all_chunks[idx].clone(),
+                    embedding,
+                    source_s3_key: Some(s3_key),
+                    source_pmc_id: metadata.and_then(|m| m.pmc_id.clone()),
+                    source_uid: metadata.and_then(|m| m.uid.clone()),
+                    source_query: metadata.and_then(|m| m.query.clone()),
+                    source_char_start: Some(char_start),
+                    source_char_end: Some(char_end),
+                })
+            })
+            .collect::<Result<Vec<_>, AppError<E>>>()?;
+
+        // 5. Insert placeholder summary (no text) + embeddings
+        let new_summary = NewRegionSummary {
+            region_id: region.region_id,
+            name: region.name.clone(),
+            acronym: region.acronym.clone(),
+            summary: String::new(), // No summary yet — will be generated on-demand
+            content_hash,
+            batch_id,
+        };
+
+        let summary_id = self
+            .services
+            .insert_summary_with_embeddings(new_summary, new_embeddings)
+            .await
+            .map_err(AppError::ServiceError)?;
+
+        info!(
+            "Ingestion complete for region '{}': {} chunks embedded, summary_id={}",
+            region.name,
+            all_chunks.len(),
+            summary_id
+        );
+
+        Ok(summary_id)
+    }
+
+    /// Generate a summary for a region using only existing embeddings (RAG-only, no fetching).
+    /// Used by the on-demand /generate route.
+    pub async fn summarize_region(
+        &self,
+        uuid: Uuid,
+        chat_model: Option<String>,
+        embedding_model: Option<String>,
+    ) -> Result<(Uuid, String), AppError<E>> {
+        let region = self.get_region_by_uuid(uuid).await?;
+
+        // Run RAG summarization using existing embeddings
+        let summary_text = self
+            .rag_summarize(
+                &region.name,
+                region.region_id,
+                chat_model.as_deref(),
+                embedding_model.as_deref(),
+            )
+            .await?;
+
+        // Create a new summary record with the text
+        let content_hash = compute_hash(&summary_text);
+        let new_summary = NewRegionSummary {
+            region_id: region.region_id,
+            name: region.name.clone(),
+            acronym: region.acronym.clone(),
+            summary: summary_text.clone(),
+            content_hash,
+            batch_id: Uuid::nil(), // On-demand summaries aren't tied to a batch
+        };
+
+        let summary_id = self
+            .services
+            .insert_summary_with_embeddings(new_summary, vec![])
+            .await
+            .map_err(AppError::ServiceError)?;
+
+        info!(
+            "Summary generated for region '{}': {} chars, summary_id={}",
+            region.name,
+            summary_text.len(),
+            summary_id
+        );
+
+        Ok((summary_id, summary_text))
     }
 
     /// Generate search queries for a brain region using LLM

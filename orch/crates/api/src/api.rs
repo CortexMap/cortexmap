@@ -18,9 +18,8 @@ pub trait OrchApi: Send + Sync {
     /// List all summaries for a region (just returns summaries with metadata)
     async fn list_summaries(&self, region_id: Uuid) -> Result<SearchRegionResult, Self::Error>;
     
-    /// Generate a new summary for a region
-    /// Creates a new batch, generates queries, enqueues tasks
-    /// Returns batch_id immediately for tracking progress
+    /// Generate a new summary for a region using existing knowledge base embeddings
+    /// Returns the summary text synchronously (RAG-only, no fetching)
     async fn generate_summary(&self, region_id: Uuid) -> Result<GenerateSummaryResult, Self::Error>;
     
     /// Get the status of a specific batch

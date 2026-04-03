@@ -26,6 +26,10 @@ pub struct AllocateWorkersRequest {
     pub retry_config: Option<FetcherRetryConfig>,
 }
 
+fn default_backoff_strategy() -> String {
+    "constant".to_string()
+}
+
 /// Retry configuration that orch forwards to the fetcher service.
 /// Maps 1:1 to fetcher-be's `RetryConfig` + `ComponentRetryConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

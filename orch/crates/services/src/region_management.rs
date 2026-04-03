@@ -1,4 +1,4 @@
-use crate::{BatchManagement, CacheClient, EnvInfra, HttpClient, ServiceError, GenerateQueriesRequest, GenerateQueriesResponse};
+use crate::{BatchManagement, CacheClient, EnvInfra, HttpClient, ServiceError, GenerateQueriesRequest, GenerateQueriesResponse, SummarizeResponse};
 use crate::cache_keys::{self, cached_or_fetch, invalidate, invalidate_pattern};
 use app::RegionManagement;
 use domain::{BatchStatus, ChunkSourceResponse, ConfigKey, ProcessingBatch, RegionQuery, RegionSummary, SummarySource};
@@ -48,16 +48,26 @@ where
                     .await
                     .map_err(ServiceError::InfraError)?;
 
-                // For each summary, fetch its source chunks
+                // For each summary, fetch its source chunks.
+                // Skip rows with empty summary text — the `ingest_region` path
+                // writes a placeholder row with no text that will be populated
+                // later by the on-demand RAG summarisation step. Exposing these
+                // rows would show blank cards to users and trigger a false
+                // `RegionPipelineStatus::Done` before any real text exists.
                 let mut result = Vec::with_capacity(summaries.len());
                 for s in summaries {
+                    let summary_text = s.summary.unwrap_or_default();
+                    if summary_text.is_empty() {
+                        continue;
+                    }
+
                     let sources = infra
                         .get_summary_sources(&database_url, s.id)
                         .await
                         .map_err(ServiceError::InfraError)?;
 
                     result.push(RegionSummary {
-                        summary: s.summary.unwrap_or_default(),
+                        summary: summary_text,
                         created_at: chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
                             s.created_at,
                             chrono::Utc,
@@ -456,5 +466,62 @@ where
             },
         )
         .await
+    }
+
+    async fn summarize_region(&self, region_id: Uuid) -> Result<domain::GenerateSummaryResult, Self::Error> {
+        // Normalize URL helper
+        fn normalize_url(addr: &str) -> String {
+            if addr.starts_with("http://") || addr.starts_with("https://") {
+                addr.to_string()
+            } else {
+                let replaced = addr.replace("0.0.0.0", "localhost");
+                format!("http://{}", replaced)
+            }
+        }
+
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let brainatlas_url = match self.infra.get_env_var("BRAINATLAS_HTTP_ADDR") {
+            Ok(addr) => normalize_url(&addr),
+            Err(_) => {
+                self.infra
+                    .get_config(&database_url, ConfigKey::BrainatlasBaseUrl)
+                    .await
+                    .map_err(ServiceError::InfraError)?
+                    .ok_or_else(|| ServiceError::ConfigNotFound {
+                        key: "brainatlas_base_url".to_string(),
+                    })?
+            }
+        };
+
+        let url = format!(
+            "{}/brainatlas-be/api/summarize",
+            brainatlas_url.trim_end_matches('/')
+        );
+
+        // Build request body matching brainatlas-be SummarizeRequest
+        let request = serde_json::json!({
+            "region_id": { "value": region_id.to_string() }
+        });
+
+        tracing::info!(url = %url, %region_id, "Calling brainatlas /api/summarize");
+
+        let response: SummarizeResponse = self
+            .infra
+            .post(&url, &request)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        // Invalidate cached summaries for this region since we just created a new one
+        invalidate(self.infra.as_ref(), &cache_keys::region_summaries(region_id)).await;
+
+        Ok(domain::GenerateSummaryResult {
+            summary_id: response.summary_id,
+            summary_text: response.summary_text,
+            region_name: response.region_name,
+        })
     }
 }

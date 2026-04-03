@@ -27,11 +27,18 @@ pub struct RetryConfig {
     /// Default: 5 seconds
     pub empty_queue_sleep_secs: u64,
     
-    /// Multiplier for timeout on stale task detection
-    /// Tasks in "in_progress" for more than (task_timeout_secs * stale_task_multiplier) are considered stale
-    /// Default: 10 (e.g., 10x timeout means 10 seconds for 1 second timeout)
-    pub stale_task_multiplier: u64,
-    
+    /// How often (seconds) a worker refreshes its heartbeat key in Redis.
+    /// Default: 15
+    pub heartbeat_interval_secs: u64,
+
+    /// TTL (seconds) for the Redis heartbeat key. Should be > 2× heartbeat_interval_secs.
+    /// Default: 45
+    pub heartbeat_ttl_secs: u64,
+
+    /// Minimum idle time (ms) before XAUTOCLAIM reclaims a PEL entry.
+    /// Default: 60000 (60 seconds)
+    pub stale_reclaim_min_idle_ms: u64,
+
     /// Backoff strategy for retries
     /// Default: Constant (no backoff)
     pub backoff_strategy: BackoffStrategy,
@@ -90,7 +97,9 @@ impl Default for RetryConfig {
     fn default() -> Self {
         Self {
             empty_queue_sleep_secs: 5,
-            stale_task_multiplier: 10,
+            heartbeat_interval_secs: 15,
+            heartbeat_ttl_secs: 45,
+            stale_reclaim_min_idle_ms: 60_000,
             backoff_strategy: BackoffStrategy::Constant,
             component_max_retries: None,
         }
