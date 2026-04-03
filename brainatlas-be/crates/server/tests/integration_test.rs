@@ -61,7 +61,6 @@ mod database_tests {
     use diesel::r2d2::{self, ConnectionManager};
 
     #[test]
-    #[ignore] // requires PostgreSQL infrastructure
     fn test_database_connection() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -82,7 +81,6 @@ mod database_tests {
     }
 
     #[test]
-    #[ignore] // requires PostgreSQL infrastructure
     fn test_region_mapping_table_exists() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -105,7 +103,6 @@ mod database_tests {
     }
 
     #[test]
-    #[ignore] // requires PostgreSQL infrastructure
     fn test_region_summary_table_exists() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -128,7 +125,6 @@ mod database_tests {
     }
 
     #[test]
-    #[ignore] // requires PostgreSQL infrastructure
     fn test_insert_and_query_region_mapping() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -149,7 +145,7 @@ mod database_tests {
         )
         .bind::<diesel::sql_types::Uuid, _>(test_uuid)
         .bind::<diesel::sql_types::Int4, _>(test_region_id)
-        .bind::<diesel::sql_types::Text, _>("Test Region")
+        .bind::<diesel::sql_types::Text, _>(&format!("Test Region {}", test_uuid))
         .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(Some("TR"))
         .execute(&mut conn);
 
@@ -165,7 +161,7 @@ mod database_tests {
         let result = query_result.unwrap();
         assert_eq!(result.id, test_uuid);
         assert_eq!(result.region_id, test_region_id);
-        assert_eq!(result.name, "Test Region");
+        assert_eq!(result.name, format!("Test Region {}", test_uuid));
 
         // Cleanup
         diesel::sql_query("DELETE FROM region_mapping WHERE id = $1")
@@ -181,7 +177,6 @@ mod s3_tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore] // requires S3/MinIO infrastructure
     async fn test_s3_connection() {
         let (endpoint, access_key, secret_key, _bucket) = get_test_s3_config();
 
@@ -207,7 +202,6 @@ mod s3_tests {
     }
 
     #[tokio::test]
-    #[ignore] // requires S3/MinIO infrastructure
     async fn test_s3_create_bucket_and_upload() {
         let (endpoint, access_key, secret_key, bucket) = get_test_s3_config();
 
@@ -277,7 +271,6 @@ mod api_tests {
     use diesel::r2d2::{self, ConnectionManager};
 
     #[tokio::test]
-    #[ignore] // requires PostgreSQL infrastructure
     async fn test_search_brain_region_empty() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -298,7 +291,7 @@ mod api_tests {
         )
         .bind::<diesel::sql_types::Uuid, _>(test_uuid)
         .bind::<diesel::sql_types::Int4, _>(test_region_id)
-        .bind::<diesel::sql_types::Text, _>("Test Empty Region")
+        .bind::<diesel::sql_types::Text, _>(&format!("Test Empty Region {}", test_uuid))
         .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(Some("TER"))
         .execute(&mut conn)
         .expect("Failed to insert test region");
@@ -325,7 +318,6 @@ mod api_tests {
     }
 
     #[tokio::test]
-    #[ignore] // requires PostgreSQL infrastructure
     async fn test_insert_and_retrieve_summary() {
         let database_url = get_test_db_url();
         let manager = ConnectionManager::<PgConnection>::new(database_url);
@@ -348,21 +340,23 @@ mod api_tests {
         )
         .bind::<diesel::sql_types::Uuid, _>(test_uuid)
         .bind::<diesel::sql_types::Int4, _>(test_region_id)
-        .bind::<diesel::sql_types::Text, _>("Test Region With Summary")
+        .bind::<diesel::sql_types::Text, _>(&format!("Test Region With Summary {}", test_uuid))
         .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(Some("TRWS"))
         .execute(&mut conn)
         .expect("Failed to insert test region");
 
-        // Insert summary
+        // Insert summary (batch_id is NOT NULL)
+        let summary_id = Uuid::new_v4();
         diesel::sql_query(
-            "INSERT INTO region_summary (id, region_id, name, summary, created_at, content_hash)
-             VALUES ($1, $2, $3, $4, NOW(), $5)",
+            "INSERT INTO region_summary (id, region_id, name, summary, created_at, content_hash, batch_id)
+             VALUES ($1, $2, $3, $4, NOW(), $5, $6)",
         )
-        .bind::<diesel::sql_types::Uuid, _>(Uuid::new_v4())
+        .bind::<diesel::sql_types::Uuid, _>(summary_id)
         .bind::<diesel::sql_types::Int4, _>(test_region_id)
-        .bind::<diesel::sql_types::Text, _>("Test Region With Summary")
+        .bind::<diesel::sql_types::Text, _>(&format!("Test Region With Summary {}", test_uuid))
         .bind::<diesel::sql_types::Text, _>(test_summary)
         .bind::<diesel::sql_types::Text, _>("test_hash_123")
+        .bind::<diesel::sql_types::Uuid, _>(Uuid::new_v4())
         .execute(&mut conn)
         .expect("Failed to insert summary");
 
@@ -402,7 +396,6 @@ mod workflow_tests {
     use diesel::r2d2::{self, ConnectionManager};
 
     #[tokio::test]
-    #[ignore] // requires PostgreSQL + S3 infrastructure
     async fn test_complete_workflow_simulation() {
         // This test simulates the complete workflow:
         // 1. Create region in database
@@ -447,7 +440,7 @@ mod workflow_tests {
         )
         .bind::<diesel::sql_types::Uuid, _>(region_uuid)
         .bind::<diesel::sql_types::Int4, _>(region_id)
-        .bind::<diesel::sql_types::Text, _>("Hippocampus")
+        .bind::<diesel::sql_types::Text, _>(&format!("Hippocampus {}", region_uuid))
         .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(Some("HIP"))
         .execute(&mut conn)
         .expect("Failed to insert region");
@@ -492,16 +485,17 @@ mod workflow_tests {
 
         println!("✅ Step 3: Summary generated (simulated)");
 
-        // Step 4: Store summary in database
+        // Step 4: Store summary in database (batch_id is NOT NULL)
         diesel::sql_query(
-            "INSERT INTO region_summary (id, region_id, name, summary, created_at, content_hash)
-             VALUES ($1, $2, $3, $4, NOW(), $5)",
+            "INSERT INTO region_summary (id, region_id, name, summary, created_at, content_hash, batch_id)
+             VALUES ($1, $2, $3, $4, NOW(), $5, $6)",
         )
         .bind::<diesel::sql_types::Uuid, _>(Uuid::new_v4())
         .bind::<diesel::sql_types::Int4, _>(region_id)
-        .bind::<diesel::sql_types::Text, _>("Hippocampus")
+        .bind::<diesel::sql_types::Text, _>(&format!("Hippocampus {}", region_uuid))
         .bind::<diesel::sql_types::Text, _>(generated_summary.clone())
         .bind::<diesel::sql_types::Text, _>("test_workflow_hash")
+        .bind::<diesel::sql_types::Uuid, _>(Uuid::new_v4())
         .execute(&mut conn)
         .expect("Failed to insert summary");
 

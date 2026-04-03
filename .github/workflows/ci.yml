@@ -106,7 +106,7 @@ jobs:
     - name: Install cargo-llvm-cov
       run: cargo install cargo-llvm-cov || true
     - name: Generate coverage
-      run: cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --all-features --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info
+      run: cd ${{ matrix.workspace }} && cargo +nightly llvm-cov --all-features --workspace --lcov --output-path ../${{ matrix.lcov_name }}.info -- --test-threads=1
       env:
         DATABASE_URL: postgresql://test_user:test_password@localhost:5433/test_db
         TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5433/test_db

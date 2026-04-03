@@ -4,16 +4,21 @@ use std_infra::{StdInfra, StdInfraContext};
 
 /// Helper function to create test infrastructure context
 async fn setup_test_context() -> InfraContext<StdInfra> {
-    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://cortexmap:cortexmap_dev@localhost:5432/cortexmap".to_string()
-    });
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .unwrap_or_else(|_| {
+            "postgresql://test_user:test_password@localhost:5433/test_db".to_string()
+        });
 
     let ctx = StdInfraContext {
         database_url,
-        endpoint: "http://localhost:9000".to_string(),
-        access_key: "minioadmin".to_string(),
-        secret_key: "minioadmin".to_string(),
-        bucket: "cortexmap-test".to_string(),
+        endpoint: std::env::var("S3_ENDPOINT")
+            .unwrap_or_else(|_| "http://localhost:9000".to_string()),
+        access_key: std::env::var("S3_ACCESS_KEY")
+            .unwrap_or_else(|_| "test_access_key".to_string()),
+        secret_key: std::env::var("S3_SECRET_KEY")
+            .unwrap_or_else(|_| "test_secret_key".to_string()),
+        bucket: std::env::var("S3_BUCKET").unwrap_or_else(|_| "test-bucket".to_string()),
     };
 
     ctx.get()

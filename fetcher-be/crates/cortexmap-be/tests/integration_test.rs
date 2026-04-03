@@ -33,7 +33,6 @@ fn get_test_infra_ctx() -> StdInfraContext {
 }
 
 #[tokio::test]
-#[ignore] // requires PostgreSQL + S3 infrastructure
 async fn test_queue_server_initialization() {
     let infra_ctx = get_test_infra_ctx();
 
@@ -55,7 +54,6 @@ async fn test_queue_server_initialization() {
 }
 
 #[tokio::test]
-#[ignore] // Run with --ignored when test infrastructure is available
 async fn test_enqueue_task_workflow() {
     let infra_ctx = get_test_infra_ctx();
 
