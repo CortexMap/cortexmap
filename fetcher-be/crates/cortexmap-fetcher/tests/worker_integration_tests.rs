@@ -4,6 +4,8 @@ use cortexmap_core::blueprint::connections::{
 };
 use cortexmap_fetcher::enqueue_query;
 use cortexmap_infra::{InfraContext, TaskQueueInfra};
+use diesel::prelude::*;
+use serial_test::serial;
 use std_infra::{StdInfra, StdInfraContext};
 
 /// Helper function to create a test blueprint
@@ -52,13 +54,21 @@ async fn setup_test_context() -> InfraContext<StdInfra> {
         .expect("Failed to create test infrastructure context")
 }
 
-/// Cleanup test data
+/// Cleanup test data - truncate all task-related tables to ensure test isolation
 async fn cleanup_test_data(ctx: &InfraContext<StdInfra>, _query: &str) {
-    // Cleanup is best-effort; ignore errors
-    let _ = ctx.infra.reset_stale_tasks(0).await;
+    let pool = ctx.infra.db_pool().clone();
+    tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get().expect("Failed to get DB connection for cleanup");
+        diesel::sql_query("TRUNCATE fetch_task_logs, fetch_task_components, fetch_tasks CASCADE")
+            .execute(&mut conn)
+            .expect("Failed to truncate test tables");
+    })
+    .await
+    .expect("Cleanup task panicked");
 }
 
 #[tokio::test]
+#[serial]
 #[ignore] // Requires network access to NCBI API
 async fn test_enqueue_query_integration() {
     let blueprint = create_test_blueprint("test_enqueue_integration AND neuroscience");
@@ -95,6 +105,7 @@ async fn test_enqueue_query_integration() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_process_task_lifecycle() {
     let blueprint = create_test_blueprint("test_process_lifecycle");
     let ctx = setup_test_context().await;
@@ -131,6 +142,7 @@ async fn test_process_task_lifecycle() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_partial_failure_retry() {
     let blueprint = create_test_blueprint("test_partial_failure");
     let ctx = setup_test_context().await;
@@ -167,11 +179,11 @@ async fn test_partial_failure_retry() {
         .await
         .expect("Failed to get components");
 
-    let summary = components
+    let _summary = components
         .iter()
         .find(|c| c.component_type == "summary")
         .unwrap();
-    let pdf = components
+    let _pdf = components
         .iter()
         .find(|c| c.component_type == "pdf")
         .unwrap();
@@ -179,7 +191,7 @@ async fn test_partial_failure_retry() {
     // Mark summary as completed
     ctx.infra
         .update_component_status(
-            summary.id,
+            task.id,
             cortexmap_infra::ComponentType::Summary,
             cortexmap_infra::TaskStatus::Completed,
             Some("s3://test/PMC999999/summary.json".to_string()),
@@ -190,7 +202,7 @@ async fn test_partial_failure_retry() {
 
     // Mark PDF as failed and increment retry
     ctx.infra
-        .increment_component_attempt(pdf.id, cortexmap_infra::ComponentType::Pdf)
+        .increment_component_attempt(task.id, cortexmap_infra::ComponentType::Pdf)
         .await
         .expect("Failed to increment PDF attempt");
 
@@ -219,6 +231,7 @@ async fn test_partial_failure_retry() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_timeout_prevents_immediate_retry() {
     let blueprint = create_test_blueprint("test_timeout_prevents_retry");
     let ctx = setup_test_context().await;
@@ -268,6 +281,7 @@ async fn test_timeout_prevents_immediate_retry() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_max_retry_exhaustion() {
     let blueprint = create_test_blueprint("test_max_retry");
     let ctx = setup_test_context().await;
@@ -297,18 +311,18 @@ async fn test_max_retry_exhaustion() {
         .get_pending_components(task.id)
         .await
         .expect("Failed to get components");
-    let pdf = components
+    let _pdf = components
         .iter()
         .find(|c| c.component_type == "pdf")
         .unwrap();
 
     // Fail twice (max_attempts = 2)
     ctx.infra
-        .increment_component_attempt(pdf.id, cortexmap_infra::ComponentType::Pdf)
+        .increment_component_attempt(task.id, cortexmap_infra::ComponentType::Pdf)
         .await
         .expect("Failed");
     ctx.infra
-        .increment_component_attempt(pdf.id, cortexmap_infra::ComponentType::Pdf)
+        .increment_component_attempt(task.id, cortexmap_infra::ComponentType::Pdf)
         .await
         .expect("Failed");
 
@@ -328,7 +342,7 @@ async fn test_max_retry_exhaustion() {
     if pdf_updated.attempt_count >= pdf_updated.max_attempts {
         ctx.infra
             .update_component_status(
-                pdf_updated.id,
+                task.id,
                 cortexmap_infra::ComponentType::Pdf,
                 cortexmap_infra::TaskStatus::Failed,
                 None,
@@ -342,6 +356,7 @@ async fn test_max_retry_exhaustion() {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_concurrent_workers_no_duplicate() {
     let blueprint = create_test_blueprint("test_concurrent_workers");
     let ctx = setup_test_context().await;
