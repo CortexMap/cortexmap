@@ -334,3 +334,53 @@
   margin-right: 2px;
   line-height: 1.5;
 }
+
+/* ── Snippet markdown rendering ──────────────────────────────── */
+
+/* ReactMarkdown wraps output in a <p> by default; keep it inline */
+.sf-item-snippet > p,
+.sf-item-snippet > div {
+  display: inline;
+  margin: 0;
+  padding: 0;
+}
+
+/* Block-mapped-to-inline spans */
+.sf-md-p {
+  display: inline;
+}
+
+.sf-md-p + .sf-md-p::before {
+  content: ' ';
+}
+
+.sf-md-h {
+  display: inline;
+  font-weight: 600;
+  color: #374151;
+}
+
+.sf-md-ul,
+.sf-md-ol {
+  display: inline;
+}
+
+.sf-md-li {
+  display: inline;
+}
+
+.sf-md-li + .sf-md-li::before {
+  content: ' · ';
+  color: #d1d5db;
+}
+
+/* Inline code inside snippets */
+.sf-md-code {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 11px;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 3px;
+  padding: 0 3px;
+  color: #374151;
+}

@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import { useAtlasStore } from '../../store/atlasStore';
 import './SearchFunc.css';
 
@@ -301,7 +303,7 @@ export function SearchFunc() {
                               </span>
                               {item.summary_snippet && (
                                 <span className="sf-item-snippet">
-                                  {item.summary_snippet.replace(/\[chunk:[a-f0-9-]+\]/g, '')}
+                                  <SnippetMarkdown text={item.summary_snippet} />
                                 </span>
                               )}
                             </span>
@@ -344,4 +346,34 @@ export function SearchFunc() {
       )}
     </>
   );
+}
+
+/**
+ * Renders a summary snippet as inline Markdown.
+ * [chunk:uuid] citation markers are stripped before rendering.
+ * Block-level elements (p, li, headings) are mapped to inline spans
+ * so the 2-line clamp on the parent .sf-item-snippet still applies.
+ */
+function SnippetMarkdown({ text }: { text: string }) {
+  const cleaned = text.replace(/\[chunk:[a-f0-9-]+\]/g, '').trim();
+
+  const components: Components = {
+    // Render block elements inline so the parent -webkit-line-clamp works
+    p: ({ children }) => <span className="sf-md-p">{children}</span>,
+    li: ({ children }) => <span className="sf-md-li">{children}</span>,
+    ul: ({ children }) => <span className="sf-md-ul">{children}</span>,
+    ol: ({ children }) => <span className="sf-md-ol">{children}</span>,
+    h1: ({ children }) => <span className="sf-md-h">{children}</span>,
+    h2: ({ children }) => <span className="sf-md-h">{children}</span>,
+    h3: ({ children }) => <span className="sf-md-h">{children}</span>,
+    h4: ({ children }) => <span className="sf-md-h">{children}</span>,
+    // Preserve inline formatting
+    strong: ({ children }) => <strong>{children}</strong>,
+    em: ({ children }) => <em>{children}</em>,
+    code: ({ children }) => <code className="sf-md-code">{children}</code>,
+    // Strip links — keep text only (snippets shouldn't be clickable internally)
+    a: ({ children }) => <span>{children}</span>,
+  };
+
+  return <ReactMarkdown components={components}>{cleaned}</ReactMarkdown>;
 }
