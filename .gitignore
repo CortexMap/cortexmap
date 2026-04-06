@@ -55,4 +55,5 @@ plans/
 *.swp
 *.swo
 
-**/.tsbuildinfo
+**/*.tsbuildinfo
+**/*.obj

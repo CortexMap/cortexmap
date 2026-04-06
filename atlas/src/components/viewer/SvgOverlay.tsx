@@ -31,9 +31,9 @@ export function SvgOverlay({ regions, viewBox, displayWidth, displayHeight }: Pr
           <path
             key={i}
             d={region.d}
-            fill={isSelected ? 'rgba(124, 58, 237, 0.40)' : isHovered ? 'rgba(139, 92, 246, 0.20)' : 'transparent'}
-            stroke={isSelected ? '#7c3aed' : isHovered ? '#a78bfa' : 'transparent'}
-            strokeWidth={isSelected ? 2.5 : isHovered ? 1.5 : 0}
+            fill={isSelected ? 'rgba(124, 58, 237, 0.40)' : 'transparent'}
+            stroke={isSelected ? '#7c3aed' : isHovered ? region.strokeColor : 'transparent'}
+            strokeWidth={isSelected ? 2.5 : isHovered ? 5 : 0}
             className={styles.regionPath}
             onMouseEnter={() => setHovered(region.structureId)}
             onMouseLeave={() => setHovered(null)}

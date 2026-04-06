@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAtlasStore } from '../../store/atlasStore';
+import type { ViewPlane } from '../../store/atlasStore';
 import { getSectionImageUrl, fetchSvgAnnotation } from '../../api/allen';
 import { SvgOverlay } from './SvgOverlay';
 import { RegionTooltip } from './RegionTooltip';
@@ -11,9 +12,9 @@ import styles from './AtlasViewer.module.css';
 
 export function AtlasViewer() {
   const {
-    sections, currentSectionIndex, zoomLevel, panX, panY,
+    sections, currentSectionIndex, zoomLevel, panX, panY, viewPlane,
     setZoom, setPan, resetView, setImageLoaded, setAnnotatedStructures,
-    cacheSectionAnnotations, hoveredStructureId, navigating,
+    cacheSectionAnnotations, hoveredStructureId, navigating, setViewPlane,
   } = useAtlasStore();
 
   const section = sections[currentSectionIndex];
@@ -27,7 +28,7 @@ export function AtlasViewer() {
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 
   const downsample = getDownsampleForZoom(zoomLevel);
-  const imageUrl = section ? getSectionImageUrl(section.id, downsample) : '';
+  const imageUrl = section ? getSectionImageUrl(section.id, downsample, section) : '';
 
   // Fetch SVG annotations when section changes
   useEffect(() => {
@@ -78,7 +79,7 @@ export function AtlasViewer() {
   // Zoom handling
   const onWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    const factor = e.deltaY > 0 ? 0.95 : 1.05;
+    const factor = e.deltaY > 0 ? 0.98 : 1.02;
     setZoom(zoomLevel * factor);
   }, [zoomLevel, setZoom]);
 
@@ -89,6 +90,18 @@ export function AtlasViewer() {
 
   return (
     <div className={styles.container}>
+      {/* View plane toggle */}
+      <div className={styles.viewPlaneToggle}>
+        {(['coronal', 'sagittal'] as ViewPlane[]).map((plane) => (
+          <button
+            key={plane}
+            className={`${styles.planeBtn} ${viewPlane === plane ? styles.planeBtnActive : ''}`}
+            onClick={() => setViewPlane(plane)}
+          >
+            {plane.charAt(0).toUpperCase() + plane.slice(1)}
+          </button>
+        ))}
+      </div>
       {svgLoading && <div className={styles.loadingBar} />}
       {navigating && <div className={styles.searchingBanner}>Searching sections for region...</div>}
       <div
@@ -132,9 +145,9 @@ export function AtlasViewer() {
 
         {/* Zoom indicator */}
         <div className={styles.zoomIndicator}>
-          <button onClick={() => setZoom(zoomLevel + 0.1)} className={styles.zoomBtn}>+</button>
+          <button onClick={() => setZoom(zoomLevel + 0.05)} className={styles.zoomBtn}>+</button>
           <span className={styles.zoomLabel}>{Math.round(zoomLevel * 100)}%</span>
-          <button onClick={() => setZoom(zoomLevel - 0.1)} className={styles.zoomBtn}>-</button>
+          <button onClick={() => setZoom(zoomLevel - 0.05)} className={styles.zoomBtn}>-</button>
           <button onClick={resetView} className={styles.zoomBtn} title="Reset view">&#8634;</button>
         </div>
       </div>

@@ -11,10 +11,22 @@ export default defineConfig({
         changeOrigin: true,
         secure: true,
       },
+      '/allen-meshes': {
+        target: 'http://download.alleninstitute.org/informatics-archive/current-release/mouse_ccf/annotation/ccf_2017/structure_meshes',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/allen-meshes/, ''),
+      },
     },
   },
   build: {
     outDir: 'dist',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          three: ['three'],
+        },
+      },
+    },
   },
 });

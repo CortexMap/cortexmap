@@ -7,21 +7,26 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "fetch-data": "npx tsx scripts/fetch-atlas-data.ts"
+    "fetch-data": "npx tsx scripts/fetch-atlas-data.ts",
+    "fetch-meshes": "npx tsx scripts/fetch-meshes.ts"
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
     "axios": "^1.13.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.5.0",
     "react-window": "^1.8.11",
+    "three": "^0.183.2",
     "zustand": "^5.0.5"
   },
   "devDependencies": {
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@types/react-window": "^1.8.8",
+    "@types/three": "^0.183.1",
     "@vitejs/plugin-react": "^4.4.1",
     "tsx": "^4.19.0",
     "typescript": "~5.7.2",

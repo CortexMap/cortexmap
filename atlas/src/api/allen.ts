@@ -1,14 +1,36 @@
 const ALLEN_API = 'https://api.brain-map.org';
-const ATLAS_DATASET_ID = 100048576; // Mouse P56 Coronal
 
-/** Get atlas section image URL at given downsample level */
-export function getSectionImageUrl(sectionImageId: number, downsample: number = 4): string {
+export const DATASET_CORONAL = 576985993;  // Mouse Adult 3D Coronal (atlas id=602630314)
+export const DATASET_SAGITTAL = 100042147; // Mouse P56 Sagittal (atlas id=2)
+
+import type { AtlasSection } from '../types/atlas';
+
+/**
+ * Get atlas section image URL using Allen's imageservice with the
+ * "Atlas - Adult Mouse" rendered path (matches what Allen's website shows).
+ * Falls back to atlas_image_download if section lacks imageservice metadata.
+ */
+export function getSectionImageUrl(
+  sectionImageId: number,
+  downsample: number = 4,
+  section?: AtlasSection
+): string {
+  // Use imageservice with adult_path when available (correct adult mouse rendering).
+  // The imageservice expects width/height as the DOWNSAMPLED output dimensions,
+  // matching how atlas_image_download constructs its redirect URL internally.
+  if (section?.adult_path && section.x != null && section.y != null) {
+    const scale = Math.pow(2, downsample);
+    const w = Math.ceil(section.width / scale);
+    const h = Math.ceil(section.height / scale);
+    return `${ALLEN_API}/cgi-bin/imageservice?mime=1&path=${section.adult_path}&left=${section.x}&top=${section.y}&width=${w}&height=${h}&downsample=${downsample}`;
+  }
+  // Fallback to atlas_image_download (may show developing mouse rendering)
   return `${ALLEN_API}/api/v2/atlas_image_download/${sectionImageId}?downsample=${downsample}&annotation=true`;
 }
 
 /** Get section thumbnail URL (high downsample = small image) */
-export function getSectionThumbnailUrl(sectionImageId: number): string {
-  return getSectionImageUrl(sectionImageId, 6);
+export function getSectionThumbnailUrl(sectionImageId: number, section?: AtlasSection): string {
+  return getSectionImageUrl(sectionImageId, 6, section);
 }
 
 /** Get SVG annotation URL for a section */
@@ -28,13 +50,13 @@ export async function fetchSvgAnnotation(sectionImageId: number): Promise<string
  * Use Allen's structure_to_image API to find the section image that
  * best shows a given structure. Returns the section_image_id or null.
  */
-export async function fetchSectionForStructure(structureId: number): Promise<{
+export async function fetchSectionForStructure(structureId: number, datasetId: number = DATASET_CORONAL): Promise<{
   sectionImageId: number;
   sectionNumber: number;
   x: number;
   y: number;
 } | null> {
-  const url = `${ALLEN_API}/api/v2/structure_to_image/${ATLAS_DATASET_ID}.json?structure_ids=${structureId}`;
+  const url = `${ALLEN_API}/api/v2/structure_to_image/${datasetId}.json?structure_ids=${structureId}`;
   try {
     const resp = await fetch(url);
     if (!resp.ok) return null;
