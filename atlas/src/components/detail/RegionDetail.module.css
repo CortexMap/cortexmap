@@ -23,14 +23,14 @@
 }
 
 .placeholderText {
-  font-size: 14px;
-  color: #9ca3af;
+  font-size: 15px;
+  color: #6b7280;
   font-weight: 500;
 }
 
 .placeholderHint {
-  font-size: 12px;
-  color: #d4d4d4;
+  font-size: 13px;
+  color: #9ca3af;
 }
 
 .header {
@@ -48,7 +48,7 @@
 }
 
 .name {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   margin: 0 0 8px;
   line-height: 1.3;
@@ -63,16 +63,16 @@
 
 .acronym {
   background: #ede9fe;
-  color: #7c3aed;
+  color: #6d28d9;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .id {
-  color: #9ca3af;
-  font-size: 11px;
+  color: #6b7280;
+  font-size: 12px;
 }
 
 .section {
@@ -81,11 +81,11 @@
 }
 
 .sectionTitle {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #9ca3af;
+  color: #6b7280;
   margin: 0;
 }
 
@@ -102,16 +102,16 @@
 }
 
 .sectionHeader:hover .sectionTitle {
-  color: #6b7280;
+  color: #374151;
 }
 
 .sectionHeader:hover .collapseChevron {
-  color: #6b7280;
+  color: #374151;
 }
 
 .collapseChevron {
-  font-size: 10px;
-  color: #9ca3af;
+  font-size: 11px;
+  color: #6b7280;
   transition: transform 0.15s ease;
   flex-shrink: 0;
 }
@@ -131,19 +131,19 @@
 }
 
 .infoLabel {
-  font-size: 11px;
-  color: #9ca3af;
+  font-size: 12px;
+  color: #6b7280;
 }
 
 .infoValue {
-  font-size: 12px;
-  color: #374151;
+  font-size: 13px;
+  color: #1e293b;
   font-weight: 500;
 }
 
 .loadingText {
   color: #7c3aed;
-  font-size: 13px;
+  font-size: 14px;
   animation: pulse 1.5s ease-in-out infinite;
 }
 
@@ -154,7 +154,7 @@
 
 .errorText {
   color: #dc2626;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .summaryContent {
@@ -162,24 +162,24 @@
 }
 
 .summaryText {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
-  color: #374151;
+  color: #1e293b;
 }
 
 .summaryText h1,
 .summaryText h2,
 .summaryText h3,
 .summaryText h4 {
-  color: #1e293b;
+  color: #0f172a;
   margin: 12px 0 6px;
   line-height: 1.3;
 }
 
-.summaryText h1 { font-size: 16px; }
-.summaryText h2 { font-size: 15px; }
-.summaryText h3 { font-size: 14px; }
-.summaryText h4 { font-size: 13px; }
+.summaryText h1 { font-size: 18px; }
+.summaryText h2 { font-size: 16px; }
+.summaryText h3 { font-size: 15px; }
+.summaryText h4 { font-size: 14px; }
 
 .summaryText p {
   margin: 0 0 8px;
@@ -200,19 +200,19 @@
 }
 
 .summaryText strong {
-  color: #1e293b;
+  color: #0f172a;
   font-weight: 600;
 }
 
 .summaryText em {
-  color: #6b7280;
+  color: #374151;
 }
 
 .summaryText code {
   background: #f3f4f6;
   padding: 1px 4px;
   border-radius: 3px;
-  font-size: 12px;
+  font-size: 13px;
   font-family: 'SF Mono', Menlo, monospace;
 }
 
@@ -220,7 +220,7 @@
   border-left: 3px solid #7c3aed;
   margin: 8px 0;
   padding: 4px 12px;
-  color: #6b7280;
+  color: #374151;
 }
 
 .summaryText a {
@@ -233,8 +233,8 @@
 }
 
 .noSummary {
-  font-size: 12px;
-  color: #9ca3af;
+  font-size: 13px;
+  color: #6b7280;
   font-style: italic;
   margin: 0;
 }
@@ -243,14 +243,14 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
 }
 
 .statusBadge[data-status="NotStarted"] {
   background: #f3f4f6;
-  color: #9ca3af;
+  color: #6b7280;
 }
 
 .statusBadge[data-status="FetchQueued"],
@@ -258,12 +258,12 @@
 .statusBadge[data-status="LlmQueued"],
 .statusBadge[data-status="Processing"] {
   background: #ede9fe;
-  color: #7c3aed;
+  color: #6d28d9;
 }
 
 .statusBadge[data-status="Done"] {
   background: #dcfce7;
-  color: #16a34a;
+  color: #15803d;
 }
 
 .statusBadge[data-status="FetchFailed"] {
@@ -280,7 +280,7 @@
 .link {
   color: #7c3aed;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .link:hover {
@@ -296,8 +296,8 @@
 }
 
 .statusLabel {
-  font-size: 11px;
-  color: #9ca3af;
+  font-size: 12px;
+  color: #6b7280;
 }
 
 .summariesList {
@@ -323,13 +323,13 @@
 }
 
 .summaryDate {
-  font-size: 10px;
-  color: #9ca3af;
+  font-size: 11px;
+  color: #6b7280;
 }
 
 .sourceCount {
-  font-size: 10px;
-  color: #7c3aed;
+  font-size: 11px;
+  color: #6d28d9;
   background: #ede9fe;
   padding: 1px 6px;
   border-radius: 3px;
@@ -348,10 +348,10 @@
   align-items: center;
   gap: 1px;
   background: #ede9fe;
-  color: #7c3aed;
+  color: #6d28d9;
   padding: 1px 6px;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;
@@ -370,10 +370,10 @@
   display: inline-flex;
   align-items: center;
   background: #f3f4f6;
-  color: #9ca3af;
+  color: #6b7280;
   padding: 1px 6px;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   font-family: 'SF Mono', Menlo, monospace;
   vertical-align: baseline;
@@ -389,7 +389,7 @@
   color: #e2e8f0;
   border-radius: 6px;
   padding: 8px 10px;
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   z-index: 100;
   display: flex;
@@ -423,7 +423,7 @@
 
 .tooltipChunkId {
   font-family: 'SF Mono', Menlo, monospace;
-  font-size: 10px;
+  font-size: 11px;
   color: #cbd5e1;
   max-width: 180px;
   overflow: hidden;

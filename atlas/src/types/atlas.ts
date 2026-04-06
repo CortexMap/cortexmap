@@ -4,6 +4,16 @@ export interface AtlasSection {
   section_number: number;
   width: number;
   height: number;
+  /** Offset X within the image sheet (for imageservice crop) */
+  x?: number;
+  /** Offset Y within the image sheet (for imageservice crop) */
+  y?: number;
+  /** Path to the raw Nissl .aff file on Allen's imageservice */
+  path?: string;
+  /** Path to the "Atlas - Adult Mouse" rendered .aff file */
+  adult_path?: string;
+  /** Path to the "Atlas - Developing Mouse" rendered .aff file */
+  dev_path?: string;
 }
 
 /** Slim ontology node (as stored in ontology.json) */
@@ -38,4 +48,5 @@ export interface SvgRegion {
   structureId: number;
   d: string; // SVG path data
   fillColor: string;
+  strokeColor: string;
 }

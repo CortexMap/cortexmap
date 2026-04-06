@@ -23,6 +23,8 @@ export function parseSvgRegions(svgString: string): {
     const style = path.getAttribute('style') || '';
     const fillMatch = style.match(/fill:(#[0-9a-fA-F]{6})/);
     const fillColor = fillMatch ? fillMatch[1] : '#cccccc';
+    const strokeMatch = style.match(/stroke:(#[0-9a-fA-F]{6})/);
+    const strokeColor = strokeMatch ? strokeMatch[1] : fillColor;
 
     if (structureId && d) {
       regions.push({
@@ -30,6 +32,7 @@ export function parseSvgRegions(svgString: string): {
         structureId,
         d,
         fillColor,
+        strokeColor,
       });
       structureIds.add(structureId);
     }

@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAtlasStore } from '../../store/atlasStore';
 import { flattenTree, getAncestorPath, searchTree, collectAllNodes } from '../../utils/treeUtils';
-import type { OntologyNode, FlatTreeNode } from '../../types';
+import type { FlatTreeNode } from '../../types';
 import styles from './OntologyTree.module.css';
 
 const MAX_VISIBLE = 300;
@@ -10,7 +11,11 @@ export function OntologyTree() {
   const {
     ontology, selectedStructureId, hoveredStructureId,
     setHovered, selectStructure, annotatedStructures,
+    checked3dIds, check3dRegion, uncheck3dRegion, clearAllChecked3d,
   } = useAtlasStore();
+
+  const location = useLocation();
+  const is3d = location.pathname === '/3d';
 
   const [searchQuery, setSearchQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<number>>(new Set([997, 8, 567, 343, 512]));
@@ -74,9 +79,28 @@ export function OntologyTree() {
 
   const collapseAll = useCallback(() => setExpanded(new Set()), []);
 
+  // Allow deselection: clicking the same node deselects it
+  const handleSelect = useCallback((id: number) => {
+    if (id === selectedStructureId) {
+      selectStructure(null);
+    } else {
+      selectStructure(id);
+    }
+  }, [selectedStructureId, selectStructure]);
+
+  const handleCheck = useCallback((id: number, checked: boolean) => {
+    if (checked) {
+      check3dRegion(id);
+    } else {
+      uncheck3dRegion(id);
+    }
+  }, [check3dRegion, uncheck3dRegion]);
+
   if (!ontology) {
     return <div className={styles.container}><div className={styles.loading}>Loading ontology...</div></div>;
   }
+
+  const hasChecked = checked3dIds.size > 0;
 
   return (
     <div className={styles.container}>
@@ -100,6 +124,11 @@ export function OntologyTree() {
           <button className={styles.controlBtn} onClick={expandAll} title="Expand all">Expand</button>
           <button className={styles.controlBtn} onClick={collapseAll} title="Collapse all">Collapse</button>
         </div>
+        {is3d && hasChecked && (
+          <button className={styles.clearCheckedBtn} onClick={clearAllChecked3d} title="Clear all 3D selections">
+            Clear 3D ({checked3dIds.size})
+          </button>
+        )}
       </div>
 
       {/* Count */}
@@ -116,9 +145,12 @@ export function OntologyTree() {
             isAnnotated={annotatedStructures.has(flat.id)}
             isExpanded={expanded.has(flat.id)}
             isMatch={searchResult ? searchResult.matchIds.has(flat.id) : false}
+            isChecked={checked3dIds.has(flat.id)}
+            show3dCheckbox={is3d}
             onToggle={toggleExpand}
-            onSelect={selectStructure}
+            onSelect={handleSelect}
             onHover={setHovered}
+            onCheck={handleCheck}
             selectedRef={flat.id === selectedStructureId ? selectedRef : undefined}
           />
         ))}
@@ -139,13 +171,16 @@ interface TreeRowProps {
   isAnnotated: boolean;
   isExpanded: boolean;
   isMatch: boolean;
+  isChecked: boolean;
+  show3dCheckbox: boolean;
   onToggle: (id: number) => void;
   onSelect: (id: number) => void;
   onHover: (id: number | null) => void;
+  onCheck: (id: number, checked: boolean) => void;
   selectedRef?: React.Ref<HTMLDivElement>;
 }
 
-function TreeRow({ flat, isSelected, isHovered, isAnnotated, isExpanded, isMatch, onToggle, onSelect, onHover, selectedRef }: TreeRowProps) {
+function TreeRow({ flat, isSelected, isHovered, isAnnotated, isExpanded, isMatch, isChecked, show3dCheckbox, onToggle, onSelect, onHover, onCheck, selectedRef }: TreeRowProps) {
   const cls = [
     styles.row,
     isSelected ? styles.selected : '',
@@ -163,6 +198,17 @@ function TreeRow({ flat, isSelected, isHovered, isAnnotated, isExpanded, isMatch
       onMouseLeave={() => onHover(null)}
       onClick={() => onSelect(flat.id)}
     >
+      {/* 3D visibility checkbox -- only shown on /3d route */}
+      {show3dCheckbox && (
+        <input
+          type="checkbox"
+          className={styles.checkbox}
+          checked={isChecked}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onCheck(flat.id, e.target.checked)}
+          title="Toggle 3D visibility"
+        />
+      )}
       {flat.hasChildren ? (
         <button
           className={styles.toggle}
