@@ -1,10 +1,28 @@
-import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useAtlasStore } from '../../store/atlasStore';
 import { findNode } from '../../utils/treeUtils';
-import { fetchAllRegions, fetchRegionSummaries, fetchRegionStatus, fetchChunkSource } from '../../api/cortexmap';
+import {
+  fetchAllRegions,
+  fetchRegionSummaries,
+  fetchRegionStatus,
+  fetchChunkSource,
+  generateSummary,
+  fetchBatchStatus,
+} from '../../api/cortexmap';
 import type { CortexmapRegion, OntologyNode, RegionSummary, RegionStatus, SummarySource } from '../../types';
 import styles from './RegionDetail.module.css';
+
+interface BatchStatusData {
+  batch_id?: string;
+  status: string;
+  message?: string;
+  error?: string;
+  expected_tasks?: number;
+  completed_tasks?: number | null;
+}
+
+const ACTIVE_STATUSES = new Set(['FetchQueued', 'Fetching', 'LlmQueued', 'Processing']);
 
 export function RegionDetail() {
   const { selectedStructureId, ontology, cortexmapRegionMap, cortexmapLoaded, setCortexmapRegions } = useAtlasStore();
@@ -12,6 +30,14 @@ export function RegionDetail() {
   const [status, setStatus] = useState<RegionStatus | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+
+  // Generate button state
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [batchStatus, setBatchStatus] = useState<BatchStatusData | null>(null);
+  const batchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load cortexmap regions on first mount
   useEffect(() => {
@@ -60,6 +86,79 @@ export function RegionDetail() {
 
     return () => { cancelled = true; };
   }, [cortexmapRegion?.id]);
+
+  // Reset generate state when region changes
+  useEffect(() => {
+    setIsGenerating(false);
+    setGenerateError(null);
+    setBatchId(null);
+    setBatchStatus(null);
+    if (batchPollRef.current) { clearInterval(batchPollRef.current); batchPollRef.current = null; }
+    if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
+  }, [cortexmapRegion?.id]);
+
+  // Auto-refresh status while pipeline is active
+  useEffect(() => {
+    if (!cortexmapRegion || !status || !ACTIVE_STATUSES.has(status.status)) {
+      if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; }
+      return;
+    }
+    if (statusPollRef.current) return; // already polling
+    statusPollRef.current = setInterval(async () => {
+      try {
+        const [newStatus, newSummaries] = await Promise.all([
+          fetchRegionStatus(cortexmapRegion.id),
+          fetchRegionSummaries(cortexmapRegion.id),
+        ]);
+        setStatus(newStatus);
+        setSummaries(newSummaries);
+      } catch { /* silent */ }
+    }, 3000);
+    return () => { if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null; } };
+  }, [status?.status, cortexmapRegion?.id]);
+
+  // Poll batch status while a batch is in flight
+  useEffect(() => {
+    if (!batchId || !cortexmapRegion) return;
+    if (batchPollRef.current) clearInterval(batchPollRef.current);
+    batchPollRef.current = setInterval(async () => {
+      try {
+        const data = await fetchBatchStatus(batchId) as BatchStatusData;
+        setBatchStatus(data);
+        if (data.status === 'Completed' || data.status === 'Failed') {
+          if (batchPollRef.current) { clearInterval(batchPollRef.current); batchPollRef.current = null; }
+          setBatchId(null);
+          setBatchStatus(null);
+          const [newStatus, newSummaries] = await Promise.all([
+            fetchRegionStatus(cortexmapRegion.id),
+            fetchRegionSummaries(cortexmapRegion.id),
+          ]);
+          setStatus(newStatus);
+          setSummaries(newSummaries);
+        }
+      } catch { /* silent */ }
+    }, 2000);
+    return () => { if (batchPollRef.current) { clearInterval(batchPollRef.current); batchPollRef.current = null; } };
+  }, [batchId, cortexmapRegion?.id]);
+
+  const handleGenerate = useCallback(async () => {
+    if (!cortexmapRegion) return;
+    setIsGenerating(true);
+    setGenerateError(null);
+    try {
+      const data = await generateSummary(cortexmapRegion.id) as { batch_id?: string };
+      if (data?.batch_id) {
+        setBatchId(data.batch_id);
+        setBatchStatus({ status: 'Queued', message: 'Summary generation started' });
+      }
+      const newStatus = await fetchRegionStatus(cortexmapRegion.id);
+      setStatus(newStatus);
+    } catch {
+      setGenerateError('Failed to start summary generation. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [cortexmapRegion]);
 
   if (selectedStructureId === null) {
     return (
@@ -141,15 +240,109 @@ export function RegionDetail() {
       {/* Summary section */}
       {cortexmapRegion && (
         <CollapsibleSection title="Summary" defaultOpen>
-          {summaryLoading && <div className={styles.loadingText}>Loading summary...</div>}
-          {summaryError && <div className={styles.errorText}>{summaryError}</div>}
-          {!summaryLoading && !summaryError && summaries.length === 0 && (
+          {/* Generate / Regenerate button row */}
+          <div className={styles.generateRow}>
+            {(!status || status.status === 'NotStarted') ? (
+              <button
+                className={styles.generateBtn}
+                onClick={handleGenerate}
+                disabled={isGenerating}
+                type="button"
+              >
+                {isGenerating ? (
+                  <><SpinnerIcon /> Initiating…</>
+                ) : (
+                  <>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="16" /><line x1="8" y1="12" x2="16" y2="12" />
+                    </svg>
+                    Start Summary Generation
+                  </>
+                )}
+              </button>
+            ) : (
+              <button
+                className={`${styles.generateBtn} ${styles.generateBtnSecondary}`}
+                onClick={handleGenerate}
+                disabled={isGenerating || !!batchId || (status ? ACTIVE_STATUSES.has(status.status) : false)}
+                type="button"
+              >
+                {isGenerating ? (
+                  <><SpinnerIcon /> Starting…</>
+                ) : (
+                  <>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
+                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                    </svg>
+                    Regenerate Summary
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+
+          {generateError && <div className={styles.errorText} style={{ marginTop: 8 }}>{generateError}</div>}
+
+          {/* Batch progress panel */}
+          {batchStatus && batchId && (
+            <div className={styles.batchProgress}>
+              <div className={styles.batchHeader}>
+                <SpinnerIcon className={styles.batchSpinner} />
+                <span>Generation in progress</span>
+              </div>
+              <div className={styles.batchMeta}>
+                <span className={styles.batchLabel}>Status:</span>
+                <span>{batchStatus.status}</span>
+              </div>
+              {batchStatus.message && (
+                <div className={styles.batchMeta}>
+                  <span className={styles.batchLabel}>Info:</span>
+                  <span>{batchStatus.message}</span>
+                </div>
+              )}
+              {(batchStatus.expected_tasks ?? 0) > 0 && (
+                <>
+                  <div className={styles.batchMeta}>
+                    <span className={styles.batchLabel}>Tasks:</span>
+                    <span>{batchStatus.completed_tasks ?? 0} / {batchStatus.expected_tasks} fetched</span>
+                  </div>
+                  <div className={styles.progressBarTrack}>
+                    <div
+                      className={styles.progressBarFill}
+                      style={{
+                        width: `${Math.min(100, Math.round(((batchStatus.completed_tasks ?? 0) / batchStatus.expected_tasks!) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+              {batchStatus.error && (
+                <div className={`${styles.errorText}`} style={{ marginTop: 4 }}>{batchStatus.error}</div>
+              )}
+            </div>
+          )}
+
+          {summaryLoading && <div className={styles.loadingText} style={{ marginTop: 10 }}>Loading summary…</div>}
+          {summaryError && <div className={styles.errorText} style={{ marginTop: 8 }}>{summaryError}</div>}
+
+          {/* In-progress placeholder */}
+          {!summaryLoading && summaries.length === 0 && status && ACTIVE_STATUSES.has(status.status) && (
+            <div className={styles.inProgressPlaceholder}>
+              <SpinnerIcon className={styles.inProgressSpinner} />
+              <span>Generating summary — {STATUS_LABELS[status.status] ?? status.status}</span>
+            </div>
+          )}
+
+          {/* No summary yet */}
+          {!summaryLoading && summaries.length === 0 && (!status || (!ACTIVE_STATUSES.has(status.status))) && !batchId && (
             <p className={styles.noSummary}>No summary generated yet.</p>
           )}
+
           {!summaryLoading && summaries.length > 0 && (
             <div className={styles.summariesList}>
               {summaries.map((s, i) => (
-                <SummaryCard key={s.batch_id + '-' + i} summary={s} />
+                <SummaryCard key={s.batch_id + '-' + i} summary={s} isLatest={i === 0} />
               ))}
             </div>
           )}
@@ -157,6 +350,33 @@ export function RegionDetail() {
       )}
 
     </div>
+  );
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────
+
+const STATUS_LABELS: Record<string, string> = {
+  FetchQueued: 'Fetch queued',
+  Fetching: 'Fetching papers',
+  LlmQueued: 'LLM queued',
+  Processing: 'Generating summary',
+};
+
+function SpinnerIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      style={{ animation: 'rd-spin 0.8s linear infinite', flexShrink: 0 }}
+      aria-hidden="true"
+    >
+      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+    </svg>
   );
 }
 
@@ -188,7 +408,7 @@ interface ChunkInfo {
   source_query: string | null;
 }
 
-function SummaryCard({ summary }: { summary: RegionSummary }) {
+function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?: boolean }) {
   const [chunkMap, setChunkMap] = useState<Record<string, ChunkInfo>>({});
 
   useEffect(() => {
@@ -252,6 +472,7 @@ function SummaryCard({ summary }: { summary: RegionSummary }) {
         <MarkdownWithChunks content={summary.summary} chunkMap={chunkMap} />
       </div>
       <div className={styles.summaryMeta}>
+        {isLatest && <span className={styles.latestBadge}>Latest</span>}
         <span className={styles.summaryDate}>
           {new Date(summary.created_at).toLocaleDateString('en-US', {
             year: 'numeric', month: 'short', day: 'numeric',
