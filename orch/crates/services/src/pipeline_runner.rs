@@ -632,4 +632,14 @@ where
             timestamp: chrono::Utc::now(),
         })
     }
+
+    async fn get_redis_stats(&self) -> Result<domain::RedisStats, Self::Error> {
+        // The CacheClient impl is designed to never propagate errors -- a Redis
+        // outage produces a `connected: false` snapshot. So this is a thin
+        // delegation.
+        self.infra
+            .cache_stats()
+            .await
+            .map_err(ServiceError::InfraError)
+    }
 }

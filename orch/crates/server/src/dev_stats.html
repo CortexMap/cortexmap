@@ -303,6 +303,14 @@
     <h2>Configuration</h2>
     <div id="configTable" style="overflow-x:auto"></div>
   </div>
+
+  <!-- Redis Cache -->
+  <div class="card wide">
+    <h2>Redis Cache <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim); margin-left: 0.5rem;" data-tip="Orch uses Redis only as a key-value cache. The actual task queue lives in PostgreSQL fetch_tasks.">read-through cache (not the task queue)</span></h2>
+    <div id="redisStatus" style="margin-bottom: 0.8rem"></div>
+    <div class="stat-row" id="redisOverview" style="margin-bottom: 0.8rem"></div>
+    <div id="redisPrefixes" style="overflow-x:auto"></div>
+  </div>
 </div>
 
 <script>
@@ -527,12 +535,13 @@ async function poll() {
   fetching = true;
   $('spinner').classList.add('active');
 
-  const [health, stats, config, workers, sysStats] = await Promise.all([
+  const [health, stats, config, workers, sysStats, redis] = await Promise.all([
     safeFetch(BASE + '/api/pipeline/status'),
     safeFetch(BASE + '/api/pipeline/stats'),
     safeFetch(BASE + '/api/config'),
     safeFetch(BASE + '/api/workers/status'),
     safeFetch(BASE + '/dev/api/system-stats'),
+    safeFetch(BASE + '/dev/api/redis-stats'),
   ]);
 
   // Pipeline Health
@@ -563,9 +572,77 @@ async function poll() {
   // Config
   renderConfig(config);
 
+  // Redis
+  renderRedis(redis);
+
   $('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
   $('spinner').classList.remove('active');
   fetching = false;
+}
+
+function fmtBytes(n) {
+  if (n == null || n === 0) return '0B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0; let v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v < 10 ? 1 : 0) + units[i];
+}
+
+function fmtUptime(s) {
+  if (!s) return '-';
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return d + 'd ' + h + 'h';
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm';
+}
+
+function renderRedis(r) {
+  const statusEl  = $('redisStatus');
+  const overEl    = $('redisOverview');
+  const tableEl   = $('redisPrefixes');
+
+  if (!r) {
+    statusEl.innerHTML = '<span class="badge badge-red">offline</span> <span style="color:var(--text-dim)">/dev/api/redis-stats unreachable</span>';
+    overEl.innerHTML = '';
+    tableEl.innerHTML = '';
+    return;
+  }
+
+  if (!r.connected) {
+    statusEl.innerHTML = '<span class="badge badge-red">disconnected</span> <span style="color:var(--text-dim)">' + (r.error || 'unknown error') + '</span>';
+    overEl.innerHTML = '';
+    tableEl.innerHTML = '';
+    return;
+  }
+
+  statusEl.innerHTML = '<span class="badge badge-green">connected</span> <span style="color:var(--text-dim)">redis ' + (r.server_version || '?') + '</span>';
+
+  const hitRatePct = (r.hit_rate * 100).toFixed(1) + '%';
+  overEl.innerHTML = `
+    <div class="stat-box"><div class="val">${fmt(r.total_keys)}</div><div class="lbl" data-tip="DBSIZE: total keys across the entire Redis DB.">Total Keys</div></div>
+    <div class="stat-box"><div class="val">${r.used_memory_human || fmtBytes(r.used_memory_bytes)}</div><div class="lbl" data-tip="INFO used_memory_human: bytes Redis is consuming for data + overhead.">Memory</div></div>
+    <div class="stat-box"><div class="val">${hitRatePct}</div><div class="lbl" data-tip="keyspace_hits / (keyspace_hits + keyspace_misses) since boot.">Hit Rate</div></div>
+    <div class="stat-box"><div class="val">${fmtUptime(r.uptime_secs)}</div><div class="lbl" data-tip="Redis server uptime since process start.">Uptime</div></div>
+    <div class="stat-box"><div class="val">${fmt(r.keyspace_hits)}</div><div class="lbl" data-tip="Cumulative cache hits since Redis boot.">Hits</div></div>
+    <div class="stat-box"><div class="val">${fmt(r.keyspace_misses)}</div><div class="lbl" data-tip="Cumulative cache misses since Redis boot.">Misses</div></div>
+  `;
+
+  const rows = (r.keys_by_prefix || []).map(p => `
+    <tr>
+      <td><code>${p.pattern}</code></td>
+      <td>${fmt(p.count)}</td>
+      <td style="color:var(--text-dim);font-size:0.78rem">${p.description}</td>
+    </tr>
+  `).join('');
+
+  tableEl.innerHTML = `
+    <table>
+      <thead><tr><th>Pattern</th><th>Keys</th><th>Description</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 initPollInput();

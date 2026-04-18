@@ -298,3 +298,45 @@ pub struct PipelineTriggerResult {
     /// Any non-fatal errors, one per failed phase.
     pub errors: Vec<String>,
 }
+
+/// Snapshot of the Redis cache used by orch. Note: orch uses Redis only as a
+/// key-value cache (no list/queue ops). The actual task queue lives in
+/// PostgreSQL `fetch_tasks`. This endpoint surfaces cache health and
+/// per-prefix key counts for observability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisStats {
+    /// `true` if PING succeeded, `false` otherwise.
+    pub connected: bool,
+    /// Last error message if the connection failed (None on success).
+    pub error: Option<String>,
+    /// Total keys across the entire Redis DB (from DBSIZE).
+    pub total_keys: u64,
+    /// Per-prefix key counts (e.g. `{"orch:region:*:status": 1198}`).
+    /// Only populated when connected.
+    pub keys_by_prefix: Vec<RedisPrefixCount>,
+    /// Memory usage in bytes (from INFO `used_memory`). 0 on failure.
+    pub used_memory_bytes: u64,
+    /// Human-readable memory string (e.g. "12.4M").
+    pub used_memory_human: String,
+    /// Server uptime in seconds (from INFO `uptime_in_seconds`). 0 on failure.
+    pub uptime_secs: u64,
+    /// Total connections received since boot.
+    pub total_connections_received: u64,
+    /// Cumulative cache hits / misses since boot.
+    pub keyspace_hits: u64,
+    pub keyspace_misses: u64,
+    /// Hit rate as a 0..=1 fraction (computed from hits / (hits+misses)).
+    pub hit_rate: f64,
+    /// Redis server version (e.g. "7.2.4").
+    pub server_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisPrefixCount {
+    /// Glob pattern scanned (e.g. `orch:region:*:status`).
+    pub pattern: String,
+    /// Human-friendly description of what's stored under this prefix.
+    pub description: String,
+    /// Number of keys matching the pattern.
+    pub count: u64,
+}

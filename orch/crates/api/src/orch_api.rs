@@ -3,8 +3,9 @@ use app::{AppError, OrchApp, Services};
 use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
     GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, PipelineTriggerRequest,
-    PipelineTriggerResult, Region, RegionStatusResult, SearchRegionResult, SearchResponse,
-    StopWorkersRequest, SystemStats, WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
+    PipelineTriggerResult, RedisStats, Region, RegionStatusResult, SearchRegionResult,
+    SearchResponse, StopWorkersRequest, SystemStats, WorkerAllocationResponse, WorkerStatus,
+    WorkerStopResponse,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -184,6 +185,13 @@ where
     ) -> Result<PipelineTriggerResult, Self::Error> {
         self.app()
             .trigger_pipeline(req)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_redis_stats(&self) -> Result<RedisStats, Self::Error> {
+        self.app()
+            .get_redis_stats()
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }

@@ -380,6 +380,11 @@ pub trait CacheClient: Send + Sync {
     /// Delete all keys matching a glob pattern (e.g. `orch:region:*:status`).
     /// Returns the number of keys deleted.
     async fn cache_del_pattern(&self, pattern: &str) -> Result<u64, Self::Error>;
+
+    /// Snapshot of cache health and per-prefix key counts. Always returns `Ok`:
+    /// connection failures populate the `connected: false` / `error` fields
+    /// rather than propagating, so the dashboard can render even when Redis is down.
+    async fn cache_stats(&self) -> Result<domain::RedisStats, Self::Error>;
 }
 
 /// Blanket: any `T: OrchDatabase + EnvInfra + HttpClient + BatchManagement + RegionMappingQueries + CacheClient` automatically satisfies `Infra`.

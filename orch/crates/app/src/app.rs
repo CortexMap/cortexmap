@@ -678,6 +678,12 @@ where
         self.services.get_system_stats().await
     }
 
+    /// Snapshot of the Redis cache (key counts per prefix, memory, hit rate).
+    /// Errors are surfaced inside the response body, not propagated.
+    pub async fn get_redis_stats(&self) -> Result<domain::RedisStats, E> {
+        self.services.get_redis_stats().await
+    }
+
     /// Manually trigger pipeline phases on demand. Phases run sequentially and
     /// independently: a failure in one phase is collected into `errors` but
     /// does NOT abort subsequent phases (the operator can retry piecemeal).

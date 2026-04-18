@@ -235,6 +235,11 @@ pub trait PipelineRunner: Send + Sync {
 
     /// Get comprehensive system stats for the dev dashboard.
     async fn get_system_stats(&self) -> Result<domain::SystemStats, Self::Error>;
+
+    /// Snapshot of the Redis cache (connection state, key counts per prefix,
+    /// memory usage). Always succeeds: a Redis outage surfaces as
+    /// `connected: false` with an error string.
+    async fn get_redis_stats(&self) -> Result<domain::RedisStats, Self::Error>;
 }
 
 pub trait Services:

@@ -80,6 +80,7 @@ impl OrchServer {
             .route("/api/pipeline/trigger", post(trigger_pipeline_handler))
             .route("/dev/stats", get(dev_stats_page_handler))
             .route("/dev/api/system-stats", get(dev_system_stats_handler))
+            .route("/dev/api/redis-stats", get(dev_redis_stats_handler))
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
@@ -247,5 +248,12 @@ async fn trigger_pipeline_handler(
     Json(body): Json<domain::PipelineTriggerRequest>,
 ) -> Result<impl IntoResponse, ServerError> {
     let result = server.api.trigger_pipeline(body).await?;
+    Ok(Json(result))
+}
+
+async fn dev_redis_stats_handler(
+    State(server): State<OrchServer>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_redis_stats().await?;
     Ok(Json(result))
 }

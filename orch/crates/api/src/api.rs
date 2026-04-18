@@ -1,8 +1,9 @@
 use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
     GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, PipelineTriggerRequest,
-    PipelineTriggerResult, Region, RegionStatusResult, SearchRegionResult, SearchResponse,
-    StopWorkersRequest, SystemStats, WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
+    PipelineTriggerResult, RedisStats, Region, RegionStatusResult, SearchRegionResult,
+    SearchResponse, StopWorkersRequest, SystemStats, WorkerAllocationResponse, WorkerStatus,
+    WorkerStopResponse,
 };
 use uuid::Uuid;
 
@@ -97,4 +98,9 @@ pub trait OrchApi: Send + Sync {
         &self,
         req: PipelineTriggerRequest,
     ) -> Result<PipelineTriggerResult, Self::Error>;
+
+    /// Snapshot of the Redis cache used by orch (connection state, key counts
+    /// per prefix, memory usage, hit rate). Always succeeds: a Redis outage
+    /// surfaces as `connected: false` with an `error` string.
+    async fn get_redis_stats(&self) -> Result<RedisStats, Self::Error>;
 }

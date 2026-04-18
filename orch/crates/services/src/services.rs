@@ -402,4 +402,8 @@ where
     async fn get_system_stats(&self) -> Result<domain::SystemStats, Self::Error> {
         self.pipeline_runner.get_system_stats().await
     }
+
+    async fn get_redis_stats(&self) -> Result<domain::RedisStats, Self::Error> {
+        self.pipeline_runner.get_redis_stats().await
+    }
 }

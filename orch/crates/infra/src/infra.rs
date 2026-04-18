@@ -371,4 +371,8 @@ impl CacheClient for OrchInfra {
     async fn cache_del_pattern(&self, pattern: &str) -> Result<u64, Self::Error> {
         self.redis.cache_del_pattern(pattern).await
     }
+
+    async fn cache_stats(&self) -> Result<domain::RedisStats, Self::Error> {
+        self.redis.cache_stats().await
+    }
 }
