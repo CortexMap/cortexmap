@@ -429,3 +429,133 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ─── Spinner keyframe (used by SpinnerIcon) ──────────────────── */
+@keyframes rd-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ─── Generate button row ─────────────────────────────────────── */
+.generateRow {
+  margin-bottom: 12px;
+}
+
+.generateBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  width: 100%;
+  justify-content: center;
+}
+
+.generateBtn:hover:not(:disabled) {
+  background: #6d28d9;
+}
+
+.generateBtn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.generateBtnSecondary {
+  background: #fff;
+  color: #7c3aed;
+  border: 1px solid #a78bfa;
+}
+
+.generateBtnSecondary:hover:not(:disabled) {
+  background: #ede9fe;
+}
+
+/* ─── Batch progress panel ────────────────────────────────────── */
+.batchProgress {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #1e293b;
+}
+
+.batchHeader {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  color: #6d28d9;
+}
+
+.batchSpinner {
+  color: #7c3aed;
+}
+
+.batchMeta {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.batchLabel {
+  color: #6b7280;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.progressBarTrack {
+  height: 5px;
+  background: #ddd6fe;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.progressBarFill {
+  height: 100%;
+  background: #7c3aed;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+/* ─── In-progress placeholder ─────────────────────────────────── */
+.inProgressPlaceholder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 4px;
+  font-size: 13px;
+  color: #6d28d9;
+}
+
+.inProgressSpinner {
+  color: #7c3aed;
+  flex-shrink: 0;
+}
+
+/* ─── Latest badge on summary card ───────────────────────────── */
+.latestBadge {
+  display: inline-block;
+  padding: 1px 7px;
+  background: #dcfce7;
+  color: #15803d;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}

@@ -5,6 +5,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { OntologyTree } from './components/tree/OntologyTree';
 import { AtlasViewer } from './components/viewer/AtlasViewer';
 import { RegionDetail } from './components/detail/RegionDetail';
+import { SearchFunc } from './components/search/SearchFunc';
 import './global.css';
 
 // Lazy-load the 3D viewer so Three.js is only fetched when navigating to /3d
@@ -45,6 +46,8 @@ function ViewerWithNav() {
       }}>
         <NavTab label="2D Atlas" active={!is3D} onClick={() => navigate('/')} />
         <NavTab label="3D Brain" active={is3D} onClick={() => navigate('/3d')} />
+        <div style={{ flex: 1 }} />
+        <SearchFunc />
       </div>
       <div style={{ flex: 1, overflow: 'hidden' }}>
         <Routes>
