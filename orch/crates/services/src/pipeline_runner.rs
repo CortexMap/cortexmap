@@ -7,8 +7,8 @@ use backon::{ExponentialBuilder, Retryable};
 use domain::ConfigKey;
 use futures::StreamExt;
 use std::error::Error;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub struct OrchPipelineRunner<I> {
     infra: Arc<I>,
@@ -103,10 +103,7 @@ where
             .and_then(|v| v.parse().ok())
             .unwrap_or(10);
 
-        tracing::info!(
-            concurrency,
-            "Phase 1: Running parallel query generation"
-        );
+        tracing::info!(concurrency, "Phase 1: Running parallel query generation");
 
         let regions_processed = Arc::new(AtomicUsize::new(0));
         let total_queries = Arc::new(AtomicUsize::new(0));
@@ -122,7 +119,7 @@ where
         let cf = &consecutive_failures;
         let cb = &circuit_broken;
 
-        futures::stream::iter(regions.into_iter())
+        futures::stream::iter(regions)
             .map(|region| async move {
                 // Check circuit breaker before starting
                 if cb.load(Ordering::Relaxed) {
@@ -171,7 +168,11 @@ where
                         cf.store(0, Ordering::Relaxed); // Reset on success
                         if !response.queries.is_empty() {
                             match infra
-                                .insert_queries(database_url_ref, region.id, response.queries.clone())
+                                .insert_queries(
+                                    database_url_ref,
+                                    region.id,
+                                    response.queries.clone(),
+                                )
                                 .await
                             {
                                 Ok(_) => {
@@ -341,9 +342,7 @@ where
                         let task_ids: Vec<i64> = response
                             .get("task_ids")
                             .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter().filter_map(|v| v.as_i64()).collect()
-                            })
+                            .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
                             .unwrap_or_default();
 
                         if !task_ids.is_empty() {
@@ -364,11 +363,7 @@ where
             // If we got new tasks, create a batch for them
             if !region_task_ids.is_empty() {
                 // Check if there's already an active batch for this region
-                match self
-                    .infra
-                    .get_active_batch(&database_url, *region_id)
-                    .await
-                {
+                match self.infra.get_active_batch(&database_url, *region_id).await {
                     Ok(Some(existing_batch)) => {
                         tracing::debug!(
                             region_id = %region_id,
@@ -380,11 +375,7 @@ where
                         // Create a new batch
                         match self
                             .infra
-                            .create_batch(
-                                &database_url,
-                                *region_id,
-                                region_task_ids.len() as i32,
-                            )
+                            .create_batch(&database_url, *region_id, region_task_ids.len() as i32)
                             .await
                         {
                             Ok(batch_id) => {
@@ -549,10 +540,7 @@ where
                 "Phase 3: Allocated workers"
             );
         } else {
-            tracing::debug!(
-                active_workers,
-                "Phase 3: Workers already running"
-            );
+            tracing::debug!(active_workers, "Phase 3: Workers already running");
         }
 
         Ok(())

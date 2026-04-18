@@ -869,10 +869,7 @@ impl services::RegionMappingQueries for OrchPostgresql {
             .collect())
     }
 
-    async fn get_pending_fetch_task_count(
-        &self,
-        database_url: &str,
-    ) -> Result<i64, Self::Error> {
+    async fn get_pending_fetch_task_count(&self, database_url: &str) -> Result<i64, Self::Error> {
         use crate::schema::fetch_tasks;
         use diesel::dsl::count_star;
 

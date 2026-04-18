@@ -241,9 +241,7 @@ impl BatchManagement for OrchInfra {
         database_url: &str,
         task_ids: &[i64],
     ) -> Result<Vec<i64>, Self::Error> {
-        self.pg
-            .get_completed_task_ids(database_url, task_ids)
-            .await
+        self.pg.get_completed_task_ids(database_url, task_ids).await
     }
 
     async fn get_task_s3_keys(
@@ -331,10 +329,7 @@ impl services::RegionMappingQueries for OrchInfra {
         self.pg.get_all_regions_with_queries(database_url).await
     }
 
-    async fn get_pending_fetch_task_count(
-        &self,
-        database_url: &str,
-    ) -> Result<i64, Self::Error> {
+    async fn get_pending_fetch_task_count(&self, database_url: &str) -> Result<i64, Self::Error> {
         self.pg.get_pending_fetch_task_count(database_url).await
     }
 

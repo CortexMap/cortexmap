@@ -347,16 +347,10 @@ pub trait RegionMappingQueries: Send + Sync {
     ) -> Result<Vec<(Uuid, String, Vec<String>)>, Self::Error>;
 
     /// Count fetch_tasks that are pending or in_progress.
-    async fn get_pending_fetch_task_count(
-        &self,
-        database_url: &str,
-    ) -> Result<i64, Self::Error>;
+    async fn get_pending_fetch_task_count(&self, database_url: &str) -> Result<i64, Self::Error>;
 
     /// Get comprehensive system stats for the dev dashboard (aggregate counts).
-    async fn get_system_stats(
-        &self,
-        database_url: &str,
-    ) -> Result<SystemStatsRaw, Self::Error>;
+    async fn get_system_stats(&self, database_url: &str) -> Result<SystemStatsRaw, Self::Error>;
 }
 
 /// Cache client for Redis-backed read-through caching and invalidation.

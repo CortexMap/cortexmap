@@ -85,7 +85,10 @@ where
             .map_err(ApiError::AppError)?;
 
         let detail = if skip_summarization {
-            format!("Successfully chunked and embedded for summary {}", summary_id)
+            format!(
+                "Successfully chunked and embedded for summary {}",
+                summary_id
+            )
         } else {
             format!("Successfully created summary {}", summary_id)
         };

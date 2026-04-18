@@ -56,18 +56,17 @@ impl TaskQueueInfra for StdTaskQueue {
                 // Try to insert; if pmc_id already exists, skip.
                 // UNIQUE(pmc_id) ensures each paper is fetched exactly once
                 // regardless of which query discovered it.
-                let maybe_inserted: Option<FetchTask> =
-                    diesel::insert_into(fetch_tasks::table)
-                        .values(NewFetchTask {
-                            pmc_id: pmc_id.clone(),
-                            query: query.clone(),
-                            status: TaskStatus::Pending.as_str().to_string(),
-                            priority: 0,
-                        })
-                        .on_conflict(fetch_tasks::pmc_id)
-                        .do_nothing()
-                        .get_result(conn)
-                        .optional()?;
+                let maybe_inserted: Option<FetchTask> = diesel::insert_into(fetch_tasks::table)
+                    .values(NewFetchTask {
+                        pmc_id: pmc_id.clone(),
+                        query: query.clone(),
+                        status: TaskStatus::Pending.as_str().to_string(),
+                        priority: 0,
+                    })
+                    .on_conflict(fetch_tasks::pmc_id)
+                    .do_nothing()
+                    .get_result(conn)
+                    .optional()?;
 
                 let task = match maybe_inserted {
                     Some(t) => t,

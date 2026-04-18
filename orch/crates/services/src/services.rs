@@ -386,9 +386,7 @@ where
     }
 
     async fn get_regions_with_queries_count(&self) -> Result<i64, Self::Error> {
-        self.pipeline_runner
-            .get_regions_with_queries_count()
-            .await
+        self.pipeline_runner.get_regions_with_queries_count().await
     }
 
     async fn get_system_stats(&self) -> Result<domain::SystemStats, Self::Error> {

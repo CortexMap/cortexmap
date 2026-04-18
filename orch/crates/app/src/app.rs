@@ -480,7 +480,11 @@ where
         if all_task_ids.is_empty() {
             // No papers found at all — create a failed batch
             let batch_id = self.services.create_batch(region_id, 0).await?;
-            tracing::warn!(?region_id, ?batch_id, "No papers found, marking batch as failed");
+            tracing::warn!(
+                ?region_id,
+                ?batch_id,
+                "No papers found, marking batch as failed"
+            );
             self.services
                 .update_batch_status(
                     batch_id,
@@ -528,11 +532,14 @@ where
         let task_count = batch_task_ids.len();
 
         // Step 5: Create batch and add tasks
-        let batch_id = self
-            .services
-            .create_batch(region_id, task_count)
-            .await?;
-        tracing::info!(?region_id, ?batch_id, task_count, start_as_ready, "Created batch");
+        let batch_id = self.services.create_batch(region_id, task_count).await?;
+        tracing::info!(
+            ?region_id,
+            ?batch_id,
+            task_count,
+            start_as_ready,
+            "Created batch"
+        );
 
         self.services
             .add_tasks_to_batch(batch_id, batch_task_ids)
