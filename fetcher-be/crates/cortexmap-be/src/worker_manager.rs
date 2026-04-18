@@ -13,6 +13,10 @@ pub struct WorkerHandle {
     pub handle: JoinHandle<()>,
     pub started_at: i64,
     pub cancel_token: tokio::sync::mpsc::Sender<()>,
+    pub task_timeout_secs: u64,
+    pub failure_backoff_base_secs: u64,
+    pub max_retry_attempts: u32,
+    pub backoff_strategy: String,
 }
 
 pub struct WorkerManager {
@@ -81,6 +85,10 @@ impl WorkerManager {
                 handle,
                 started_at,
                 cancel_token: cancel_tx,
+                task_timeout_secs: blueprint.fetcher.task_timeout_secs,
+                failure_backoff_base_secs: blueprint.fetcher.retry_config.failure_backoff_base_secs,
+                max_retry_attempts: blueprint.fetcher.max_retry_attempts,
+                backoff_strategy: format!("{:?}", blueprint.fetcher.retry_config.backoff_strategy),
             };
 
             self.workers.insert(worker_id.clone(), worker_handle);
@@ -148,6 +156,10 @@ impl WorkerManager {
                     uptime_seconds: uptime_secs,
                     tasks_failed: 0,
                     success_rate: 0.0,
+                    task_timeout_secs: worker.task_timeout_secs,
+                    failure_backoff_base_secs: worker.failure_backoff_base_secs,
+                    max_retry_attempts: worker.max_retry_attempts,
+                    backoff_strategy: worker.backoff_strategy.clone(),
                 }
             })
             .collect()
@@ -214,7 +226,11 @@ impl WorkerManager {
                 "SELECT 
                     COUNT(*) FILTER (WHERE status = 'completed') as completed_count,
                     COUNT(*) FILTER (WHERE status = 'failed') as failed_count,
-                    COALESCE(MAX(pmc_id) FILTER (WHERE status = 'in_progress'), '') as current_pmc,
+                    COALESCE(
+                        MAX(pmc_id) FILTER (WHERE status = 'in_progress'),
+                        (SELECT pmc_id FROM fetch_tasks ft2 WHERE ft2.worker_id = $1 ORDER BY ft2.started_at DESC NULLS LAST LIMIT 1),
+                        ''
+                    ) as current_pmc,
                     MAX(worker_version) as worker_version,
                     MAX(EXTRACT(EPOCH FROM heartbeat_at))::BIGINT as last_heartbeat_ts
                  FROM fetch_tasks 

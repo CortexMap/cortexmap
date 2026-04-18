@@ -17,6 +17,10 @@ pub struct WorkerStatus {
     pub uptime_seconds: f64,
     pub tasks_failed: i64,
     pub success_rate: f64, // 0.0 to 1.0
+    pub task_timeout_secs: u64,
+    pub failure_backoff_base_secs: u64,
+    pub max_retry_attempts: u32,
+    pub backoff_strategy: String,
 }
 
 /// Request to allocate workers

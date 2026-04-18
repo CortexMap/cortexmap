@@ -735,7 +735,6 @@ impl TaskQueueInfra for StdTaskQueue {
             diesel::sql_query(
                 "UPDATE fetch_tasks 
                  SET status = 'pending',
-                     worker_id = NULL,
                      heartbeat_at = NULL,
                      started_at = NULL
                  WHERE id = $1",

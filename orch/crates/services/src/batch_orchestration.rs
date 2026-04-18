@@ -167,6 +167,14 @@ struct WorkerInfo {
     tasks_failed: i64,
     #[serde(default)]
     success_rate: f64,
+    #[serde(default)]
+    task_timeout_secs: Option<u64>,
+    #[serde(default)]
+    failure_backoff_base_secs: Option<u64>,
+    #[serde(default)]
+    max_retry_attempts: Option<u64>,
+    #[serde(default)]
+    backoff_strategy: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -535,6 +543,10 @@ where
                 uptime_seconds: w.uptime_seconds,
                 tasks_failed: w.tasks_failed,
                 success_rate: w.success_rate,
+                task_timeout_secs: w.task_timeout_secs.unwrap_or(0),
+                failure_backoff_base_secs: w.failure_backoff_base_secs.unwrap_or(0),
+                max_retry_attempts: w.max_retry_attempts.unwrap_or(0) as u32,
+                backoff_strategy: w.backoff_strategy.unwrap_or_default(),
             })
             .collect();
 
