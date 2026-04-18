@@ -57,6 +57,13 @@ pub struct ProcessRegionRequest {
     /// Embedding model to use (e.g., "text-embedding-3-small")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<String>,
+    /// If true, only chunk and embed — skip RAG summarization.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub skip_summarization: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

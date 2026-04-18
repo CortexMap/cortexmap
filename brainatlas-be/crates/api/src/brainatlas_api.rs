@@ -63,12 +63,13 @@ where
         paper_metadata: Vec<PaperMetadata>,
         chat_model: Option<String>,
         embedding_model: Option<String>,
+        skip_summarization: bool,
     ) -> Result<ProcessRegionResponse, Self::Error> {
         // Validate region_id and batch_id are present
         let region_uuid = region_id.ok_or(ApiError::MissingOrInvalidId)?;
         let batch_uuid = batch_id.ok_or(ApiError::MissingOrInvalidId)?;
 
-        // Call the full processing pipeline
+        // Call the processing pipeline
         let summary_id = self
             .app()
             .process_region(
@@ -78,15 +79,22 @@ where
                 paper_metadata,
                 chat_model,
                 embedding_model,
+                skip_summarization,
             )
             .await
             .map_err(ApiError::AppError)?;
+
+        let detail = if skip_summarization {
+            format!("Successfully chunked and embedded for summary {}", summary_id)
+        } else {
+            format!("Successfully created summary {}", summary_id)
+        };
 
         Ok(ProcessRegionResponse {
             region_id: Some(rpc_types::Uuid {
                 value: region_uuid.to_string(),
             }),
-            detail: format!("Successfully created summary {}", summary_id),
+            detail,
         })
     }
 

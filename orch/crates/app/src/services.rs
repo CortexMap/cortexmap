@@ -145,6 +145,11 @@ pub trait BatchOrchestration: Send + Sync {
 
     /// Count how many fetch tasks from a batch have completed
     async fn count_completed_tasks(&self, task_ids: Vec<i64>) -> Result<i32, Self::Error>;
+
+    /// Return the subset of task IDs that are already completed.
+    /// Used to build a batch from only already-fetched papers so the user
+    /// doesn't have to wait for pending downloads.
+    async fn get_completed_task_ids(&self, task_ids: Vec<i64>) -> Result<Vec<i64>, Self::Error>;
 }
 
 /// Trait for configuration management
@@ -195,6 +200,36 @@ pub trait HealthCheck: Send + Sync {
     async fn brainatlas_health(&self) -> Result<(), Self::Error>;
 }
 
+/// Trait for the background pipeline runner that continuously discovers and fetches papers
+#[async_trait::async_trait]
+pub trait PipelineRunner: Send + Sync {
+    type Error: Error + Send + Sync;
+
+    /// Phase 1: Generate queries for all regions that don't have any yet.
+    /// Returns (regions_processed, queries_generated).
+    async fn generate_queries_for_new_regions(&self) -> Result<(usize, usize), Self::Error>;
+
+    /// Phase 2: For ALL regions with queries, re-run ESearch to discover new papers.
+    /// UNIQUE(pmc_id) deduplication ensures only genuinely new papers are enqueued.
+    /// Returns (regions_scanned, new_tasks_created).
+    async fn discover_new_papers(&self) -> Result<(usize, usize), Self::Error>;
+
+    /// Phase 3: Ensure fetcher workers are running. Non-blocking.
+    async fn ensure_fetcher_running(&self) -> Result<(), Self::Error>;
+
+    /// Get the count of pending + in_progress fetch tasks.
+    async fn get_pending_fetch_task_count(&self) -> Result<i64, Self::Error>;
+
+    /// Get the count of regions that still need query generation (Phase 1 backlog).
+    async fn generate_queries_for_new_regions_count(&self) -> Result<i64, Self::Error>;
+
+    /// Get the count of regions that have at least one query (eligible for Phase 2).
+    async fn get_regions_with_queries_count(&self) -> Result<i64, Self::Error>;
+
+    /// Get comprehensive system stats for the dev dashboard.
+    async fn get_system_stats(&self) -> Result<domain::SystemStats, Self::Error>;
+}
+
 pub trait Services:
     CompletionOrchestrator<Error = <Self as Services>::Error>
     + RegionManagement<Error = <Self as Services>::Error>
@@ -202,6 +237,7 @@ pub trait Services:
     + ConfigManagement<Error = <Self as Services>::Error>
     + WorkerManagement<Error = <Self as Services>::Error>
     + HealthCheck<Error = <Self as Services>::Error>
+    + PipelineRunner<Error = <Self as Services>::Error>
 {
     type Error: Error + Send + Sync;
 }
@@ -213,7 +249,8 @@ where
         + BatchOrchestration<Error = E>
         + ConfigManagement<Error = E>
         + WorkerManagement<Error = E>
-        + HealthCheck<Error = E>,
+        + HealthCheck<Error = E>
+        + PipelineRunner<Error = E>,
     E: Error + Send + Sync,
 {
     type Error = E;

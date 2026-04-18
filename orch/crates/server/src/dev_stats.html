@@ -55,6 +55,30 @@
   .spinner.active { display: inline-block; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  .poll-control {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+  .poll-control label { white-space: nowrap; }
+  .poll-input {
+    width: 60px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    padding: 0.25rem 0.4rem;
+    text-align: center;
+  }
+  .poll-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
@@ -159,6 +183,10 @@
 <header>
   <h1>Orch System Dashboard</h1>
   <div class="meta">
+    <div class="poll-control">
+      <label for="pollInput">Poll</label>
+      <input type="text" id="pollInput" class="poll-input" title="e.g. 1s, 500ms, 5s">
+    </div>
     <span id="lastUpdated">Loading...</span>
     <div class="spinner active" id="spinner"></div>
   </div>
@@ -228,10 +256,64 @@
 
 <script>
 const BASE = '/orch';
-const POLL_MS = 2000;
 let fetching = false;
+let pollTimer = null;
 
 function $(id) { return document.getElementById(id); }
+
+// Parse duration string like "1s", "500ms", "2.5s" into milliseconds.
+// Returns null for invalid input.
+function parseDuration(str) {
+  if (!str) return null;
+  str = str.trim().toLowerCase();
+  let m;
+  if ((m = str.match(/^(\d+(?:\.\d+)?)\s*ms$/))) return Math.round(parseFloat(m[1]));
+  if ((m = str.match(/^(\d+(?:\.\d+)?)\s*s$/)))  return Math.round(parseFloat(m[1]) * 1000);
+  // bare number treated as seconds
+  if ((m = str.match(/^(\d+(?:\.\d+)?)$/)))       return Math.round(parseFloat(m[1]) * 1000);
+  return null;
+}
+
+// Format milliseconds back to a human string
+function fmtDuration(ms) {
+  if (ms < 1000) return ms + 'ms';
+  return (ms / 1000) + 's';
+}
+
+// Read poll interval: URL query > default 2s
+function getPollMs() {
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get('poll');
+  const ms = parseDuration(raw);
+  // Clamp to [200ms, 60s]
+  if (ms != null) return Math.max(200, Math.min(ms, 60000));
+  return 2000;
+}
+
+const POLL_MS = getPollMs();
+
+// Populate input with current value
+function initPollInput() {
+  const input = $('pollInput');
+  input.value = fmtDuration(POLL_MS);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') applyPollInput();
+  });
+  input.addEventListener('blur', applyPollInput);
+}
+
+function applyPollInput() {
+  const input = $('pollInput');
+  const ms = parseDuration(input.value);
+  if (ms == null || ms === POLL_MS) {
+    input.value = fmtDuration(POLL_MS); // reset on invalid
+    return;
+  }
+  const clamped = Math.max(200, Math.min(ms, 60000));
+  const params = new URLSearchParams(window.location.search);
+  params.set('poll', fmtDuration(clamped));
+  window.location.search = params.toString();
+}
 
 function fmt(n) {
   if (n == null) return '-';
@@ -401,8 +483,9 @@ async function poll() {
   fetching = false;
 }
 
+initPollInput();
 poll();
-setInterval(poll, POLL_MS);
+pollTimer = setInterval(poll, POLL_MS);
 </script>
 </body>
 </html>

@@ -33,6 +33,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "#[serde(default)]",
     );
 
+    // Add serde(default) to skip_summarization for backward compatibility
+    config = config.field_attribute(
+        "com.cortexmap.ProcessRegionRequest.skip_summarization",
+        "#[serde(default)]",
+    );
+
     config.compile_protos(&["../../../proto/llm/brain.proto"], &["../../../proto"])?;
     Ok(())
 }

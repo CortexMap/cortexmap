@@ -3,8 +3,11 @@ use crate::{
     ServiceError,
 };
 use app::PipelineRunner;
+use backon::{ExponentialBuilder, Retryable};
 use domain::ConfigKey;
+use futures::StreamExt;
 use std::error::Error;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 pub struct OrchPipelineRunner<I> {
@@ -91,72 +94,137 @@ where
             brainatlas_url.trim_end_matches('/')
         );
 
-        let mut regions_processed = 0usize;
-        let mut total_queries = 0usize;
+        // Read concurrency limit from config (reuses max_parallel_process_calls)
+        let concurrency: usize = self
+            .infra
+            .get_config(&database_url, ConfigKey::MaxParallelProcessCalls)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
 
-        // Process regions one at a time (sequential to respect LLM rate limits)
-        for region in &regions {
-            tracing::info!(
-                region_id = %region.id,
-                region_name = %region.name,
-                "Phase 1: Generating queries for region"
-            );
+        tracing::info!(
+            concurrency,
+            "Phase 1: Running parallel query generation"
+        );
 
-            let request = crate::GenerateQueriesRequest {
-                region_name: region.name.clone(),
-                count: query_count,
-            };
+        let regions_processed = Arc::new(AtomicUsize::new(0));
+        let total_queries = Arc::new(AtomicUsize::new(0));
+        let consecutive_failures = Arc::new(AtomicUsize::new(0));
+        let circuit_broken = Arc::new(AtomicBool::new(false));
+        const MAX_CONSECUTIVE_FAILURES: usize = 5;
 
-            match self
-                .infra
-                .post::<crate::GenerateQueriesRequest, crate::GenerateQueriesResponse>(
-                    &url, &request,
-                )
-                .await
-            {
-                Ok(response) => {
-                    if !response.queries.is_empty() {
-                        match self
-                            .infra
-                            .insert_queries(&database_url, region.id, response.queries.clone())
-                            .await
-                        {
-                            Ok(_) => {
-                                total_queries += response.queries.len();
-                                regions_processed += 1;
-                                tracing::info!(
-                                    region_id = %region.id,
-                                    region_name = %region.name,
-                                    queries = response.queries.len(),
-                                    "Phase 1: Queries generated and stored"
-                                );
+        let infra = &self.infra;
+        let url_ref = &url;
+        let database_url_ref = &database_url;
+        let rp = &regions_processed;
+        let tq = &total_queries;
+        let cf = &consecutive_failures;
+        let cb = &circuit_broken;
+
+        futures::stream::iter(regions.into_iter())
+            .map(|region| async move {
+                // Check circuit breaker before starting
+                if cb.load(Ordering::Relaxed) {
+                    return;
+                }
+
+                tracing::info!(
+                    region_id = %region.id,
+                    region_name = %region.name,
+                    "Phase 1: Generating queries for region"
+                );
+
+                let request = crate::GenerateQueriesRequest {
+                    region_name: region.name.clone(),
+                    count: query_count,
+                };
+
+                // Retry with exponential backoff (max 3 attempts, 1-10s delay)
+                let retry_strategy = ExponentialBuilder::default()
+                    .with_max_times(2)
+                    .with_min_delay(std::time::Duration::from_secs(1))
+                    .with_max_delay(std::time::Duration::from_secs(10));
+
+                let req_ref = &request;
+
+                let result = (|| async {
+                    infra
+                        .post::<crate::GenerateQueriesRequest, crate::GenerateQueriesResponse>(
+                            url_ref, req_ref,
+                        )
+                        .await
+                })
+                .retry(retry_strategy)
+                .notify(|err, dur: std::time::Duration| {
+                    tracing::warn!(
+                        region_id = %region.id,
+                        error = %err,
+                        retry_after_ms = dur.as_millis() as u64,
+                        "Phase 1: Retrying query generation"
+                    );
+                })
+                .await;
+
+                match result {
+                    Ok(response) => {
+                        cf.store(0, Ordering::Relaxed); // Reset on success
+                        if !response.queries.is_empty() {
+                            match infra
+                                .insert_queries(database_url_ref, region.id, response.queries.clone())
+                                .await
+                            {
+                                Ok(_) => {
+                                    tq.fetch_add(response.queries.len(), Ordering::Relaxed);
+                                    rp.fetch_add(1, Ordering::Relaxed);
+                                    tracing::info!(
+                                        region_id = %region.id,
+                                        region_name = %region.name,
+                                        queries = response.queries.len(),
+                                        "Phase 1: Queries generated and stored"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        region_id = %region.id,
+                                        error = %e,
+                                        "Phase 1: Failed to store queries"
+                                    );
+                                }
                             }
-                            Err(e) => {
-                                tracing::error!(
-                                    region_id = %region.id,
-                                    error = %e,
-                                    "Phase 1: Failed to store queries"
-                                );
-                            }
+                        } else {
+                            tracing::warn!(
+                                region_id = %region.id,
+                                "Phase 1: LLM returned empty queries"
+                            );
                         }
-                    } else {
-                        tracing::warn!(
+                    }
+                    Err(e) => {
+                        let prev = cf.fetch_add(1, Ordering::Relaxed);
+                        tracing::error!(
                             region_id = %region.id,
-                            "Phase 1: LLM returned empty queries"
+                            error = %e,
+                            consecutive_failures = prev + 1,
+                            "Phase 1: Failed to generate queries"
                         );
+                        if prev + 1 >= MAX_CONSECUTIVE_FAILURES {
+                            cb.store(true, Ordering::Relaxed);
+                            tracing::error!(
+                                "Phase 1: Circuit breaker tripped — aborting query generation. \
+                                 Failed regions will retry next pipeline cycle."
+                            );
+                        }
                     }
                 }
-                Err(e) => {
-                    tracing::error!(
-                        region_id = %region.id,
-                        error = %e,
-                        "Phase 1: Failed to generate queries"
-                    );
-                }
-            }
-        }
+            })
+            .buffer_unordered(concurrency)
+            .collect::<Vec<()>>()
+            .await;
 
-        Ok((regions_processed, total_queries))
+        Ok((
+            regions_processed.load(Ordering::Relaxed),
+            total_queries.load(Ordering::Relaxed),
+        ))
     }
 
     async fn discover_new_papers(&self) -> Result<(usize, usize), Self::Error> {
@@ -241,11 +309,34 @@ where
                     "max_retry_attempts": max_retry_attempts
                 });
 
-                match self
-                    .infra
-                    .post::<serde_json::Value, serde_json::Value>(&enqueue_url, &request)
-                    .await
-                {
+                // Retry with exponential backoff (max 3 attempts, 1-10s delay)
+                let retry_strategy = ExponentialBuilder::default()
+                    .with_max_times(2)
+                    .with_min_delay(std::time::Duration::from_secs(1))
+                    .with_max_delay(std::time::Duration::from_secs(10));
+
+                let infra = &self.infra;
+                let enqueue_url_ref = &enqueue_url;
+                let request_ref = &request;
+
+                let result = (|| async {
+                    infra
+                        .post::<serde_json::Value, serde_json::Value>(enqueue_url_ref, request_ref)
+                        .await
+                })
+                .retry(retry_strategy)
+                .notify(|err, dur: std::time::Duration| {
+                    tracing::warn!(
+                        region_id = %region_id,
+                        query = %query,
+                        error = %err,
+                        retry_after_ms = dur.as_millis() as u64,
+                        "Phase 2: Retrying enqueue"
+                    );
+                })
+                .await;
+
+                match result {
                     Ok(response) => {
                         let task_ids: Vec<i64> = response
                             .get("task_ids")
@@ -507,5 +598,50 @@ where
             .map_err(ServiceError::InfraError)?;
 
         Ok(regions.len() as i64)
+    }
+
+    async fn get_system_stats(&self) -> Result<domain::SystemStats, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let raw = self
+            .infra
+            .get_system_stats(&database_url)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        Ok(domain::SystemStats {
+            fetch_tasks_by_status: raw
+                .fetch_tasks_by_status
+                .into_iter()
+                .map(|(s, c)| domain::StatusCount {
+                    status: s,
+                    count: c,
+                })
+                .collect(),
+            batches_by_status: raw
+                .batches_by_status
+                .into_iter()
+                .map(|(s, c)| domain::StatusCount {
+                    status: s,
+                    count: c,
+                })
+                .collect(),
+            total_queries: raw.total_queries,
+            regions_with_queries: raw.regions_with_queries,
+            query_distribution: raw
+                .query_distribution
+                .into_iter()
+                .map(|(q, n)| domain::QueryDistEntry {
+                    query_count: q,
+                    num_regions: n,
+                })
+                .collect(),
+            total_papers: raw.total_papers,
+            total_summaries: raw.total_summaries,
+            timestamp: chrono::Utc::now(),
+        })
     }
 }

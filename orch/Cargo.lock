@@ -1832,6 +1832,7 @@ dependencies = [
  "backon",
  "chrono",
  "domain",
+ "futures",
  "reqwest",
  "serde",
  "serde_json",

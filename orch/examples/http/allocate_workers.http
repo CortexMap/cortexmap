@@ -3,8 +3,8 @@ POST https://capstone.ssdd.dev/orch/api/workers/allocate
 Content-Type: application/json
 
 {
-  "worker_count": 5,
-  "task_timeout_secs": 300,
+  "worker_count": 1,
+  "task_timeout_secs": 2,
   "max_retry_attempts": 3
 }
 

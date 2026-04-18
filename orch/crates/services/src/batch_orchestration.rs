@@ -105,6 +105,7 @@ where
             summary_max_retries,
             abstract_max_retries,
             pdf_max_retries,
+            device_cooldown_secs: None, // Reserved for device-subscription v2
         })
     }
 }
@@ -336,6 +337,18 @@ where
             .map_err(ServiceError::InfraError)?;
 
         Ok(count as i32)
+    }
+
+    async fn get_completed_task_ids(&self, task_ids: Vec<i64>) -> Result<Vec<i64>, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .get_completed_task_ids(&database_url, &task_ids)
+            .await
+            .map_err(ServiceError::InfraError)
     }
 
     async fn ensure_workers_allocated(&self) -> Result<(), Self::Error> {

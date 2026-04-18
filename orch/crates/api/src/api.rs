@@ -1,7 +1,8 @@
 use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
-    GenerateSummaryResult, PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult,
-    SearchResponse, StopWorkersRequest, WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
+    GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, Region, RegionStatusResult,
+    SearchRegionResult, SearchResponse, StopWorkersRequest, SystemStats, WorkerAllocationResponse,
+    WorkerStatus, WorkerStopResponse,
 };
 use uuid::Uuid;
 
@@ -81,4 +82,10 @@ pub trait OrchApi: Send + Sync {
     /// Reverse search: find brain regions by natural language query
     /// Searches across region names, acronyms, and latest summaries
     async fn reverse_search(&self, query: String) -> Result<SearchResponse, Self::Error>;
+
+    /// Lightweight pipeline health snapshot: region/query/task counts + active workers
+    async fn get_pipeline_status(&self) -> Result<PipelineHealthStatus, Self::Error>;
+
+    /// Get comprehensive system statistics for the dev dashboard
+    async fn get_system_stats(&self) -> Result<SystemStats, Self::Error>;
 }

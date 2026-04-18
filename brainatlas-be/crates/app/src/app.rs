@@ -58,6 +58,7 @@ where
         paper_metadata: Vec<PaperMetadata>,
         chat_model: Option<String>,
         embedding_model: Option<String>,
+        skip_summarization: bool,
     ) -> Result<Uuid, AppError<E>> {
         let region = self.get_region_by_uuid(uuid).await?;
         let embedding_model_ref = embedding_model.as_deref();
@@ -172,7 +173,7 @@ where
             region_id: region.region_id,
             name: region.name.clone(),
             acronym: region.acronym.clone(),
-            summary: String::new(), // Placeholder, updated after RAG loop
+            summary: String::new(), // Placeholder, updated after RAG loop (if not skipped)
             content_hash,
             batch_id,
         };
@@ -183,21 +184,32 @@ where
             .await
             .map_err(AppError::ServiceError)?;
 
-        // 7. RAG summarization loop
-        let summary_text = self
-            .rag_summarize(
-                &region.name,
-                region.region_id,
-                chat_model.as_deref(),
-                embedding_model_ref,
-            )
-            .await?;
+        // 7-8. RAG summarization (skipped when background pipeline is just growing the knowledge base)
+        if skip_summarization {
+            info!(
+                region = %region.name,
+                region_id = region.region_id,
+                summary_id = %summary_id,
+                chunks = all_chunks.len(),
+                "Chunk+embed complete (summarization skipped)"
+            );
+        } else {
+            // 7. RAG summarization loop
+            let summary_text = self
+                .rag_summarize(
+                    &region.name,
+                    region.region_id,
+                    chat_model.as_deref(),
+                    embedding_model_ref,
+                )
+                .await?;
 
-        // 8. Update the summary record with the final text
-        self.services
-            .update_summary_text(summary_id, &summary_text)
-            .await
-            .map_err(AppError::ServiceError)?;
+            // 8. Update the summary record with the final text
+            self.services
+                .update_summary_text(summary_id, &summary_text)
+                .await
+                .map_err(AppError::ServiceError)?;
+        }
 
         Ok(summary_id)
     }

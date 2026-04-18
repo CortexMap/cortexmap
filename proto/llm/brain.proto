@@ -100,6 +100,9 @@ message ProcessRegionRequest {
   optional string embedding_model = 5;
   // Paper metadata for source attribution
   repeated PaperMetadata paper_metadata = 6;
+  // If true, only chunk and embed — skip RAG summarization.
+  // Used by the background pipeline to grow the knowledge base without generating summaries.
+  optional bool skip_summarization = 7;
 }
 
 // Metadata for a single paper fetched from PubMed

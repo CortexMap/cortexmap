@@ -223,6 +223,7 @@ pub struct RegionSummaryRow {
     pub summary: Option<String>,
     pub created_at: Option<NaiveDateTime>,
     pub content_hash: Option<String>,
+    pub is_active: bool,
     pub batch_id: Uuid,
 }
 

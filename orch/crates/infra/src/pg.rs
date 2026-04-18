@@ -514,6 +514,30 @@ impl BatchManagement for OrchPostgresql {
         Ok(count as usize)
     }
 
+    async fn get_completed_task_ids(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<Vec<i64>, Self::Error> {
+        use crate::schema::fetch_tasks::dsl;
+        use diesel::prelude::*;
+
+        let task_ids_vec = task_ids.to_vec();
+        let conn = self.pool(database_url).await?.get().await?;
+
+        let ids = conn
+            .interact(move |c| {
+                dsl::fetch_tasks
+                    .filter(dsl::id.eq_any(task_ids_vec))
+                    .filter(dsl::status.eq("completed"))
+                    .select(dsl::id)
+                    .load::<i64>(c)
+            })
+            .await??;
+
+        Ok(ids)
+    }
+
     async fn get_task_s3_keys(
         &self,
         database_url: &str,
@@ -777,5 +801,179 @@ impl services::RegionMappingQueries for OrchPostgresql {
         let records = rows.into_iter().map(Into::into).collect();
 
         Ok((records, total_count))
+    }
+
+    async fn get_regions_without_queries(
+        &self,
+        database_url: &str,
+    ) -> Result<Vec<services::RegionInfo>, Self::Error> {
+        use crate::schema::{region_mapping, region_queries};
+        use diesel::dsl::{exists, not};
+
+        let conn = self.pool(database_url).await?.get().await?;
+        let results = conn
+            .interact(move |c| {
+                region_mapping::table
+                    .filter(not(exists(
+                        region_queries::table
+                            .filter(region_queries::region_id.eq(region_mapping::id)),
+                    )))
+                    .select((region_mapping::id, region_mapping::name))
+                    .order(region_mapping::name.asc())
+                    .load::<(Uuid, String)>(c)
+            })
+            .await??;
+
+        Ok(results
+            .into_iter()
+            .map(|(id, name)| services::RegionInfo { id, name })
+            .collect())
+    }
+
+    async fn get_all_regions_with_queries(
+        &self,
+        database_url: &str,
+    ) -> Result<Vec<(Uuid, String, Vec<String>)>, Self::Error> {
+        use diesel::sql_types::{Array, Text, Uuid as DieselUuid};
+
+        let conn = self.pool(database_url).await?.get().await?;
+
+        #[derive(QueryableByName, Debug)]
+        struct RegionWithQueries {
+            #[diesel(sql_type = DieselUuid)]
+            region_id: Uuid,
+            #[diesel(sql_type = Text)]
+            region_name: String,
+            #[diesel(sql_type = Array<Text>)]
+            queries: Vec<String>,
+        }
+
+        let rows = conn
+            .interact(move |c| {
+                diesel::sql_query(
+                    "SELECT rm.id AS region_id, rm.name AS region_name,
+                            ARRAY_AGG(rq.query_text) AS queries
+                     FROM region_mapping rm
+                     INNER JOIN region_queries rq ON rq.region_id = rm.id
+                     WHERE rq.enabled = true
+                     GROUP BY rm.id, rm.name
+                     ORDER BY rm.name ASC",
+                )
+                .load::<RegionWithQueries>(c)
+            })
+            .await??;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.region_id, r.region_name, r.queries))
+            .collect())
+    }
+
+    async fn get_pending_fetch_task_count(
+        &self,
+        database_url: &str,
+    ) -> Result<i64, Self::Error> {
+        use crate::schema::fetch_tasks;
+        use diesel::dsl::count_star;
+
+        let conn = self.pool(database_url).await?.get().await?;
+        let result = conn
+            .interact(move |c| {
+                fetch_tasks::table
+                    .filter(
+                        fetch_tasks::status
+                            .eq("pending")
+                            .or(fetch_tasks::status.eq("in_progress")),
+                    )
+                    .select(count_star())
+                    .first::<i64>(c)
+            })
+            .await??;
+
+        Ok(result)
+    }
+
+    async fn get_system_stats(
+        &self,
+        database_url: &str,
+    ) -> Result<services::SystemStatsRaw, Self::Error> {
+        let conn = self.pool(database_url).await?.get().await?;
+        conn.interact(move |c| {
+            use diesel::sql_query;
+            use diesel::sql_types::{BigInt, Text};
+
+            #[derive(QueryableByName)]
+            struct StatusRow {
+                #[diesel(sql_type = Text)]
+                status: String,
+                #[diesel(sql_type = BigInt)]
+                count: i64,
+            }
+
+            #[derive(QueryableByName)]
+            struct CountRow {
+                #[diesel(sql_type = BigInt)]
+                count: i64,
+            }
+
+            #[derive(QueryableByName)]
+            struct DistRow {
+                #[diesel(sql_type = BigInt)]
+                query_count: i64,
+                #[diesel(sql_type = BigInt)]
+                num_regions: i64,
+            }
+
+            let fetch_tasks: Vec<StatusRow> = sql_query(
+                "SELECT status::text, COUNT(*) as count FROM fetch_tasks GROUP BY status ORDER BY status",
+            )
+            .load(c)?;
+
+            let batches: Vec<StatusRow> = sql_query(
+                "SELECT status::text, COUNT(*) as count FROM region_processing_batches GROUP BY status ORDER BY status",
+            )
+            .load(c)?;
+
+            let qcount: Vec<CountRow> =
+                sql_query("SELECT COUNT(*) as count FROM region_queries").load(c)?;
+
+            let rwq: Vec<CountRow> =
+                sql_query("SELECT COUNT(DISTINCT region_id) as count FROM region_queries")
+                    .load(c)?;
+
+            let qdist: Vec<DistRow> = sql_query(
+                "SELECT query_count, COUNT(*) as num_regions FROM \
+                 (SELECT region_id, COUNT(*) as query_count FROM region_queries GROUP BY region_id) sub \
+                 GROUP BY query_count ORDER BY query_count",
+            )
+            .load(c)?;
+
+            let papers: Vec<CountRow> =
+                sql_query("SELECT COUNT(*) as count FROM papers").load(c)?;
+
+            let summaries: Vec<CountRow> =
+                sql_query("SELECT COUNT(*) as count FROM region_summary").load(c)?;
+
+            Ok::<services::SystemStatsRaw, diesel::result::Error>(services::SystemStatsRaw {
+                fetch_tasks_by_status: fetch_tasks
+                    .into_iter()
+                    .map(|r| (r.status, r.count))
+                    .collect(),
+                batches_by_status: batches
+                    .into_iter()
+                    .map(|r| (r.status, r.count))
+                    .collect(),
+                total_queries: qcount.first().map(|r| r.count).unwrap_or(0),
+                regions_with_queries: rwq.first().map(|r| r.count).unwrap_or(0),
+                query_distribution: qdist
+                    .into_iter()
+                    .map(|r| (r.query_count, r.num_regions))
+                    .collect(),
+                total_papers: papers.first().map(|r| r.count).unwrap_or(0),
+                total_summaries: summaries.first().map(|r| r.count).unwrap_or(0),
+            })
+        })
+        .await?
+        .map_err(InfraError::from)
     }
 }

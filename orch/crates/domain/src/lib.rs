@@ -52,6 +52,13 @@ pub enum ConfigKey {
     FetcherAbstractMaxRetries,
     /// Max retry attempts specifically for PDF component (overrides global)
     FetcherPdfMaxRetries,
+    /// Sleep duration in seconds between pipeline cycles (default 3600 = 1 hour)
+    PipelineCycleSleepSecs,
+    /// Interval in seconds for the fast fetcher-monitor loop that re-probes worker
+    /// health while the fetch queue is non-empty (default 30)
+    FetcherMonitorIntervalSecs,
+    /// Page size for NCBI ESearch enqueue requests in the pipeline's Phase 2 (default 20)
+    EnqueuePageSize,
 }
 
 /// Result of polling for completed fetch tasks

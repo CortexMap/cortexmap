@@ -216,3 +216,49 @@ pub struct SearchResponse {
     /// How many total matches existed before the LIMIT was applied
     pub total_found: usize,
 }
+
+/// Lightweight real-time pipeline health snapshot (no shared state required)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineHealthStatus {
+    /// Regions that still need query generation (Phase 1 backlog)
+    pub regions_without_queries: usize,
+    /// Regions that have queries and are eligible for paper discovery
+    pub regions_with_queries: usize,
+    /// Fetch tasks currently pending or in-progress
+    pub pending_fetch_tasks: i64,
+    /// Active (running) fetcher workers
+    pub worker_count: usize,
+}
+
+/// Comprehensive system stats for the /dev/stats dashboard
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemStats {
+    /// Fetch tasks grouped by status
+    pub fetch_tasks_by_status: Vec<StatusCount>,
+    /// Processing batches grouped by status
+    pub batches_by_status: Vec<StatusCount>,
+    /// Total queries in region_queries
+    pub total_queries: i64,
+    /// Number of distinct regions that have queries
+    pub regions_with_queries: i64,
+    /// Query count distribution (e.g. [{"count": 3, "num_regions": 769}])
+    pub query_distribution: Vec<QueryDistEntry>,
+    /// Total papers in papers table
+    pub total_papers: i64,
+    /// Total region summaries
+    pub total_summaries: i64,
+    /// Server uptime timestamp (when this response was generated)
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusCount {
+    pub status: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryDistEntry {
+    pub query_count: i64,
+    pub num_regions: i64,
+}

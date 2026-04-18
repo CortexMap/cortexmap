@@ -236,6 +236,16 @@ impl BatchManagement for OrchInfra {
         self.pg.count_completed_tasks(database_url, task_ids).await
     }
 
+    async fn get_completed_task_ids(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<Vec<i64>, Self::Error> {
+        self.pg
+            .get_completed_task_ids(database_url, task_ids)
+            .await
+    }
+
     async fn get_task_s3_keys(
         &self,
         database_url: &str,
@@ -305,6 +315,34 @@ impl services::RegionMappingQueries for OrchInfra {
         limit: i64,
     ) -> Result<(Vec<services::SearchHitRecord>, i64), Self::Error> {
         self.pg.search_regions(database_url, query, limit).await
+    }
+
+    async fn get_regions_without_queries(
+        &self,
+        database_url: &str,
+    ) -> Result<Vec<services::RegionInfo>, Self::Error> {
+        self.pg.get_regions_without_queries(database_url).await
+    }
+
+    async fn get_all_regions_with_queries(
+        &self,
+        database_url: &str,
+    ) -> Result<Vec<(Uuid, String, Vec<String>)>, Self::Error> {
+        self.pg.get_all_regions_with_queries(database_url).await
+    }
+
+    async fn get_pending_fetch_task_count(
+        &self,
+        database_url: &str,
+    ) -> Result<i64, Self::Error> {
+        self.pg.get_pending_fetch_task_count(database_url).await
+    }
+
+    async fn get_system_stats(
+        &self,
+        database_url: &str,
+    ) -> Result<services::SystemStatsRaw, Self::Error> {
+        self.pg.get_system_stats(database_url).await
     }
 }
 

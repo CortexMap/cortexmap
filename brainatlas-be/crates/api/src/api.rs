@@ -26,7 +26,8 @@ pub trait BrainRegionApi: Send + Sync {
     /// POST /api/status
     async fn status(&self, id: Uuid) -> Result<StatusResponse, Self::Error>;
 
-    /// Chunk, embed, and summarize the S3 files for a region, then persist to region_summary.
+    /// Chunk, embed, and optionally summarize the S3 files for a region, then persist to region_summary.
+    /// When skip_summarization is true, only chunks and embeds (no RAG summary).
     /// POST /api/process — called by orch
     async fn process_region(
         &self,
@@ -36,6 +37,7 @@ pub trait BrainRegionApi: Send + Sync {
         paper_metadata: Vec<PaperMetadata>,
         chat_model: Option<String>,
         embedding_model: Option<String>,
+        skip_summarization: bool,
     ) -> Result<ProcessRegionResponse, Self::Error>;
 
     /// Generate search queries for a brain region using LLM.

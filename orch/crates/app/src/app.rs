@@ -22,14 +22,16 @@ where
     }
 
     /// Initialize the orchestrator
-    /// Spawns the background completion watcher loop
+    /// Spawns the background completion watcher loop and the pipeline runner loop
     pub async fn init(&self) -> Result<(), E> {
         let services = Arc::clone(&self.services);
 
+        // Spawn the completion watcher loop (existing — promotes batches, triggers chunk+embed)
+        let watcher_services = Arc::clone(&services);
         tokio::spawn(async move {
             loop {
                 // Poll for completed tasks
-                match services.poll().await {
+                match watcher_services.poll().await {
                     Ok(poll_result) => {
                         tracing::info!(
                             total = poll_result.total_found,
@@ -40,7 +42,7 @@ where
 
                         // Process the tasks if any
                         if !poll_result.tasks.is_empty() {
-                            match services.process(poll_result.tasks).await {
+                            match watcher_services.process(poll_result.tasks).await {
                                 Ok(process_result) => {
                                     tracing::info!(
                                         success = process_result.successful,
@@ -60,13 +62,130 @@ where
                 }
 
                 // Get the poll interval from config (default to 30 seconds)
-                let interval_secs = match services
+                let interval_secs = match watcher_services
                     .get_config(ConfigKey::CompletionPollIntervalSecs)
                     .await
                 {
                     Ok(Some(value)) => value.parse::<u64>().unwrap_or(30),
                     _ => 30,
                 };
+
+                tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+            }
+        });
+
+        // Spawn the pipeline runner loop (new — generates queries, discovers papers, ensures workers)
+        let pipeline_services = Arc::clone(&services);
+        tokio::spawn(async move {
+            // Small initial delay to let the server finish starting
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            tracing::info!("Pipeline runner started");
+
+            let mut cycle_count: u64 = 0;
+
+            loop {
+                tracing::info!(cycle = cycle_count, "Starting pipeline cycle");
+
+                // === Phase 1: Generate queries for regions that don't have any ===
+                match pipeline_services.generate_queries_for_new_regions().await {
+                    Ok((regions, queries)) => {
+                        if regions > 0 {
+                            tracing::info!(
+                                regions_processed = regions,
+                                queries_generated = queries,
+                                "Phase 1 complete: query generation"
+                            );
+                        }
+                    }
+                    Err(e) => tracing::error!(error = ?e, "Phase 1 failed: query generation"),
+                }
+
+                // === Phase 2: Re-run all queries to discover new papers ===
+                match pipeline_services.discover_new_papers().await {
+                    Ok((regions, tasks)) => {
+                        if tasks > 0 {
+                            tracing::info!(
+                                regions_scanned = regions,
+                                new_tasks = tasks,
+                                "Phase 2 complete: paper discovery"
+                            );
+                        }
+                    }
+                    Err(e) => tracing::error!(error = ?e, "Phase 2 failed: paper discovery"),
+                }
+
+                // === Phase 3: Ensure fetcher workers are running (one-shot check) ===
+                if let Err(e) = pipeline_services.ensure_fetcher_running().await {
+                    tracing::warn!(error = ?e, "Phase 3: Failed to ensure workers running");
+                }
+
+                cycle_count += 1;
+
+                // Sleep between cycles
+                let sleep_secs = match pipeline_services
+                    .get_config(ConfigKey::PipelineCycleSleepSecs)
+                    .await
+                {
+                    Ok(Some(v)) => v.parse::<u64>().unwrap_or(3600),
+                    _ => 3600,
+                };
+                tracing::info!(
+                    cycle = cycle_count,
+                    sleep_secs,
+                    "Pipeline cycle complete, sleeping"
+                );
+                tokio::time::sleep(Duration::from_secs(sleep_secs)).await;
+            }
+        });
+
+        // Spawn the fast-cadence fetcher monitor loop (independent of the slow pipeline cycle).
+        // While the fetch queue is non-empty, this loop re-probes worker health every
+        // `fetcher_monitor_interval_secs` (default 30s) and re-allocates dead workers.
+        // When the queue drains, it sleeps at the same cadence without probing workers.
+        let monitor_services = Arc::clone(&services);
+        tokio::spawn(async move {
+            // Let the pipeline runner get a head start
+            tokio::time::sleep(Duration::from_secs(15)).await;
+            tracing::info!("Fetcher monitor loop started");
+
+            loop {
+                // Read fast-loop interval from config (default 30s)
+                let interval_secs = match monitor_services
+                    .get_config(ConfigKey::FetcherMonitorIntervalSecs)
+                    .await
+                {
+                    Ok(Some(v)) => v.parse::<u64>().unwrap_or(30),
+                    _ => 30,
+                };
+
+                // Check pending task count — only probe workers when there's work to do
+                match monitor_services.get_pending_fetch_task_count().await {
+                    Ok(pending) if pending > 0 => {
+                        tracing::debug!(
+                            pending_tasks = pending,
+                            "Fetcher monitor: queue non-empty, checking workers"
+                        );
+
+                        if let Err(e) = monitor_services.ensure_fetcher_running().await {
+                            tracing::warn!(
+                                error = ?e,
+                                "Fetcher monitor: failed to ensure workers running"
+                            );
+                        }
+                    }
+                    Ok(pending) => {
+                        tracing::debug!(
+                            pending_tasks = pending,
+                            "Fetcher monitor: queue empty, sleeping"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = ?e,
+                            "Fetcher monitor: failed to get pending task count"
+                        );
+                    }
+                }
 
                 tokio::time::sleep(Duration::from_secs(interval_secs)).await;
             }
@@ -261,8 +380,9 @@ where
         Ok(SearchRegionResult { summaries })
     }
 
-    /// Generate a new summary for a region (creates batch, enqueues tasks)
-    /// If there's already an active batch, returns that batch's info instead
+    /// Generate a new summary for a region using the existing knowledge base.
+    /// If queries exist (from pipeline), uses them. Otherwise generates new ones.
+    /// If there's already an active batch, returns that batch's info instead.
     pub async fn generate_summary(&self, region_id: Uuid) -> Result<GenerateSummaryResult, E> {
         tracing::info!(?region_id, "Generating new summary for region");
 
@@ -282,25 +402,44 @@ where
             });
         }
 
-        // Step 2: Get region name
-        let region_name = self.services.get_region_name(region_id).await?;
+        // Step 2: Check for existing queries (pre-generated by pipeline)
+        let existing_queries = self.services.get_queries(region_id).await?;
+        let queries = if !existing_queries.is_empty() {
+            tracing::info!(
+                ?region_id,
+                count = existing_queries.len(),
+                "Using pre-generated queries from pipeline"
+            );
+            existing_queries
+                .into_iter()
+                .map(|q| q.query_text)
+                .collect::<Vec<_>>()
+        } else {
+            // No pre-generated queries — generate them now
+            let region_name = self.services.get_region_name(region_id).await?;
+            let query_count = self
+                .services
+                .get_query_generation_limit()
+                .await?
+                .unwrap_or(3);
 
-        // Step 3: Get query count from config (default to 3)
-        let query_count = self
-            .services
-            .get_query_generation_limit()
-            .await?
-            .unwrap_or(3);
+            let generated = self
+                .services
+                .generate_queries(&region_name, query_count)
+                .await?;
 
-        // Step 3: Generate queries via LLM
-        let queries = self
-            .services
-            .generate_queries(&region_name, query_count)
-            .await?;
+            if !generated.is_empty() {
+                // Store them for future use
+                self.services
+                    .store_queries(region_id, generated.clone())
+                    .await?;
+            }
+
+            generated
+        };
 
         if queries.is_empty() {
-            tracing::warn!(?region_id, "No queries generated by LLM");
-            // Just return empty result instead of error
+            tracing::warn!(?region_id, "No queries available");
             return Ok(GenerateSummaryResult {
                 batch_id: Uuid::nil(),
                 query_count: 0,
@@ -309,25 +448,18 @@ where
             });
         }
 
-        tracing::info!(?region_id, query_count = queries.len(), "Generated queries");
+        tracing::info!(?region_id, query_count = queries.len(), "Using queries");
 
-        // Step 4: Create a new batch
-        let batch_id = self.services.create_batch(region_id, queries.len()).await?;
-        tracing::info!(?region_id, ?batch_id, "Created batch");
-
-        // Step 5: Save queries
-        self.services
-            .store_queries(region_id, queries.clone())
-            .await?;
-
-        // Step 6: Enqueue fetch tasks for each query.
+        // Step 3: Enqueue fetch tasks for each query.
+        //
+        // The enqueue call discovers papers via NCBI and returns task IDs.
+        // With UNIQUE(pmc_id) + DO NOTHING, existing papers return their
+        // existing task IDs without creating duplicates.
         //
         // We do NOT use `?` inside this loop. A single failed enqueue must not
         // abort the entire loop and leave the batch with an empty fetch_task_ids
         // array — that would cause a zombie batch stuck in `collecting` forever.
-        // Instead we log the error and continue with whatever task IDs we did
-        // collect, then call add_tasks_to_batch / mark failed below.
-        let mut task_ids = Vec::new();
+        let mut all_task_ids = Vec::new();
         for query in &queries {
             match self
                 .services
@@ -338,40 +470,17 @@ where
                 )
                 .await
             {
-                Ok(query_task_ids) => task_ids.extend(query_task_ids),
+                Ok(query_task_ids) => all_task_ids.extend(query_task_ids),
                 Err(e) => {
-                    tracing::warn!(?region_id, ?batch_id, query, error = %e, "Failed to enqueue fetch task for query, skipping")
+                    tracing::warn!(?region_id, query, error = %e, "Failed to enqueue fetch task for query, skipping")
                 }
             }
         }
 
-        let task_count = task_ids.len();
-        tracing::info!(?region_id, ?batch_id, task_count, "Enqueued fetch tasks");
-
-        // Step 7: Add tasks to batch (if any)
-        if !task_ids.is_empty() {
-            self.services.add_tasks_to_batch(batch_id, task_ids).await?;
-
-            // Step 8: Update expected count if mismatch
-            if task_count != queries.len() {
-                tracing::info!(
-                    ?region_id,
-                    ?batch_id,
-                    expected = queries.len(),
-                    actual = task_count,
-                    "Updating batch expected count"
-                );
-                self.services
-                    .update_batch_expected_count(batch_id, task_count as i32)
-                    .await?;
-            }
-        } else {
-            // No tasks created - mark batch as failed
-            tracing::warn!(
-                ?region_id,
-                ?batch_id,
-                "No tasks created, marking batch as failed"
-            );
+        if all_task_ids.is_empty() {
+            // No papers found at all — create a failed batch
+            let batch_id = self.services.create_batch(region_id, 0).await?;
+            tracing::warn!(?region_id, ?batch_id, "No papers found, marking batch as failed");
             self.services
                 .update_batch_status(
                     batch_id,
@@ -379,9 +488,70 @@ where
                     Some("No papers found".to_string()),
                 )
                 .await?;
+
+            return Ok(GenerateSummaryResult {
+                batch_id,
+                query_count: queries.len(),
+                task_count: 0,
+                already_in_progress: false,
+            });
         }
 
-        // Step 9: Ensure workers are allocated
+        // Step 4: Filter to only already-completed tasks.
+        //
+        // The knowledge base is continuously expanding via the background
+        // pipeline. We use whatever papers are ALREADY fetched rather than
+        // blocking the user while pending papers download. If zero papers
+        // are completed, we fall back to the full set (collecting mode).
+        let completed_task_ids = self
+            .services
+            .get_completed_task_ids(all_task_ids.clone())
+            .await?;
+
+        let (batch_task_ids, start_as_ready) = if !completed_task_ids.is_empty() {
+            tracing::info!(
+                ?region_id,
+                total_discovered = all_task_ids.len(),
+                already_completed = completed_task_ids.len(),
+                "Using already-fetched papers for immediate processing"
+            );
+            (completed_task_ids, true)
+        } else {
+            tracing::info!(
+                ?region_id,
+                total_discovered = all_task_ids.len(),
+                "No papers fetched yet — batch will wait in collecting"
+            );
+            (all_task_ids, false)
+        };
+
+        let task_count = batch_task_ids.len();
+
+        // Step 5: Create batch and add tasks
+        let batch_id = self
+            .services
+            .create_batch(region_id, task_count)
+            .await?;
+        tracing::info!(?region_id, ?batch_id, task_count, start_as_ready, "Created batch");
+
+        self.services
+            .add_tasks_to_batch(batch_id, batch_task_ids)
+            .await?;
+
+        // Step 6: If all tasks are already completed, promote directly to Ready
+        // so the completion watcher processes it on the next cycle (~30s).
+        if start_as_ready {
+            self.services
+                .update_batch_status(batch_id, domain::BatchStatus::Ready, None)
+                .await?;
+            tracing::info!(
+                ?region_id,
+                ?batch_id,
+                "Batch promoted to Ready — will be processed on next watcher cycle"
+            );
+        }
+
+        // Step 7: Ensure workers are allocated (for any remaining pending tasks)
         if let Err(e) = self.services.ensure_workers_allocated().await {
             tracing::warn!(
                 ?e,
@@ -465,5 +635,36 @@ where
     pub async fn reverse_search(&self, query: &str) -> Result<domain::SearchResponse, E> {
         tracing::info!(query, "Performing reverse search");
         self.services.reverse_search(query).await
+    }
+
+    /// Lightweight pipeline health snapshot: region/query/task counts + active workers.
+    /// Calls existing infra queries + worker status — no shared state needed.
+    pub async fn get_pipeline_status(&self) -> Result<domain::PipelineHealthStatus, E> {
+        // Fire all queries concurrently for speed
+        let (pending_result, workers_result, regions_without_result, regions_with_result) = tokio::join!(
+            self.services.get_pending_fetch_task_count(),
+            self.services.get_worker_status(),
+            self.services.generate_queries_for_new_regions_count(),
+            self.services.get_regions_with_queries_count(),
+        );
+
+        let pending_fetch_tasks = pending_result.unwrap_or(0);
+        let worker_count = workers_result
+            .map(|ws| ws.iter().filter(|w| w.status == "running").count())
+            .unwrap_or(0);
+        let regions_without_queries = regions_without_result.unwrap_or(0) as usize;
+        let regions_with_queries = regions_with_result.unwrap_or(0) as usize;
+
+        Ok(domain::PipelineHealthStatus {
+            regions_without_queries,
+            regions_with_queries,
+            pending_fetch_tasks,
+            worker_count,
+        })
+    }
+
+    /// Get comprehensive system stats for the dev dashboard
+    pub async fn get_system_stats(&self) -> Result<domain::SystemStats, E> {
+        self.services.get_system_stats().await
     }
 }

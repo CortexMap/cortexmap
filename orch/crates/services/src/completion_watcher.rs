@@ -403,6 +403,7 @@ where
             paper_metadata,
             chat_model,
             embedding_model,
+            skip_summarization: false,
         };
 
         tracing::debug!(

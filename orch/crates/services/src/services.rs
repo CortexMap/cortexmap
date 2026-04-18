@@ -1,11 +1,12 @@
 use crate::batch_orchestration::OrchBatchOrchestration;
 use crate::completion_watcher::CompletionWatcher;
 use crate::config_management::OrchConfigManagement;
+use crate::pipeline_runner::OrchPipelineRunner;
 use crate::region_management::OrchRegionManagement;
 use crate::{Infra, ServiceError};
 use app::{
-    BatchOrchestration, CompletionOrchestrator, ConfigManagement, HealthCheck, RegionManagement,
-    WorkerManagement,
+    BatchOrchestration, CompletionOrchestrator, ConfigManagement, HealthCheck, PipelineRunner,
+    RegionManagement, WorkerManagement,
 };
 use domain::{
     AllocateWorkersRequest, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult,
@@ -21,6 +22,7 @@ pub struct OrchServices<I> {
     region_management: OrchRegionManagement<I>,
     batch_orchestration: OrchBatchOrchestration<I>,
     config_management: OrchConfigManagement<I>,
+    pipeline_runner: OrchPipelineRunner<I>,
     infra: Arc<I>,
 }
 
@@ -30,11 +32,13 @@ impl<I: Infra> OrchServices<I> {
         let region_management = OrchRegionManagement::new(infra.clone());
         let batch_orchestration = OrchBatchOrchestration::new(infra.clone());
         let config_management = OrchConfigManagement::new(infra.clone());
+        let pipeline_runner = OrchPipelineRunner::new(infra.clone());
         Self {
             completion_watcher,
             region_management,
             batch_orchestration,
             config_management,
+            pipeline_runner,
             infra,
         }
     }
@@ -250,6 +254,12 @@ where
             .count_completed_tasks(task_ids)
             .await
     }
+
+    async fn get_completed_task_ids(&self, task_ids: Vec<i64>) -> Result<Vec<i64>, Self::Error> {
+        self.batch_orchestration
+            .get_completed_task_ids(task_ids)
+            .await
+    }
 }
 
 #[async_trait::async_trait]
@@ -340,5 +350,48 @@ where
         req: StopWorkersRequest,
     ) -> Result<WorkerStopResponse, Self::Error> {
         self.batch_orchestration.stop_workers(req).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> PipelineRunner for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn generate_queries_for_new_regions(&self) -> Result<(usize, usize), Self::Error> {
+        self.pipeline_runner
+            .generate_queries_for_new_regions()
+            .await
+    }
+
+    async fn discover_new_papers(&self) -> Result<(usize, usize), Self::Error> {
+        self.pipeline_runner.discover_new_papers().await
+    }
+
+    async fn ensure_fetcher_running(&self) -> Result<(), Self::Error> {
+        self.pipeline_runner.ensure_fetcher_running().await
+    }
+
+    async fn get_pending_fetch_task_count(&self) -> Result<i64, Self::Error> {
+        self.pipeline_runner.get_pending_fetch_task_count().await
+    }
+
+    async fn generate_queries_for_new_regions_count(&self) -> Result<i64, Self::Error> {
+        self.pipeline_runner
+            .generate_queries_for_new_regions_count()
+            .await
+    }
+
+    async fn get_regions_with_queries_count(&self) -> Result<i64, Self::Error> {
+        self.pipeline_runner
+            .get_regions_with_queries_count()
+            .await
+    }
+
+    async fn get_system_stats(&self) -> Result<domain::SystemStats, Self::Error> {
+        self.pipeline_runner.get_system_stats().await
     }
 }

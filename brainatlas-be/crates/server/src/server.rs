@@ -156,6 +156,7 @@ async fn process_region_handler(
             body.paper_metadata,
             body.chat_model,
             body.embedding_model,
+            body.skip_summarization.unwrap_or(false),
         )
         .await
         .map_err(ServerError)?;

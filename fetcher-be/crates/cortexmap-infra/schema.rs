@@ -7,6 +7,29 @@ pub mod sql_types {
 }
 
 diesel::table! {
+    use diesel::sql_types::*;
+    use super::sql_types::Vector;
+
+    brain_region_embeddings (id) {
+        id -> Uuid,
+        region_id -> Int4,
+        summary_id -> Uuid,
+        chunk_index -> Int4,
+        chunk_text -> Text,
+        embedding -> Vector,
+        created_at -> Timestamp,
+        #[max_length = 20]
+        source_pmc_id -> Nullable<Varchar>,
+        #[max_length = 20]
+        source_uid -> Nullable<Varchar>,
+        source_s3_key -> Nullable<Text>,
+        source_query -> Nullable<Text>,
+        source_char_start -> Nullable<Int4>,
+        source_char_end -> Nullable<Int4>,
+    }
+}
+
+diesel::table! {
     fetch_task_components (id) {
         id -> Int8,
         task_id -> Int8,
@@ -49,6 +72,7 @@ diesel::table! {
         heartbeat_at -> Nullable<Timestamp>,
         worker_version -> Nullable<Text>,
         region_id -> Nullable<Int4>,
+        stream_message_id -> Nullable<Text>,
     }
 }
 
@@ -127,6 +151,37 @@ diesel::table! {
 }
 
 diesel::table! {
+    region_processing_batches (id) {
+        id -> Uuid,
+        status -> Text,
+        fetch_task_ids -> Array<Nullable<Int8>>,
+        expected_task_count -> Int4,
+        #[max_length = 64]
+        content_hash -> Nullable<Varchar>,
+        created_at -> Timestamp,
+        ready_at -> Nullable<Timestamp>,
+        processing_started_at -> Nullable<Timestamp>,
+        completed_at -> Nullable<Timestamp>,
+        summary_id -> Nullable<Uuid>,
+        error_message -> Nullable<Text>,
+        region_id -> Uuid,
+    }
+}
+
+diesel::table! {
+    region_queries (id) {
+        id -> Uuid,
+        query_text -> Text,
+        source -> Text,
+        priority -> Nullable<Int4>,
+        enabled -> Nullable<Bool>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        region_id -> Uuid,
+    }
+}
+
+diesel::table! {
     region_summary (id) {
         id -> Uuid,
         region_id -> Int4,
@@ -136,14 +191,22 @@ diesel::table! {
         acronym -> Nullable<Varchar>,
         summary -> Nullable<Text>,
         created_at -> Nullable<Timestamp>,
+        #[max_length = 64]
+        content_hash -> Nullable<Varchar>,
+        is_active -> Bool,
+        batch_id -> Uuid,
     }
 }
 
+diesel::joinable!(brain_region_embeddings -> region_summary (summary_id));
 diesel::joinable!(fetch_task_components -> fetch_tasks (task_id));
 diesel::joinable!(fetch_task_logs -> fetch_tasks (task_id));
 diesel::joinable!(langchain_pg_embedding -> langchain_pg_collection (collection_id));
+diesel::joinable!(region_processing_batches -> region_mapping (region_id));
+diesel::joinable!(region_queries -> region_mapping (region_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    brain_region_embeddings,
     fetch_task_components,
     fetch_task_logs,
     fetch_tasks,
@@ -153,5 +216,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     papers,
     processed_fetch_tasks,
     region_mapping,
+    region_processing_batches,
+    region_queries,
     region_summary,
 );

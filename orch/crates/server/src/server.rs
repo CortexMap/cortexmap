@@ -76,6 +76,9 @@ impl OrchServer {
             .route("/api/workers/status", get(get_worker_status_handler))
             .route("/api/workers/allocate", post(allocate_workers_handler))
             .route("/api/workers/stop", post(stop_workers_handler))
+            .route("/api/pipeline/status", get(get_pipeline_status_handler))
+            .route("/dev/stats", get(dev_stats_page_handler))
+            .route("/dev/api/system-stats", get(dev_system_stats_handler))
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
@@ -212,10 +215,28 @@ async fn stop_workers_handler(
     Ok(Json(result))
 }
 
+async fn get_pipeline_status_handler(
+    State(server): State<OrchServer>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_pipeline_status().await?;
+    Ok(Json(result))
+}
+
 async fn reverse_search_handler(
     State(server): State<OrchServer>,
     Json(body): Json<domain::SearchRequest>,
 ) -> Result<impl IntoResponse, ServerError> {
     let result = server.api.reverse_search(body.query).await?;
     Ok(Json(result))
+}
+
+async fn dev_system_stats_handler(
+    State(server): State<OrchServer>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_system_stats().await?;
+    Ok(Json(result))
+}
+
+async fn dev_stats_page_handler() -> impl IntoResponse {
+    axum::response::Html(include_str!("dev_stats.html"))
 }

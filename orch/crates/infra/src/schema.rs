@@ -72,6 +72,7 @@ diesel::table! {
         heartbeat_at -> Nullable<Timestamp>,
         worker_version -> Nullable<Text>,
         region_id -> Nullable<Int4>,
+        stream_message_id -> Nullable<Text>,
     }
 }
 
@@ -192,6 +193,7 @@ diesel::table! {
         created_at -> Nullable<Timestamp>,
         #[max_length = 64]
         content_hash -> Nullable<Varchar>,
+        is_active -> Bool,
         batch_id -> Uuid,
     }
 }
