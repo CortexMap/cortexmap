@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
@@ -192,14 +192,12 @@ export function SearchFunc() {
 
       {/* ── Modal overlay ────────────────────────────────────── */}
       {open && (
-        <div className="sf-backdrop" aria-hidden="true">
-          <div
-            className="sf-modal"
-            ref={overlayRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Search brain regions"
-          >
+        <dialog
+          className="sf-modal"
+          ref={overlayRef as React.RefObject<HTMLDialogElement>}
+          open
+          aria-label="Search brain regions"
+        >
             {/* Input row */}
             <div className="sf-input-row">
               <svg
@@ -268,7 +266,6 @@ export function SearchFunc() {
                       id="sf-results-list"
                       ref={listRef}
                       className="sf-list"
-                      role="listbox"
                       aria-label="Search results"
                     >
                       {results!.results.map((item, idx) => {
@@ -282,12 +279,12 @@ export function SearchFunc() {
                           <li
                             key={item.region_id}
                             id={`sf-item-${idx}`}
-                            role="option"
-                            aria-selected={isActive}
                             className={`sf-item${isActive ? ' sf-item--active' : ''}`}
                             onMouseEnter={() => setActiveIndex(idx)}
                             onMouseLeave={() => setActiveIndex(-1)}
                             onClick={() => handleSelect(item)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleSelect(item); }}
+                            tabIndex={0}
                           >
                             <span
                               className="sf-item-color"
@@ -341,8 +338,7 @@ export function SearchFunc() {
                 <kbd>Esc</kbd> close
               </span>
             </div>
-          </div>
-        </div>
+        </dialog>
       )}
     </>
   );
@@ -354,7 +350,7 @@ export function SearchFunc() {
  * Block-level elements (p, li, headings) are mapped to inline spans
  * so the 2-line clamp on the parent .sf-item-snippet still applies.
  */
-function SnippetMarkdown({ text }: { text: string }) {
+function SnippetMarkdown({ text }: { readonly text: string }) {
   const cleaned = text.replace(/\[chunk:[a-f0-9-]+\]/g, '').trim();
 
   const components: Components = {

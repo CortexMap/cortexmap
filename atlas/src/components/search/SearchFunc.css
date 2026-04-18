@@ -48,7 +48,7 @@
   border: 1px solid #d4d4d4;
   border-radius: 4px;
   background: #f3f4f6;
-  color: #9ca3af;
+  color: #6b7280; /* was #9ca3af — improved contrast ratio */
   font-size: 11px;
   font-family: system-ui, -apple-system, sans-serif;
   line-height: 1.5;
@@ -287,8 +287,8 @@
   color: #065f46;
 }
 
-/* fallback for any other match_source values */
-.sf-badge {
+/* fallback for any other match_source values — applied via specificity override */
+.sf-badge:not([class*='sf-badge--']) {
   background: #f3f4f6;
   color: #374151;
 }
@@ -316,7 +316,7 @@
   border-top: 1px solid #e5e5e4;
   background: #fafaf9;
   font-size: 11px;
-  color: #9ca3af;
+  color: #6b7280; /* was #9ca3af — improved contrast ratio */
   flex-shrink: 0;
 }
 

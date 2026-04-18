@@ -362,7 +362,7 @@ const STATUS_LABELS: Record<string, string> = {
   Processing: 'Generating summary',
 };
 
-function SpinnerIcon({ className }: { className?: string }) {
+function SpinnerIcon({ className }: { readonly className?: string }) {
   return (
     <svg
       className={className}
@@ -408,7 +408,7 @@ interface ChunkInfo {
   source_query: string | null;
 }
 
-function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?: boolean }) {
+function SummaryCard({ summary, isLatest }: { readonly summary: RegionSummary; readonly isLatest?: boolean }) {
   const [chunkMap, setChunkMap] = useState<Record<string, ChunkInfo>>({});
 
   useEffect(() => {
