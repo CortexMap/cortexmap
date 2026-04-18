@@ -77,6 +77,7 @@ impl OrchServer {
             .route("/api/workers/allocate", post(allocate_workers_handler))
             .route("/api/workers/stop", post(stop_workers_handler))
             .route("/api/pipeline/status", get(get_pipeline_status_handler))
+            .route("/api/pipeline/trigger", post(trigger_pipeline_handler))
             .route("/dev/stats", get(dev_stats_page_handler))
             .route("/dev/api/system-stats", get(dev_system_stats_handler))
             .layer(cors)
@@ -239,4 +240,12 @@ async fn dev_system_stats_handler(
 
 async fn dev_stats_page_handler() -> impl IntoResponse {
     axum::response::Html(include_str!("dev_stats.html"))
+}
+
+async fn trigger_pipeline_handler(
+    State(server): State<OrchServer>,
+    Json(body): Json<domain::PipelineTriggerRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.trigger_pipeline(body).await?;
+    Ok(Json(result))
 }

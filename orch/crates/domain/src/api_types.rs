@@ -262,3 +262,39 @@ pub struct QueryDistEntry {
     pub query_count: i64,
     pub num_regions: i64,
 }
+
+/// Request body for manually triggering a pipeline cycle.
+/// All fields default to `false` so `POST /orch/api/pipeline/trigger` with `{}`
+/// is a safe no-op. Clients opt into each step explicitly.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PipelineTriggerRequest {
+    /// Wipe every row from `region_queries` before generating. Only use when you
+    /// really want a full reset -- this forces Phase 1 to regenerate everything.
+    #[serde(default)]
+    pub reset_queries: bool,
+    /// Run Phase 1: generate queries for regions that don't have any.
+    /// Combined with `reset_queries` this regenerates queries for ALL regions.
+    #[serde(default)]
+    pub generate_queries: bool,
+    /// Run Phase 2: re-scan NCBI for every region's queries, enqueue new papers.
+    #[serde(default)]
+    pub discover_papers: bool,
+    /// Run Phase 3: ensure fetcher workers are allocated so the queue drains.
+    #[serde(default)]
+    pub ensure_workers: bool,
+}
+
+/// Response with per-phase outcomes. Any phase that wasn't requested stays `None`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PipelineTriggerResult {
+    /// Number of rows deleted by the reset (0 if `reset_queries` was false).
+    pub reset_queries_deleted: Option<i64>,
+    /// Phase 1 result: (regions_processed, total_queries_generated).
+    pub generate_queries_result: Option<(usize, usize)>,
+    /// Phase 2 result: (regions_scanned, new_tasks_created).
+    pub discover_papers_result: Option<(usize, usize)>,
+    /// Phase 3 result: true when the call succeeded.
+    pub ensure_workers_ok: Option<bool>,
+    /// Any non-fatal errors, one per failed phase.
+    pub errors: Vec<String>,
+}

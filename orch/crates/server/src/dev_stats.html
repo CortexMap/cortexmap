@@ -219,6 +219,31 @@
 </header>
 
 <div class="grid">
+  <!-- Pipeline Trigger -->
+  <div class="card wide" id="triggerCard">
+    <h2>Pipeline Trigger <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim); margin-left: 0.5rem;">Manually kick the pipeline without waiting for the next cycle</span></h2>
+    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;">
+      <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;" data-tip="Run Phase 1: generate LLM queries for regions that have no queries yet (or all regions if reset_queries is checked).">
+        <input type="checkbox" id="trigger_gen" checked>
+        <span>generate_queries</span>
+      </label>
+      <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;" data-tip="Run Phase 2: scan all regions with queries against NCBI, enqueue fetch tasks for new papers.">
+        <input type="checkbox" id="trigger_disc" checked>
+        <span>discover_papers</span>
+      </label>
+      <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;" data-tip="Run Phase 3: make sure at least one fetcher worker is running to drain the queue.">
+        <input type="checkbox" id="trigger_workers" checked>
+        <span>ensure_workers</span>
+      </label>
+      <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; color: var(--red); border-left: 1px solid var(--border); padding-left: 1rem; margin-left: 0.5rem;" data-tip="DESTRUCTIVE: Deletes ALL queries from region_queries table before generating new ones. Every region will get fresh LLM-generated queries.">
+        <input type="checkbox" id="trigger_reset">
+        <span>reset_queries (destructive)</span>
+      </label>
+      <button id="triggerBtn" style="margin-left: auto; padding: 0.5rem 1.2rem; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Trigger Pipeline</button>
+    </div>
+    <div id="triggerResult" style="margin-top: 0.8rem; font-family: monospace; font-size: 0.8rem; color: var(--text-dim); white-space: pre-wrap; display: none;"></div>
+  </div>
+
   <!-- Pipeline Health -->
   <div class="card wide" id="healthCard">
     <h2>Pipeline Health</h2>
@@ -546,6 +571,51 @@ async function poll() {
 initPollInput();
 poll();
 pollTimer = setInterval(poll, POLL_MS);
+
+// Pipeline trigger button
+$('triggerBtn').addEventListener('click', async () => {
+  const body = {
+    reset_queries:    $('trigger_reset').checked,
+    generate_queries: $('trigger_gen').checked,
+    discover_papers:  $('trigger_disc').checked,
+    ensure_workers:   $('trigger_workers').checked
+  };
+
+  const anySelected = body.reset_queries || body.generate_queries || body.discover_papers || body.ensure_workers;
+  if (!anySelected) {
+    alert('Select at least one option');
+    return;
+  }
+
+  if (body.reset_queries && !confirm('This will DELETE ALL queries for ALL regions. Continue?')) {
+    return;
+  }
+
+  const btn = $('triggerBtn');
+  const out = $('triggerResult');
+  btn.disabled = true;
+  btn.textContent = 'Running...';
+  out.style.display = 'block';
+  out.style.color = 'var(--text-dim)';
+  out.textContent = 'Triggering pipeline: ' + JSON.stringify(body);
+
+  try {
+    const res = await fetch(BASE + '/api/pipeline/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    out.style.color = res.ok ? 'var(--accent)' : 'var(--red)';
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    out.style.color = 'var(--red)';
+    out.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Trigger Pipeline';
+  }
+});
 </script>
 </body>
 </html>

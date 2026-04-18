@@ -677,4 +677,65 @@ where
     pub async fn get_system_stats(&self) -> Result<domain::SystemStats, E> {
         self.services.get_system_stats().await
     }
+
+    /// Manually trigger pipeline phases on demand. Phases run sequentially and
+    /// independently: a failure in one phase is collected into `errors` but
+    /// does NOT abort subsequent phases (the operator can retry piecemeal).
+    pub async fn trigger_pipeline(
+        &self,
+        req: domain::PipelineTriggerRequest,
+    ) -> Result<domain::PipelineTriggerResult, E> {
+        let mut result = domain::PipelineTriggerResult::default();
+
+        if req.reset_queries {
+            tracing::warn!("trigger_pipeline: wiping all region_queries rows");
+            match self.services.delete_all_queries().await {
+                Ok(deleted) => {
+                    result.reset_queries_deleted = Some(deleted);
+                }
+                Err(e) => {
+                    result.errors.push(format!("reset_queries: {}", e));
+                }
+            }
+        }
+
+        if req.generate_queries {
+            tracing::info!("trigger_pipeline: Phase 1 (generate_queries)");
+            match self.services.generate_queries_for_new_regions().await {
+                Ok((rp, tq)) => {
+                    result.generate_queries_result = Some((rp, tq));
+                }
+                Err(e) => {
+                    result.errors.push(format!("generate_queries: {}", e));
+                }
+            }
+        }
+
+        if req.discover_papers {
+            tracing::info!("trigger_pipeline: Phase 2 (discover_papers)");
+            match self.services.discover_new_papers().await {
+                Ok((rs, nt)) => {
+                    result.discover_papers_result = Some((rs, nt));
+                }
+                Err(e) => {
+                    result.errors.push(format!("discover_papers: {}", e));
+                }
+            }
+        }
+
+        if req.ensure_workers {
+            tracing::info!("trigger_pipeline: Phase 3 (ensure_workers)");
+            match self.services.ensure_fetcher_running().await {
+                Ok(()) => {
+                    result.ensure_workers_ok = Some(true);
+                }
+                Err(e) => {
+                    result.ensure_workers_ok = Some(false);
+                    result.errors.push(format!("ensure_workers: {}", e));
+                }
+            }
+        }
+
+        Ok(result)
+    }
 }

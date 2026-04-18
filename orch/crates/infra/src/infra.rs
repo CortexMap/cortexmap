@@ -147,6 +147,10 @@ impl BatchManagement for OrchInfra {
         self.pg.delete_queries(database_url, region_id).await
     }
 
+    async fn delete_all_queries(&self, database_url: &str) -> Result<i64, Self::Error> {
+        self.pg.delete_all_queries(database_url).await
+    }
+
     async fn create_batch(
         &self,
         database_url: &str,

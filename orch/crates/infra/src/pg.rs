@@ -242,6 +242,17 @@ impl BatchManagement for OrchPostgresql {
         Ok(())
     }
 
+    async fn delete_all_queries(&self, database_url: &str) -> Result<i64, Self::Error> {
+        use crate::schema::region_queries;
+
+        let conn = self.pool(database_url).await?.get().await?;
+        let deleted = conn
+            .interact(move |c| diesel::delete(region_queries::table).execute(c))
+            .await??;
+
+        Ok(deleted as i64)
+    }
+
     async fn create_batch(
         &self,
         database_url: &str,

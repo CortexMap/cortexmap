@@ -1,8 +1,8 @@
 use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
-    GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, Region, RegionStatusResult,
-    SearchRegionResult, SearchResponse, StopWorkersRequest, SystemStats, WorkerAllocationResponse,
-    WorkerStatus, WorkerStopResponse,
+    GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, PipelineTriggerRequest,
+    PipelineTriggerResult, Region, RegionStatusResult, SearchRegionResult, SearchResponse,
+    StopWorkersRequest, SystemStats, WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
 };
 use uuid::Uuid;
 
@@ -88,4 +88,13 @@ pub trait OrchApi: Send + Sync {
 
     /// Get comprehensive system statistics for the dev dashboard
     async fn get_system_stats(&self) -> Result<SystemStats, Self::Error>;
+
+    /// Manually trigger pipeline phases on demand. Each phase is opt-in via
+    /// the request body so clients can e.g. only rediscover papers without
+    /// regenerating queries. Phases run sequentially in the fixed order:
+    /// reset -> generate_queries -> discover_papers -> ensure_workers.
+    async fn trigger_pipeline(
+        &self,
+        req: PipelineTriggerRequest,
+    ) -> Result<PipelineTriggerResult, Self::Error>;
 }

@@ -94,6 +94,10 @@ pub trait RegionManagement: Send + Sync {
     /// Delete all queries for a region (used for invalidation)
     async fn delete_queries(&self, region_id: Uuid) -> Result<(), Self::Error>;
 
+    /// Wipe every row from region_queries (full pipeline reset).
+    /// Returns the number of rows deleted.
+    async fn delete_all_queries(&self) -> Result<i64, Self::Error>;
+
     /// Resolve a chunk UUID to its full source details via brainatlas-be
     async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error>;
 

@@ -392,6 +392,24 @@ where
         Ok(())
     }
 
+    async fn delete_all_queries(&self) -> Result<i64, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let deleted = self
+            .infra
+            .delete_all_queries(&database_url)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        // All region queries are gone; drop global caches that might reflect them.
+        invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
+
+        Ok(deleted)
+    }
+
     async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<ChunkSourceResponse, Self::Error> {
         let infra = &self.infra;
         cached_or_fetch(

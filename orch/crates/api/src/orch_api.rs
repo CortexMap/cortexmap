@@ -2,9 +2,9 @@ use crate::{ApiError, OrchApi};
 use app::{AppError, OrchApp, Services};
 use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
-    GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, Region, RegionStatusResult,
-    SearchRegionResult, SearchResponse, StopWorkersRequest, SystemStats, WorkerAllocationResponse,
-    WorkerStatus, WorkerStopResponse,
+    GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, PipelineTriggerRequest,
+    PipelineTriggerResult, Region, RegionStatusResult, SearchRegionResult, SearchResponse,
+    StopWorkersRequest, SystemStats, WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -174,6 +174,16 @@ where
     async fn get_system_stats(&self) -> Result<SystemStats, Self::Error> {
         self.app()
             .get_system_stats()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn trigger_pipeline(
+        &self,
+        req: PipelineTriggerRequest,
+    ) -> Result<PipelineTriggerResult, Self::Error> {
+        self.app()
+            .trigger_pipeline(req)
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }

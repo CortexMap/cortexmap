@@ -128,6 +128,10 @@ pub trait BatchManagement: Send + Sync {
     /// Delete all queries for a region
     async fn delete_queries(&self, database_url: &str, region_id: Uuid) -> Result<(), Self::Error>;
 
+    /// Wipe every row from region_queries (full pipeline reset).
+    /// Returns the number of rows deleted.
+    async fn delete_all_queries(&self, database_url: &str) -> Result<i64, Self::Error>;
+
     /// Create a new processing batch
     async fn create_batch(
         &self,

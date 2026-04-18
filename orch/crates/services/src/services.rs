@@ -163,6 +163,10 @@ where
         self.region_management.delete_queries(region_id).await
     }
 
+    async fn delete_all_queries(&self) -> Result<i64, Self::Error> {
+        self.region_management.delete_all_queries().await
+    }
+
     async fn get_chunk_source(
         &self,
         chunk_id: Uuid,
