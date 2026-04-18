@@ -183,6 +183,12 @@
 }
 
 /* ── Result item ─────────────────────────────────────────────── */
+.sf-item-wrapper {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
 .sf-item {
   display: flex;
   align-items: flex-start;
@@ -191,6 +197,13 @@
   cursor: pointer;
   transition: background 0.1s;
   border-radius: 0;
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
 }
 
 .sf-item:hover,

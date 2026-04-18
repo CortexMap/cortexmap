@@ -276,40 +276,39 @@ export function SearchFunc() {
                         const isActive = idx === activeIndex;
 
                         return (
-                          <li
-                            key={item.region_id}
-                            id={`sf-item-${idx}`}
-                            className={`sf-item${isActive ? ' sf-item--active' : ''}`}
-                            onMouseEnter={() => setActiveIndex(idx)}
-                            onMouseLeave={() => setActiveIndex(-1)}
-                            onClick={() => handleSelect(item)}
-                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleSelect(item); }}
-                            tabIndex={0}
-                          >
-                            <span
-                              className="sf-item-color"
-                              style={{ background: hex }}
-                              aria-hidden="true"
-                            />
-                            <span className="sf-item-body">
-                              <span className="sf-item-title">
-                                <span className="sf-item-name">{item.name}</span>
-                                {item.acronym && (
-                                  <span className="sf-item-acronym">{item.acronym}</span>
+                          <li key={item.region_id} id={`sf-item-${idx}`} className="sf-item-wrapper">
+                            <button
+                              type="button"
+                              className={`sf-item${isActive ? ' sf-item--active' : ''}`}
+                              onMouseEnter={() => setActiveIndex(idx)}
+                              onMouseLeave={() => setActiveIndex(-1)}
+                              onClick={() => handleSelect(item)}
+                            >
+                              <span
+                                className="sf-item-color"
+                                style={{ background: hex }}
+                                aria-hidden="true"
+                              />
+                              <span className="sf-item-body">
+                                <span className="sf-item-title">
+                                  <span className="sf-item-name">{item.name}</span>
+                                  {item.acronym && (
+                                    <span className="sf-item-acronym">{item.acronym}</span>
+                                  )}
+                                </span>
+                                {item.summary_snippet && (
+                                  <span className="sf-item-snippet">
+                                    <SnippetMarkdown text={item.summary_snippet} />
+                                  </span>
                                 )}
                               </span>
-                              {item.summary_snippet && (
-                                <span className="sf-item-snippet">
-                                  <SnippetMarkdown text={item.summary_snippet} />
+                              <span className="sf-item-meta" aria-hidden="true">
+                                <span className={`sf-badge sf-badge--${item.match_source}`}>
+                                  {item.match_source}
                                 </span>
-                              )}
-                            </span>
-                            <span className="sf-item-meta" aria-hidden="true">
-                              <span className={`sf-badge sf-badge--${item.match_source}`}>
-                                {item.match_source}
+                                <span className="sf-rank">{Math.round(item.rank * 100)}%</span>
                               </span>
-                              <span className="sf-rank">{Math.round(item.rank * 100)}%</span>
-                            </span>
+                            </button>
                           </li>
                         );
                       })}

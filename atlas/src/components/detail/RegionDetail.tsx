@@ -71,8 +71,8 @@ export function RegionDetail() {
     const uuid = cortexmapRegion.id;
 
     Promise.all([
-      fetchRegionSummaries(uuid).catch((err) => { console.error('Failed to fetch summaries:', err); return [] as RegionSummary[]; }),
-      fetchRegionStatus(uuid).catch((err) => { console.error('Failed to fetch region status:', err); return null; }),
+      fetchRegionSummaries(uuid).catch(() => { console.error('Failed to fetch summaries'); return [] as RegionSummary[]; }),
+      fetchRegionStatus(uuid).catch(() => { console.error('Failed to fetch region status'); return null; }),
     ]).then(([sums, st]) => {
       if (cancelled) return;
       setSummaries(sums);
