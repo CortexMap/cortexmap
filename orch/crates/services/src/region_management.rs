@@ -302,6 +302,18 @@ where
             .map_err(ServiceError::InfraError)
     }
 
+    async fn count_actively_fetching_regions(&self) -> Result<i64, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .count_actively_fetching_regions(&database_url)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error> {
         let database_url = self
             .infra

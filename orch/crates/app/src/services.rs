@@ -82,6 +82,9 @@ pub trait RegionManagement: Send + Sync {
     /// Count regions that have no batches
     async fn count_regions_without_batches(&self) -> Result<i64, Self::Error>;
 
+    /// Count collecting batches with at least one in_progress fetch task
+    async fn count_actively_fetching_regions(&self) -> Result<i64, Self::Error>;
+
     /// Get query generation limit from config (or default)
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error>;
 

@@ -340,11 +340,14 @@ where
             }
         }
 
+        // Count collecting batches that have at least one in_progress fetch task
+        let fetching = self.services.count_actively_fetching_regions().await? as i32;
+
         Ok(PipelineStatsResult {
             total_regions,
             not_started,
             fetch_queued,
-            fetching: 0, // No distinct "actively fetching" state; subsumed by fetch_queued
+            fetching,
             fetch_failed,
             llm_queued,
             processing,

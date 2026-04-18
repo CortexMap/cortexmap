@@ -145,6 +145,10 @@ where
         self.region_management.count_regions_without_batches().await
     }
 
+    async fn count_actively_fetching_regions(&self) -> Result<i64, Self::Error> {
+        self.region_management.count_actively_fetching_regions().await
+    }
+
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error> {
         self.region_management.get_query_generation_limit().await
     }

@@ -890,6 +890,40 @@ impl services::RegionMappingQueries for OrchPostgresql {
         Ok(result)
     }
 
+    async fn count_actively_fetching_regions(
+        &self,
+        database_url: &str,
+    ) -> Result<i64, Self::Error> {
+        let conn = self.pool(database_url).await?.get().await?;
+        let result = conn
+            .interact(move |c| {
+                use diesel::sql_query;
+                use diesel::sql_types::BigInt;
+
+                #[derive(QueryableByName)]
+                struct CountRow {
+                    #[diesel(sql_type = BigInt)]
+                    count: i64,
+                }
+
+                sql_query(
+                    "SELECT COUNT(DISTINCT rpb.region_id) as count
+                     FROM region_processing_batches rpb
+                     WHERE rpb.status = 'collecting'
+                       AND EXISTS (
+                         SELECT 1 FROM fetch_tasks ft
+                         WHERE ft.id = ANY(rpb.fetch_task_ids)
+                           AND ft.status = 'in_progress'
+                       )"
+                )
+                .get_result::<CountRow>(c)
+                .map(|r| r.count)
+            })
+            .await??;
+
+        Ok(result)
+    }
+
     async fn get_system_stats(
         &self,
         database_url: &str,
