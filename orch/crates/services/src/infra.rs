@@ -311,7 +311,8 @@ pub trait RegionMappingQueries: Send + Sync {
 
     /// Count collecting batches whose fetch tasks include at least one in_progress task.
     /// These are the regions actively being fetched right now.
-    async fn count_actively_fetching_regions(&self, database_url: &str) -> Result<i64, Self::Error>;
+    async fn count_actively_fetching_regions(&self, database_url: &str)
+    -> Result<i64, Self::Error>;
 
     /// Get region summaries by region_id (Int4)
     async fn get_region_summaries(

@@ -290,7 +290,10 @@ impl services::RegionMappingQueries for OrchInfra {
         self.pg.count_regions_without_batches(database_url).await
     }
 
-    async fn count_actively_fetching_regions(&self, database_url: &str) -> Result<i64, Self::Error> {
+    async fn count_actively_fetching_regions(
+        &self,
+        database_url: &str,
+    ) -> Result<i64, Self::Error> {
         self.pg.count_actively_fetching_regions(database_url).await
     }
 

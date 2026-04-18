@@ -914,7 +914,7 @@ impl services::RegionMappingQueries for OrchPostgresql {
                          SELECT 1 FROM fetch_tasks ft
                          WHERE ft.id = ANY(rpb.fetch_task_ids)
                            AND ft.status = 'in_progress'
-                       )"
+                       )",
                 )
                 .get_result::<CountRow>(c)
                 .map(|r| r.count)
