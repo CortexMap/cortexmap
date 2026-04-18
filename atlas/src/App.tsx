@@ -1,5 +1,5 @@
 import { useEffect, Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAtlasStore } from './store/atlasStore';
 import { AppLayout } from './components/layout/AppLayout';
 import { OntologyTree } from './components/tree/OntologyTree';
@@ -87,12 +87,33 @@ function NavTab({ label, active, onClick }: { label: string; active: boolean; on
 
 function AppContent() {
   const { loadOntology, loadSections } = useAtlasStore();
+  const selectedStructureId = useAtlasStore((s) => s.selectedStructureId);
+  const selectStructure = useAtlasStore((s) => s.selectStructure);
+  const ontology = useAtlasStore((s) => s.ontology);
   const location = useLocation();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     loadOntology();
     loadSections();
   }, [loadOntology, loadSections]);
+
+  // Single direction: URL -> store. The URL is the source of truth.
+  // Every UI action that selects a region goes through `useSelectRegion()`,
+  // which calls `setSearchParams` to push a new history entry. The browser
+  // handles back/forward natively; this effect reacts to the URL change
+  // and updates the store to match. Never writes to the URL from the store.
+  useEffect(() => {
+    if (!ontology) return;
+    const raw = searchParams.get('region');
+    if (!raw) {
+      if (selectedStructureId != null) selectStructure(null);
+      return;
+    }
+    const id = Number(raw);
+    if (!Number.isFinite(id) || id <= 0) return;
+    if (selectedStructureId !== id) selectStructure(id);
+  }, [ontology, searchParams, selectStructure, selectedStructureId]);
 
   const is3D = location.pathname === '/3d';
 

@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
 import { useAtlasStore } from '../../store/atlasStore';
+import { useSelectRegion } from '../../hooks/useSelectRegion';
 import type { SvgRegion } from '../../types';
 import styles from './SvgOverlay.module.css';
 
@@ -11,7 +11,8 @@ interface Props {
 }
 
 export function SvgOverlay({ regions, viewBox, displayWidth, displayHeight }: Props) {
-  const { selectedStructureId, hoveredStructureId, setHovered, selectStructure } = useAtlasStore();
+  const { selectedStructureId, hoveredStructureId, setHovered } = useAtlasStore();
+  const selectRegion = useSelectRegion();
 
   const viewBoxStr = `0 0 ${viewBox.width} ${viewBox.height}`;
 
@@ -39,7 +40,7 @@ export function SvgOverlay({ regions, viewBox, displayWidth, displayHeight }: Pr
             onMouseLeave={() => setHovered(null)}
             onClick={(e) => {
               e.stopPropagation();
-              selectStructure(region.structureId);
+              selectRegion(region.structureId);
             }}
           />
         );
