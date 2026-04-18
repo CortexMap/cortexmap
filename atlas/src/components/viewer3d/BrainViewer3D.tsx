@@ -107,16 +107,16 @@ export function BrainViewer3D() {
       keysPressed.current.delete(e.key);
       if (!e.ctrlKey && !e.metaKey) keysPressed.current.delete('ctrl');
     };
-    window.addEventListener('keydown', handler);
-    window.addEventListener('keyup', upHandler);
+    globalThis.addEventListener('keydown', handler);
+    globalThis.addEventListener('keyup', upHandler);
     return () => {
-      window.removeEventListener('keydown', handler);
-      window.removeEventListener('keyup', upHandler);
+      globalThis.removeEventListener('keydown', handler);
+      globalThis.removeEventListener('keyup', upHandler);
     };
   }, []);
 
   return (
-    <div className={styles.container} tabIndex={0}>
+    <div className={styles.container}>
       {meshesLoading && (
         <div className={styles.loadingOverlay}>
           <div className={styles.loadingBar}>
@@ -223,8 +223,13 @@ function SceneContent() {
           if (node?.c) color = `#${node.c}`;
         }
 
-        const finalColor = isSelected ? '#7c3aed' : isHovered ? '#a78bfa' : color;
-        const finalOpacity = isSelected ? 0.9 : isHovered ? 0.85 : meshOpacity;
+        let finalColor = color;
+        if (isSelected) finalColor = '#7c3aed';
+        else if (isHovered) finalColor = '#a78bfa';
+
+        let finalOpacity = meshOpacity;
+        if (isSelected) finalOpacity = 0.9;
+        else if (isHovered) finalOpacity = 0.85;
 
         return (
           <mesh

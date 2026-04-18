@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
@@ -192,14 +192,12 @@ export function SearchFunc() {
 
       {/* ── Modal overlay ────────────────────────────────────── */}
       {open && (
-        <div className="sf-backdrop" aria-hidden="true">
-          <div
-            className="sf-modal"
-            ref={overlayRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Search brain regions"
-          >
+        <dialog
+          className="sf-modal"
+          ref={overlayRef as React.RefObject<HTMLDialogElement>}
+          open
+          aria-label="Search brain regions"
+        >
             {/* Input row */}
             <div className="sf-input-row">
               <svg
@@ -268,7 +266,6 @@ export function SearchFunc() {
                       id="sf-results-list"
                       ref={listRef}
                       className="sf-list"
-                      role="listbox"
                       aria-label="Search results"
                     >
                       {results!.results.map((item, idx) => {
@@ -279,40 +276,39 @@ export function SearchFunc() {
                         const isActive = idx === activeIndex;
 
                         return (
-                          <li
-                            key={item.region_id}
-                            id={`sf-item-${idx}`}
-                            role="option"
-                            aria-selected={isActive}
-                            className={`sf-item${isActive ? ' sf-item--active' : ''}`}
-                            onMouseEnter={() => setActiveIndex(idx)}
-                            onMouseLeave={() => setActiveIndex(-1)}
-                            onClick={() => handleSelect(item)}
-                          >
-                            <span
-                              className="sf-item-color"
-                              style={{ background: hex }}
-                              aria-hidden="true"
-                            />
-                            <span className="sf-item-body">
-                              <span className="sf-item-title">
-                                <span className="sf-item-name">{item.name}</span>
-                                {item.acronym && (
-                                  <span className="sf-item-acronym">{item.acronym}</span>
+                          <li key={item.region_id} id={`sf-item-${idx}`} className="sf-item-wrapper">
+                            <button
+                              type="button"
+                              className={`sf-item${isActive ? ' sf-item--active' : ''}`}
+                              onMouseEnter={() => setActiveIndex(idx)}
+                              onMouseLeave={() => setActiveIndex(-1)}
+                              onClick={() => handleSelect(item)}
+                            >
+                              <span
+                                className="sf-item-color"
+                                style={{ background: hex }}
+                                aria-hidden="true"
+                              />
+                              <span className="sf-item-body">
+                                <span className="sf-item-title">
+                                  <span className="sf-item-name">{item.name}</span>
+                                  {item.acronym && (
+                                    <span className="sf-item-acronym">{item.acronym}</span>
+                                  )}
+                                </span>
+                                {item.summary_snippet && (
+                                  <span className="sf-item-snippet">
+                                    <SnippetMarkdown text={item.summary_snippet} />
+                                  </span>
                                 )}
                               </span>
-                              {item.summary_snippet && (
-                                <span className="sf-item-snippet">
-                                  <SnippetMarkdown text={item.summary_snippet} />
+                              <span className="sf-item-meta" aria-hidden="true">
+                                <span className={`sf-badge sf-badge--${item.match_source}`}>
+                                  {item.match_source}
                                 </span>
-                              )}
-                            </span>
-                            <span className="sf-item-meta" aria-hidden="true">
-                              <span className={`sf-badge sf-badge--${item.match_source}`}>
-                                {item.match_source}
+                                <span className="sf-rank">{Math.round(item.rank * 100)}%</span>
                               </span>
-                              <span className="sf-rank">{Math.round(item.rank * 100)}%</span>
-                            </span>
+                            </button>
                           </li>
                         );
                       })}
@@ -341,8 +337,7 @@ export function SearchFunc() {
                 <kbd>Esc</kbd> close
               </span>
             </div>
-          </div>
-        </div>
+        </dialog>
       )}
     </>
   );
@@ -354,7 +349,7 @@ export function SearchFunc() {
  * Block-level elements (p, li, headings) are mapped to inline spans
  * so the 2-line clamp on the parent .sf-item-snippet still applies.
  */
-function SnippetMarkdown({ text }: { text: string }) {
+function SnippetMarkdown({ text }: { readonly text: string }) {
   const cleaned = text.replace(/\[chunk:[a-f0-9-]+\]/g, '').trim();
 
   const components: Components = {

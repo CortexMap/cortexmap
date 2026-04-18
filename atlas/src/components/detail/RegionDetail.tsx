@@ -71,8 +71,8 @@ export function RegionDetail() {
     const uuid = cortexmapRegion.id;
 
     Promise.all([
-      fetchRegionSummaries(uuid).catch((err) => { console.error('Failed to fetch summaries:', err); return [] as RegionSummary[]; }),
-      fetchRegionStatus(uuid).catch((err) => { console.error('Failed to fetch region status:', err); return null; }),
+      fetchRegionSummaries(uuid).catch(() => { console.error('Failed to fetch summaries'); return [] as RegionSummary[]; }),
+      fetchRegionStatus(uuid).catch(() => { console.error('Failed to fetch region status'); return null; }),
     ]).then(([sums, st]) => {
       if (cancelled) return;
       setSummaries(sums);
@@ -362,7 +362,7 @@ const STATUS_LABELS: Record<string, string> = {
   Processing: 'Generating summary',
 };
 
-function SpinnerIcon({ className }: { className?: string }) {
+function SpinnerIcon({ className }: { readonly className?: string }) {
   return (
     <svg
       className={className}
@@ -408,7 +408,7 @@ interface ChunkInfo {
   source_query: string | null;
 }
 
-function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?: boolean }) {
+function SummaryCard({ summary, isLatest }: { readonly summary: RegionSummary; readonly isLatest?: boolean }) {
   const [chunkMap, setChunkMap] = useState<Record<string, ChunkInfo>>({});
 
   useEffect(() => {

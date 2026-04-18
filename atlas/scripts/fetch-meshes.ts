@@ -6,10 +6,10 @@
  * Usage: npx tsx scripts/fetch-meshes.ts
  */
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import https from 'https';
-import http from 'http';
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import https from 'node:https';
+import http from 'node:http';
 
 const MESH_BASE =
   'http://download.alleninstitute.org/informatics-archive/current-release/mouse_ccf/annotation/ccf_2017/structure_meshes';
@@ -71,7 +71,7 @@ async function main() {
   const BATCH_SIZE = 10;
   for (let i = 0; i < allIds.length; i += BATCH_SIZE) {
     const batch = allIds.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
+    await Promise.allSettled(
       batch.map(async (id) => {
         const outPath = join(OUTPUT_DIR, `${id}.obj`);
         if (existsSync(outPath)) {
@@ -108,4 +108,4 @@ async function main() {
   console.log(`\nDone: ${success} new, ${skipped} cached, ${failed} no mesh available (total: ${allIds.length})`);
 }
 
-main().catch(console.error);
+await main();
