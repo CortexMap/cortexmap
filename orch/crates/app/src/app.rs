@@ -504,6 +504,18 @@ where
             });
         }
 
+        // Deduplicate: ON CONFLICT(pmc_id) DO NOTHING returns the same task ID
+        // when the same paper is found by multiple queries. Without this, the
+        // batch's fetch_task_ids array contains duplicates and the completion
+        // watcher's `completed_count == array.len()` check never matches.
+        let all_task_ids: Vec<i64> = {
+            let mut seen = std::collections::HashSet::new();
+            all_task_ids
+                .into_iter()
+                .filter(|id| seen.insert(*id))
+                .collect()
+        };
+
         // Step 4: Filter to only already-completed tasks.
         //
         // The knowledge base is continuously expanding via the background

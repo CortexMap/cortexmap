@@ -360,7 +360,20 @@ where
                 }
             }
 
-            // If we got new tasks, create a batch for them
+            // If we got new tasks, create a batch for them.
+            // Deduplicate: ON CONFLICT(pmc_id) DO NOTHING in the fetcher returns
+            // the same existing task ID for any paper found by multiple queries
+            // for this region. Without dedup, the array grows with duplicates and
+            // the completion watcher's count-based check never matches.
+            let unique_task_ids: Vec<i64> = {
+                let mut seen = std::collections::HashSet::new();
+                region_task_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| seen.insert(*id))
+                    .collect()
+            };
+            let region_task_ids = unique_task_ids;
             if !region_task_ids.is_empty() {
                 // Check if there's already an active batch for this region
                 match self.infra.get_active_batch(&database_url, *region_id).await {
