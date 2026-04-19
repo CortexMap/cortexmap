@@ -179,7 +179,7 @@ where
         let database_url_ref = &database_url;
 
         let results: Vec<(uuid::Uuid, i64, uuid::Uuid, Result<String, ServiceError<E>>)> =
-            stream::iter(ready_batches.into_iter())
+            stream::iter(ready_batches)
                 .map(|batch| async move {
                     let batch_id = batch.id;
                     let region_id = batch.region_id;
