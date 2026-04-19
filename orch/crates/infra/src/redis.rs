@@ -114,7 +114,8 @@ impl services::CacheClient for OrchRedis {
             info.lines()
                 .find_map(|line| {
                     let line = line.trim();
-                    line.strip_prefix(&format!("{k}:")).map(|v| v.trim().to_string())
+                    line.strip_prefix(&format!("{k}:"))
+                        .map(|v| v.trim().to_string())
                 })
                 .unwrap_or_default()
         };
@@ -129,15 +130,27 @@ impl services::CacheClient for OrchRedis {
         // keyspace but bounded by COUNT batches). We keep this list aligned
         // with the patterns built in `services::cache_keys`.
         let prefixes: &[(&str, &str)] = &[
-            ("orch:regions:all",            "Full region_mapping list (10 min TTL)"),
-            ("orch:pipeline:stats",         "Cross-region pipeline statistics (15s TTL)"),
-            ("orch:region:*:summaries",     "Per-region summaries (2 min TTL)"),
-            ("orch:region:*:status",        "Per-region pipeline status (15s TTL)"),
-            ("orch:batch:*:status",         "Per-batch status (15s TTL)"),
-            ("orch:config:all",             "Full orch_config snapshot (2 min TTL)"),
-            ("orch:chunk:*:source",         "Chunk source resolution, immutable (10 min TTL)"),
-            ("orch:batches:status:*",       "Batches grouped by status"),
-            ("orch:search:*",               "Cached reverse-search results"),
+            ("orch:regions:all", "Full region_mapping list (10 min TTL)"),
+            (
+                "orch:pipeline:stats",
+                "Cross-region pipeline statistics (15s TTL)",
+            ),
+            (
+                "orch:region:*:summaries",
+                "Per-region summaries (2 min TTL)",
+            ),
+            (
+                "orch:region:*:status",
+                "Per-region pipeline status (15s TTL)",
+            ),
+            ("orch:batch:*:status", "Per-batch status (15s TTL)"),
+            ("orch:config:all", "Full orch_config snapshot (2 min TTL)"),
+            (
+                "orch:chunk:*:source",
+                "Chunk source resolution, immutable (10 min TTL)",
+            ),
+            ("orch:batches:status:*", "Batches grouped by status"),
+            ("orch:search:*", "Cached reverse-search results"),
         ];
 
         let mut keys_by_prefix = Vec::with_capacity(prefixes.len());
@@ -176,10 +189,7 @@ impl services::CacheClient for OrchRedis {
 }
 
 /// Count keys matching a glob pattern using a non-blocking SCAN cursor.
-async fn scan_count(
-    conn: &mut ConnectionManager,
-    pattern: &str,
-) -> Result<u64, redis::RedisError> {
+async fn scan_count(conn: &mut ConnectionManager, pattern: &str) -> Result<u64, redis::RedisError> {
     let mut cursor: u64 = 0;
     let mut total: u64 = 0;
     loop {
