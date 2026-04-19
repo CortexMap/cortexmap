@@ -232,13 +232,20 @@ where
             return Ok(false);
         }
 
+        // Deduplicate task_ids before comparing. The `fetch_task_ids` array can
+        // contain duplicates (e.g. when ON CONFLICT(pmc_id) returns the same
+        // existing task ID for multiple queries that found the same paper).
+        // count_completed_tasks does `id IN (...)` which is set-semantic, so we
+        // must compare against the *distinct* count, not the array length.
+        let unique_ids: std::collections::HashSet<i64> = task_ids.iter().copied().collect();
+
         let completed_count = self
             .infra
             .count_completed_tasks(database_url, task_ids)
             .await
             .map_err(ServiceError::InfraError)?;
 
-        Ok(completed_count == task_ids.len())
+        Ok(completed_count == unique_ids.len())
     }
 
     /// Process an entire batch: collect all S3 keys and call brainatlas
