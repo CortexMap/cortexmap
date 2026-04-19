@@ -127,6 +127,8 @@ where
     }
 
     async fn process(&self, _tasks: Vec<PendingTask>) -> Result<ProcessResult, Self::Error> {
+        use futures::stream::{self, StreamExt};
+
         let database_url = self
             .infra
             .get_env_var("DATABASE_URL")
@@ -144,6 +146,18 @@ where
                 })?,
         };
 
+        // Read max parallel LLM calls from config (default 10).
+        // This bounds concurrent brainatlas /process calls so we don't overwhelm
+        // the LLM provider while still getting significant throughput gains over
+        // sequential processing.
+        let concurrency: usize = self
+            .infra
+            .get_config(&database_url, ConfigKey::MaxParallelProcessCalls)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+
         // Get ready batches (ignore the tasks parameter since we're batch-based now)
         let ready_batches = self
             .infra
@@ -151,23 +165,46 @@ where
             .await
             .map_err(ServiceError::InfraError)?;
 
+        let total_ready = ready_batches.len();
+        tracing::info!(
+            ready_batches = total_ready,
+            concurrency = concurrency,
+            "Processing ready batches in parallel"
+        );
+
+        // Process batches in parallel with bounded concurrency using buffer_unordered.
+        // Each batch's process_batch is independent — it writes to its own batch row
+        // and region_summary row — so parallelism is safe.
+        let brainatlas_url_ref = &brainatlas_url;
+        let database_url_ref = &database_url;
+
+        let results: Vec<(uuid::Uuid, i64, uuid::Uuid, Result<String, ServiceError<E>>)> =
+            stream::iter(ready_batches.into_iter())
+                .map(|batch| async move {
+                    let batch_id = batch.id;
+                    let region_id = batch.region_id;
+                    let first_task_id = batch.fetch_task_ids.first().copied().unwrap_or(0);
+                    let result = self
+                        .process_batch(&batch, brainatlas_url_ref, database_url_ref)
+                        .await;
+                    (batch_id, first_task_id, region_id, result)
+                })
+                .buffer_unordered(concurrency)
+                .collect()
+                .await;
+
         let mut successful = 0;
         let mut failed = 0;
-        let mut task_results = Vec::new();
+        let mut task_results = Vec::with_capacity(results.len());
 
-        // Process one batch at a time (can be parallelized later)
-        for batch in ready_batches.into_iter().take(1) {
-            // Limit to 1 batch per process call
-            match self
-                .process_batch(&batch, &brainatlas_url, &database_url)
-                .await
-            {
+        for (batch_id, task_id, region_id, result) in results {
+            match result {
                 Ok(detail) => {
                     successful += 1;
                     task_results.push(TaskResult {
-                        task_id: batch.fetch_task_ids.first().copied().unwrap_or(0),
-                        pmc_id: format!("batch_{}", batch.id),
-                        region_id: batch.region_id,
+                        task_id,
+                        pmc_id: format!("batch_{}", batch_id),
+                        region_id,
                         status: TaskStatus::Success,
                         detail: Some(detail),
                     });
@@ -175,15 +212,22 @@ where
                 Err(e) => {
                     failed += 1;
                     task_results.push(TaskResult {
-                        task_id: batch.fetch_task_ids.first().copied().unwrap_or(0),
-                        pmc_id: format!("batch_{}", batch.id),
-                        region_id: batch.region_id,
+                        task_id,
+                        pmc_id: format!("batch_{}", batch_id),
+                        region_id,
                         status: TaskStatus::Failed,
                         detail: Some(e.to_string()),
                     });
                 }
             }
         }
+
+        tracing::info!(
+            successful = successful,
+            failed = failed,
+            total = total_ready,
+            "Parallel batch processing complete"
+        );
 
         Ok(ProcessResult {
             successful,
