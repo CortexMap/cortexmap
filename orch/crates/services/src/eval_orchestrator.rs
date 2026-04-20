@@ -198,7 +198,7 @@ where
     async fn eval_version(&self) -> String {
         self.get_config_string(ConfigKey::EvalVersion)
             .await
-            .unwrap_or_else(|| "v0.1.0".to_string())
+            .unwrap_or_else(|| "v0.2.0".to_string())
     }
 
     pub async fn is_enabled(&self) -> bool {

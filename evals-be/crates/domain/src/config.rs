@@ -31,13 +31,17 @@ pub enum ConfigKey {
 impl ConfigKey {
     pub fn default_value(self) -> &'static str {
         match self {
-            ConfigKey::EvalVersion => "v0.1.0",
+            ConfigKey::EvalVersion => "v0.2.0",
             ConfigKey::EvalConcurrency => "5",
             ConfigKey::EvalJudgeChatModel => "openai/gpt-4o-mini",
             ConfigKey::EvalRubricChatModel => "openai/gpt-4o",
             ConfigKey::EvalEmbeddingModel => "text-embedding-3-small",
-            ConfigKey::EvalTopKChunks => "5",
-            ConfigKey::EvalSimilarityThreshold => "0.6",
+            ConfigKey::EvalTopKChunks => "8",
+            // 0.0 = no absolute floor; trust pgvector's ORDER BY similarity LIMIT top_k
+            // to return the k best chunks, and let the judge LLM decide support.
+            // The judge has explicit "partial"/"unsupported" verdicts for weak evidence,
+            // so an SQL-level cutoff above ~0.35 just silently discards legitimate matches.
+            ConfigKey::EvalSimilarityThreshold => "0.0",
             ConfigKey::BrainatlasBaseUrl => "http://localhost:8082",
         }
     }

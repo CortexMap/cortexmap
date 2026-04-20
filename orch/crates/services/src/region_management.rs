@@ -33,6 +33,10 @@ struct EvalsScoreEntryWire {
     pub eval_version: String,
     #[serde(default)]
     pub judge_model: Option<String>,
+    /// ISO-8601 timestamp from evals-be. Used to pick the latest eval run when
+    /// a summary has been scored under multiple eval_versions.
+    #[serde(default)]
+    pub created_at: String,
 }
 
 /// Concurrency cap for per-summary eval score fetches. Each summary costs one
@@ -692,19 +696,38 @@ where
         return None;
     }
 
-    // All scores for a given summary share the same eval_version (enforced by
-    // the eval_scores unique index (summary_hash, metric, eval_version)).
-    // Pick the first one's version as the representative.
-    let eval_version = wire
-        .scores
-        .first()
-        .map(|s| s.eval_version.clone())
-        .unwrap_or_default();
-
-    let mut scores = std::collections::HashMap::with_capacity(wire.scores.len());
-    let mut judge_models = std::collections::HashMap::new();
+    // A summary can hold rows for multiple eval_versions side by side (the
+    // unique index is on `(summary_hash, metric, eval_version)`, so bumping
+    // `eval_version` adds rows instead of replacing them). We surface only
+    // the most recently-run version so the frontend never shows a mix or
+    // the wrong stale version.
+    //
+    // Strategy: group by version, pick the group whose newest row has the
+    // largest `created_at` timestamp. Break ties lexicographically on the
+    // version string (favours higher semver-like labels).
+    use std::collections::HashMap;
+    let mut by_version: HashMap<String, (String, Vec<EvalsScoreEntryWire>)> = HashMap::new();
     for entry in wire.scores {
-        if let Some(m) = entry.judge_model.clone() {
+        let group = by_version
+            .entry(entry.eval_version.clone())
+            .or_insert_with(|| (String::new(), Vec::new()));
+        if entry.created_at > group.0 {
+            group.0 = entry.created_at.clone();
+        }
+        group.1.push(entry);
+    }
+
+    let Some((eval_version, (_, entries))) = by_version
+        .into_iter()
+        .max_by(|a, b| a.1.0.cmp(&b.1.0).then_with(|| a.0.cmp(&b.0)))
+    else {
+        return None;
+    };
+
+    let mut scores = HashMap::with_capacity(entries.len());
+    let mut judge_models = HashMap::new();
+    for entry in entries {
+        if let Some(m) = entry.judge_model {
             judge_models.insert(entry.metric.clone(), m);
         }
         scores.insert(entry.metric, entry.score);
