@@ -117,7 +117,12 @@ where
         chat_model_override: Option<&str>,
     ) -> Result<GroundednessVerdict, Self::Error> {
         self.llm_service
-            .judge_citation(claim_text, sentence_context, chunk_text, chat_model_override)
+            .judge_citation(
+                claim_text,
+                sentence_context,
+                chunk_text,
+                chat_model_override,
+            )
             .await
     }
 }

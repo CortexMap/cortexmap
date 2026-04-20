@@ -75,10 +75,7 @@ impl BrainAtlasServer {
                 post(llm_judge_groundedness_handler),
             )
             .route("/api/llm/judge-rubric", post(llm_judge_rubric_handler))
-            .route(
-                "/api/llm/judge-citation",
-                post(llm_judge_citation_handler),
-            )
+            .route("/api/llm/judge-citation", post(llm_judge_citation_handler))
             .route(
                 "/api/chunks/{chunk_id}/source",
                 get(get_chunk_source_handler),
