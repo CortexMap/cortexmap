@@ -6,7 +6,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use domain::rpc_types::evals::{
-    EmbedRequest, EmbedResponse, ExtractClaimsRequest, JudgeGroundednessRequest, JudgeRubricRequest,
+    EmbedRequest, EmbedResponse, ExtractClaimsRequest, JudgeCitationRequest,
+    JudgeGroundednessRequest, JudgeRubricRequest,
 };
 use domain::rpc_types::{
     GenerateQueriesRequest, ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest,
@@ -74,6 +75,10 @@ impl BrainAtlasServer {
                 post(llm_judge_groundedness_handler),
             )
             .route("/api/llm/judge-rubric", post(llm_judge_rubric_handler))
+            .route(
+                "/api/llm/judge-citation",
+                post(llm_judge_citation_handler),
+            )
             .route(
                 "/api/chunks/{chunk_id}/source",
                 get(get_chunk_source_handler),
@@ -270,4 +275,22 @@ async fn llm_judge_rubric_handler(
         .await
         .map_err(from_app_error)?;
     Ok(Json(scores))
+}
+
+/// POST /brainatlas-be/api/llm/judge-citation
+async fn llm_judge_citation_handler(
+    State(server): State<BrainAtlasServer>,
+    Json(body): Json<JudgeCitationRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let verdict = server
+        .api
+        .judge_citation(
+            &body.claim_text,
+            &body.sentence_context,
+            &body.chunk_text,
+            body.chat_model.as_deref(),
+        )
+        .await
+        .map_err(from_app_error)?;
+    Ok(Json(verdict))
 }

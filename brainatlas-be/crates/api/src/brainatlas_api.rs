@@ -172,4 +172,16 @@ where
             .judge_rubric(summary_text, region_name, chat_model)
             .await
     }
+
+    pub async fn judge_citation(
+        &self,
+        claim_text: &str,
+        sentence_context: &str,
+        chunk_text: &str,
+        chat_model: Option<&str>,
+    ) -> Result<domain::GroundednessVerdict, AppError<E>> {
+        self.app()
+            .judge_citation(claim_text, sentence_context, chunk_text, chat_model)
+            .await
+    }
 }

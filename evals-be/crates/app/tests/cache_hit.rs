@@ -23,7 +23,7 @@ use domain::{
 use evals_app::{EvalRuntimeConfig, EvalsApp};
 use rpc_types::{InitScoreRequest, LlmEndpoint, LlmResponsePayload, NextAction, StepRequest};
 use services::{
-    EnvInfra, EvalAggregate, EvalsDatabase, RetrievedChunk, SummaryRow, WorstOffenderRow,
+    EnvInfra, EvalAggregate, EvalsDatabase, ChunkRow, RetrievedChunk, SummaryRow, WorstOffenderRow,
 };
 use uuid::Uuid;
 
@@ -202,6 +202,16 @@ impl EvalsDatabase for InMemoryDb {
         }])
     }
 
+    async fn load_chunks_by_ids(
+        &self,
+        _database_url: &str,
+        _chunk_ids: &[Uuid],
+    ) -> Result<Vec<ChunkRow>, Self::Error> {
+        // InMemoryDb has no real embeddings table; return empty so any UUID
+        // that gets probed appears as an "orphan" to callers.
+        Ok(Vec::new())
+    }
+
     async fn insert_run_state(
         &self,
         _database_url: &str,
@@ -296,16 +306,19 @@ fn fake_claims_response() -> LlmResponsePayload {
                 id: 1,
                 section: "Overview".to_string(),
                 text: "The hippocampus supports declarative memory.".to_string(),
+                cited_chunks: vec![],
             },
             Claim {
                 id: 2,
                 section: "Anatomy".to_string(),
                 text: "It sits in the medial temporal lobe.".to_string(),
+                cited_chunks: vec![],
             },
             Claim {
                 id: 3,
                 section: "Functions".to_string(),
                 text: "It is implicated in Alzheimer's disease.".to_string(),
+                cited_chunks: vec![],
             },
         ],
     })
@@ -346,6 +359,7 @@ fn pick_fake(endpoint: LlmEndpoint) -> LlmResponsePayload {
         LlmEndpoint::Embed => fake_embed_response(),
         LlmEndpoint::JudgeGroundedness => fake_groundedness_response(),
         LlmEndpoint::JudgeRubric => fake_rubric_response(),
+        LlmEndpoint::JudgeCitation => fake_groundedness_response(),
     }
 }
 
@@ -377,6 +391,8 @@ fn make_app(db: Arc<InMemoryDb>) -> EvalsApp<InMemoryDb, DummyEnv, MockError> {
         embedding_model: "mock-embed".to_string(),
         top_k_chunks: 3,
         similarity_threshold: 0.5,
+        citation_support_enabled: false,
+        citation_support_max_calls: 30,
     };
     EvalsApp {
         db,
@@ -429,7 +445,7 @@ async fn run_to_done(
 }
 
 #[tokio::test]
-async fn init_and_step_score_produce_11_metrics_first_run_cache_hit_second() {
+async fn init_and_step_score_produce_14_metrics_first_run_cache_hit_second() {
     let summary = fixture_summary();
     let summary_id = summary.id;
 
@@ -441,8 +457,8 @@ async fn init_and_step_score_produce_11_metrics_first_run_cache_hit_second() {
 
     assert_eq!(
         first_metrics.len(),
-        11,
-        "first run must produce 11 metrics, got {}",
+        14,
+        "first run must produce 14 metrics (4 structural + 2 groundedness + 5 rubric + 3 deterministic citation), got {}",
         first_metrics.len()
     );
     assert!(
@@ -465,8 +481,8 @@ async fn init_and_step_score_produce_11_metrics_first_run_cache_hit_second() {
     );
     assert_eq!(
         second_metrics.len(),
-        11,
-        "second run must also produce 11 metrics"
+        14,
+        "second run must also produce 14 metrics"
     );
     assert!(
         second_metrics.iter().all(|m| m.cached),

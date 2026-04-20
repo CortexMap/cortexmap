@@ -71,6 +71,17 @@ pub trait LlmService: Send + Sync {
         region_name: &str,
         chat_model_override: Option<&str>,
     ) -> Result<RubricScores, Self::Error>;
+
+    /// Judge whether a single cited chunk actually supports the attached claim.
+    /// Reuses `GroundednessVerdict` for wire compatibility; `supporting_chunks`
+    /// is always empty because only one chunk is ever in play.
+    async fn judge_citation(
+        &self,
+        claim_text: &str,
+        sentence_context: &str,
+        chunk_text: &str,
+        chat_model_override: Option<&str>,
+    ) -> Result<GroundednessVerdict, Self::Error>;
 }
 
 /// Embedding generation service

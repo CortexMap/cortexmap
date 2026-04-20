@@ -82,6 +82,12 @@ pub enum EvalMetric {
     RubricSpecificity,
     RubricClinicalUtility,
     RubricTerminology,
+
+    // ---- Citation (deterministic + optional LLM support judge) ----
+    CitationPresence,
+    CitationValidity,
+    CitationScope,
+    CitationSupport,
 }
 
 impl EvalMetric {
@@ -100,6 +106,10 @@ impl EvalMetric {
             RubricSpecificity,
             RubricClinicalUtility,
             RubricTerminology,
+            CitationPresence,
+            CitationValidity,
+            CitationScope,
+            CitationSupport,
         ]
     }
 
@@ -127,6 +137,16 @@ mod tests {
         assert_eq!(EvalMetric::SectionCompleteness.as_str(), "section_completeness");
         assert_eq!(EvalMetric::ClaimGroundedness.as_str(), "claim_groundedness");
         assert_eq!(EvalMetric::RubricClinicalUtility.as_str(), "rubric_clinical_utility");
+        assert_eq!(EvalMetric::CitationPresence.as_str(), "citation_presence");
+        assert_eq!(EvalMetric::CitationValidity.as_str(), "citation_validity");
+        assert_eq!(EvalMetric::CitationScope.as_str(), "citation_scope");
+        assert_eq!(EvalMetric::CitationSupport.as_str(), "citation_support");
+    }
+
+    #[test]
+    fn metric_all_covers_fifteen_metrics() {
+        // 11 legacy + 4 new citation metrics = 15.
+        assert_eq!(EvalMetric::all().len(), 15);
     }
 
     #[test]

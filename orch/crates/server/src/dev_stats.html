@@ -749,6 +749,11 @@ function renderEvals(status, worst) {
   const rubric = rubricEntries.length > 0
     ? rubricEntries.reduce((s, [, v]) => s + (v.avg || 0), 0) / rubricEntries.length
     : null;
+  // Citation overall = mean of all citation_* metric averages present in per_metric.
+  const citationEntries = Object.entries(pm).filter(([k]) => k.startsWith('citation_'));
+  const citation = citationEntries.length > 0
+    ? citationEntries.reduce((s, [, v]) => s + (v.avg || 0), 0) / citationEntries.length
+    : null;
 
   overEl.innerHTML = `
     <div class="stat"><div class="label" data-tip="Total active region_summary rows in the DB.">Total summaries</div><div class="value">${fmt(total)}</div></div>
@@ -756,6 +761,7 @@ function renderEvals(status, worst) {
     <div class="stat"><div class="label" data-tip="Coverage = scored / total. 100% means all summaries have been evaluated for the current eval_version.">Coverage</div><div class="value">${fmtPct(coverage)}</div></div>
     <div class="stat"><div class="label" data-tip="Average groundedness score (0–1): fraction of LLM-extracted claims supported by the retrieved chunks.">Avg groundedness</div><div class="value">${fmtScore(grounded)}</div></div>
     <div class="stat"><div class="label" data-tip="Average rubric score (1–5): LLM judges accuracy, completeness, clarity, and format on a 5-point scale.">Avg rubric</div><div class="value">${fmtScore(rubric)}</div></div>
+    <div class="stat"><div class="label" data-tip="Average citation score (0–1): mean across presence, validity, scope, and (if enabled) support. Measures whether inline [chunk:UUID] markers are present, resolvable, in-scope, and actually support the adjacent claim.">Avg citation</div><div class="value">${fmtScore(citation)}</div></div>
     <div class="stat"><div class="label" data-tip="Eval scoring schema version. Bump this in orch config to force re-scoring of all summaries with the new prompts/judges.">Eval version</div><div class="value">${status.eval_version || '-'}</div></div>
   `;
 

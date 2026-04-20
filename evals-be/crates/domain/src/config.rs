@@ -31,7 +31,7 @@ pub enum ConfigKey {
 impl ConfigKey {
     pub fn default_value(self) -> &'static str {
         match self {
-            ConfigKey::EvalVersion => "v0.2.0",
+            ConfigKey::EvalVersion => "v0.3.0",
             ConfigKey::EvalConcurrency => "5",
             ConfigKey::EvalJudgeChatModel => "openai/gpt-4o-mini",
             ConfigKey::EvalRubricChatModel => "openai/gpt-4o",

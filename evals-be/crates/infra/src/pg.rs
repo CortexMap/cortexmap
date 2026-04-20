@@ -14,7 +14,10 @@ use deadpool_diesel::postgres::{BuildError, Manager, Pool};
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Float4, Float8, Int4, Jsonb, Nullable, Text, Varchar};
 use domain::{EvalRun, EvalRunStatus, EvalScore, NewEvalScore};
-use services::{EvalAggregate, LoadedRunState, MetricStatsRaw, RetrievedChunk, SummaryRow, WorstOffenderRow};
+use services::{
+    ChunkRow, EvalAggregate, LoadedRunState, MetricStatsRaw, RetrievedChunk, SummaryRow,
+    WorstOffenderRow,
+};
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 
@@ -532,6 +535,54 @@ impl EvalsPostgresql {
                         chunk_index: r.chunk_index,
                         chunk_text: r.chunk_text,
                         similarity: r.similarity as f32,
+                    })
+                    .collect())
+            })
+            .await??;
+        Ok(rows)
+    }
+
+    /// Batch-lookup `brain_region_embeddings` rows by PK. Empty input
+    /// short-circuits without a DB round-trip.
+    pub async fn load_chunks_by_ids(
+        &self,
+        database_url: &str,
+        chunk_ids: &[Uuid],
+    ) -> Result<Vec<ChunkRow>, InfraError> {
+        if chunk_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.pool(database_url).await?.get().await?;
+        let ids: Vec<Uuid> = chunk_ids.to_vec();
+        let rows = conn
+            .interact(move |c| -> Result<Vec<ChunkRow>, diesel::result::Error> {
+                #[derive(QueryableByName)]
+                struct Row {
+                    #[diesel(sql_type = diesel::sql_types::Uuid)]
+                    id: Uuid,
+                    #[diesel(sql_type = diesel::sql_types::Uuid)]
+                    summary_id: Uuid,
+                    #[diesel(sql_type = Int4)]
+                    chunk_index: i32,
+                    #[diesel(sql_type = Text)]
+                    chunk_text: String,
+                }
+
+                let rows: Vec<Row> = diesel::sql_query(
+                    "SELECT id, summary_id, chunk_index, chunk_text
+                     FROM brain_region_embeddings
+                     WHERE id = ANY($1)",
+                )
+                .bind::<diesel::sql_types::Array<diesel::sql_types::Uuid>, _>(ids)
+                .load(c)?;
+
+                Ok(rows
+                    .into_iter()
+                    .map(|r| ChunkRow {
+                        id: r.id,
+                        summary_id: r.summary_id,
+                        chunk_index: r.chunk_index,
+                        chunk_text: r.chunk_text,
                     })
                     .collect())
             })

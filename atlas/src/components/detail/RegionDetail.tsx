@@ -549,6 +549,26 @@ const METRIC_DISPLAY: { key: string; label: string; invert?: boolean; descriptio
     label: 'No Placeholders',
     description: 'Structural check (no LLM): scans for LLM failure strings like "I cannot", "insufficient information", [TODO], etc. 0 if any found, 1 otherwise.',
   },
+  {
+    key: 'citation_presence',
+    label: 'Cite Presence',
+    description: 'Citation check (no LLM): fraction of factual claims that include at least one [chunk:UUID] marker attributing the source. Measures how often the writer bothered to cite at all.',
+  },
+  {
+    key: 'citation_validity',
+    label: 'Cite Validity',
+    description: 'Citation check (no LLM): of the chunk UUIDs referenced, fraction that resolve to a real row in brain_region_embeddings. Catches orphan/fabricated UUIDs.',
+  },
+  {
+    key: 'citation_scope',
+    label: 'Cite Scope',
+    description: 'Citation check (no LLM): of the valid UUIDs, fraction that belong to this summary\u2019s own retrieval corpus (not leaked from a different summary).',
+  },
+  {
+    key: 'citation_support',
+    label: 'Cite Support',
+    description: 'Citation judge (LLM, opt-in): of the valid in-scope citations, fraction where the cited chunk text actually supports the adjacent claim. The true "citation correctness" check.',
+  },
 ];
 
 function scoreColor(score: number, invert: boolean): string {

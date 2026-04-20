@@ -239,6 +239,49 @@ RUST_LOG=info
 7. **BrainAtlas** runs RAG loop to synthesize summary
 8. **User** views summary with citations in frontend
 
+## Evaluation Metrics
+
+Every `region_summary` row is scored by **evals-be** against a versioned suite of metrics. The set is bumped via `EVAL_VERSION` (currently `v0.3.0`); bumping the version invalidates the cache and forces re-scoring.
+
+### Structural (no LLM — deterministic)
+- `section_completeness` — fraction of required markdown sections present (Overview, Anatomy & Connectivity, Function, Clinical Relevance).
+- `length_in_range` — word count inside a sane window (not too short, not bloated).
+- `acronym_mention` — the region's acronym appears at least once in the body.
+- `no_placeholder_text` — 0 if any LLM-failure strings ("I cannot…", "[TODO]", etc.) are present, else 1.
+
+### Groundedness (LLM judges)
+- `claim_groundedness` — atomic claims are extracted, each is re-embedded, top-k source chunks retrieved, and a judge rates `supported` / `partial` / `unsupported`. Score = supported / total.
+- `hallucination_rate` — inverse: unsupported / total. Low = good.
+
+### Rubric (LLM judge, 1–5 scale)
+- `rubric_relevance` — summary stays on the named region, doesn't drift.
+- `rubric_coherence` — prose is well-organised, internally consistent.
+- `rubric_specificity` — concrete neuroanatomical detail vs generic filler.
+- `rubric_clinical_utility` — actionable for clinicians/neuroscientists.
+- `rubric_terminology` — correct canonical neuroanatomical terminology.
+
+### Citation correctness (0–1 scale)
+- `citation_presence` — *(no LLM)* fraction of factual claims that include at least one `[chunk:UUID]` marker.
+- `citation_validity` — *(no LLM)* fraction of referenced UUIDs that resolve to a real row in `brain_region_embeddings`. Catches orphan / fabricated UUIDs.
+- `citation_scope` — *(no LLM)* fraction of valid UUIDs that belong to this summary's own retrieval corpus (not leaked from a different summary).
+- `citation_support` — *(LLM judge, opt-in)* fraction of valid in-scope citations where the cited chunk text actually supports the adjacent claim. The true "citation correctness" check.
+
+### Runbook — citation support judge toggle
+
+The `citation_support` metric is gated behind `EVAL_CITATION_SUPPORT_ENABLED` because it issues one LLM call per cited chunk and can dominate eval cost.
+
+```bash
+# evals-be .env
+EVAL_CITATION_SUPPORT_ENABLED=false  # default — no extra LLM calls
+EVAL_CITATION_SUPPORT_MAX_CALLS=30   # safety cap per summary; excess is truncated
+```
+
+To roll out Stage 2 (enable the support judge):
+1. Deploy with the flag `false` and verify `citation_presence` / `citation_validity` / `citation_scope` distributions look sane in the `/api/evals/status` dashboard (`per_metric`).
+2. Tune the prompt at `brainatlas-be/crates/app/prompts/judge_citation_system.md` against a hand-curated fixture set.
+3. Bump `EVAL_VERSION` (`v0.3.0` → `v0.3.1`) to force re-scoring, flip `EVAL_CITATION_SUPPORT_ENABLED=true`, and redeploy.
+4. Monitor LLM cost impact via the cost-tracking table (parallel workstream).
+
 ## Testing
 
 ### Run Integration Tests

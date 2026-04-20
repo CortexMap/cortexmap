@@ -42,6 +42,18 @@ pub struct RetrievedChunk {
     pub similarity: f32,
 }
 
+/// Minimal row shape returned by `load_chunks_by_ids`. Carries just enough to
+/// drive citation-correctness evals: the embedding's UUID (what the summary
+/// cites), its owning `summary_id` (for scope checks), `chunk_index` (for
+/// ordering), and the raw `chunk_text` (for the support judge prompt).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChunkRow {
+    pub id: Uuid,
+    pub summary_id: Uuid,
+    pub chunk_index: i32,
+    pub chunk_text: String,
+}
+
 // ---- Eval DB trait ----
 
 /// Loaded state row for a run: (summary_id, eval_version, state_json, pending_step_id).
@@ -128,6 +140,19 @@ pub trait EvalsDatabase: Send + Sync {
         top_k: i64,
         min_similarity: f32,
     ) -> Result<Vec<RetrievedChunk>, Self::Error>;
+
+    /// Batch lookup of `brain_region_embeddings` rows by primary key. Returns
+    /// only rows that exist — any requested UUIDs not found in the table are
+    /// silently omitted, which is how "orphan" citations are detected in
+    /// `citations::citation_validity_score`.
+    ///
+    /// An empty `chunk_ids` input must return `Ok(vec![])` without touching
+    /// the database.
+    async fn load_chunks_by_ids(
+        &self,
+        database_url: &str,
+        chunk_ids: &[Uuid],
+    ) -> Result<Vec<ChunkRow>, Self::Error>;
 
     // ---- eval_run_state (state machine persistence) ----
 

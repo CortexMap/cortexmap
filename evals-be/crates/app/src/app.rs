@@ -5,7 +5,9 @@
 //! responses back in and making the actual LLM HTTP calls on evals's behalf.
 
 use crate::error::AppError;
-use crate::run_eval::{probe_groundedness_cache, probe_rubric_cache, run_structural_metrics};
+use crate::run_eval::{
+    probe_citation_cache, probe_groundedness_cache, probe_rubric_cache, run_structural_metrics,
+};
 use domain::{compute_hash, EvalRunStatus};
 use rpc_types::{
     EvalSummaryResponse, InitScoreRequest, InitScoreResponse, LlmEndpoint, MetricResult,
@@ -29,6 +31,14 @@ pub struct EvalRuntimeConfig {
     pub embedding_model: String,
     pub top_k_chunks: i64,
     pub similarity_threshold: f32,
+    /// When `true`, the per-citation "did the author cite the right chunk?"
+    /// judge runs. Defaults to `false` so the cheap deterministic citation
+    /// metrics ship first with zero added LLM spend.
+    pub citation_support_enabled: bool,
+    /// Upper bound on the number of JudgeCitation calls per summary. Excess
+    /// in-scope citations are skipped and the support score is flagged
+    /// `details.truncated = true`.
+    pub citation_support_max_calls: usize,
 }
 
 impl EvalRuntimeConfig {
@@ -84,6 +94,22 @@ impl EvalRuntimeConfig {
             value: "non-float".to_string(),
         })?;
 
+        let citation_support_enabled: bool = get_or_default(
+            env,
+            "EVAL_CITATION_SUPPORT_ENABLED",
+            "false",
+        )
+        .parse()
+        .unwrap_or(false);
+
+        let citation_support_max_calls: usize = get_or_default(
+            env,
+            "EVAL_CITATION_SUPPORT_MAX_CALLS",
+            "30",
+        )
+        .parse()
+        .unwrap_or(30);
+
         Ok(Self {
             database_url,
             eval_version,
@@ -92,6 +118,8 @@ impl EvalRuntimeConfig {
             embedding_model,
             top_k_chunks,
             similarity_threshold,
+            citation_support_enabled,
+            citation_support_max_calls,
         })
     }
 }
@@ -190,6 +218,16 @@ where
             &mut metrics,
         )
         .await?;
+        // Additive: surfaces any already-cached citation metrics so the
+        // Done response includes them. Does not gate the state machine.
+        probe_citation_cache(
+            self.db.as_ref(),
+            &self.config.database_url,
+            &summary_hash,
+            &eval_version,
+            &mut metrics,
+        )
+        .await?;
 
         let ctx = RunContext {
             summary: &summary,
@@ -200,6 +238,8 @@ where
             embedding_model: &self.config.embedding_model,
             top_k_chunks: self.config.top_k_chunks,
             similarity_threshold: self.config.similarity_threshold,
+            citation_support_enabled: self.config.citation_support_enabled,
+            citation_support_max_calls: self.config.citation_support_max_calls,
         };
 
         let (state, next) = state_machine::initial_action(&ctx, g_cached, r_cached, metrics.clone());
@@ -296,6 +336,8 @@ where
             embedding_model: &self.config.embedding_model,
             top_k_chunks: self.config.top_k_chunks,
             similarity_threshold: self.config.similarity_threshold,
+            citation_support_enabled: self.config.citation_support_enabled,
+            citation_support_max_calls: self.config.citation_support_max_calls,
         };
 
         // Recreate the accumulator. The state machine appends to this list
@@ -511,6 +553,7 @@ fn endpoint_to_str(endpoint: &LlmEndpoint) -> &'static str {
         LlmEndpoint::Embed => "embed",
         LlmEndpoint::JudgeGroundedness => "judge_groundedness",
         LlmEndpoint::JudgeRubric => "judge_rubric",
+        LlmEndpoint::JudgeCitation => "judge_citation",
     }
 }
 

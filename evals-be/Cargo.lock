@@ -503,6 +503,7 @@ dependencies = [
  "chrono",
  "evals-domain",
  "evals-rpc-types",
+ "regex",
  "rpc-types",
  "serde",
  "serde_json",

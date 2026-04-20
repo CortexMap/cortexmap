@@ -108,6 +108,18 @@ where
             .judge_rubric(summary_text, region_name, chat_model_override)
             .await
     }
+
+    async fn judge_citation(
+        &self,
+        claim_text: &str,
+        sentence_context: &str,
+        chunk_text: &str,
+        chat_model_override: Option<&str>,
+    ) -> Result<GroundednessVerdict, Self::Error> {
+        self.llm_service
+            .judge_citation(claim_text, sentence_context, chunk_text, chat_model_override)
+            .await
+    }
 }
 
 // Implement EmbeddingService trait

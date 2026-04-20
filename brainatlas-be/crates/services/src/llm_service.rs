@@ -154,6 +154,30 @@ where
         parse_json_loose::<RubricScores>(&raw)
             .map_err(|e| ServiceError::Other(format!("judge_rubric parse error: {e}")))
     }
+
+    /// Judge whether a single cited chunk actually supports the attached claim.
+    ///
+    /// Distinct from `judge_groundedness`: here we are not asking "is there
+    /// evidence for this claim?" but "did the author cite the correct chunk?".
+    /// Exactly ONE chunk is passed; the sentence from the original summary is
+    /// included as context so the judge can see the surrounding rhetoric.
+    pub async fn judge_citation(
+        &self,
+        claim_text: &str,
+        sentence_context: &str,
+        chunk_text: &str,
+        chat_model_override: Option<&str>,
+    ) -> Result<GroundednessVerdict, ServiceError<E>> {
+        let user = format!(
+            "Claim:\n{}\n\nSentence as written in summary:\n{}\n\nCited chunk:\n{}\n",
+            claim_text, sentence_context, chunk_text
+        );
+        let raw = self
+            .structured_chat(JUDGE_CITATION_SYSTEM, &user, chat_model_override)
+            .await?;
+        parse_json_loose::<GroundednessVerdict>(&raw)
+            .map_err(|e| ServiceError::Other(format!("judge_citation parse error: {e}")))
+    }
 }
 
 // Prompt templates loaded at compile time. Live in the `app` crate per the
@@ -163,6 +187,7 @@ const EXTRACT_CLAIMS_SYSTEM: &str = include_str!("../../app/prompts/extract_clai
 const JUDGE_GROUNDEDNESS_SYSTEM: &str =
     include_str!("../../app/prompts/judge_groundedness_system.md");
 const JUDGE_RUBRIC_SYSTEM: &str = include_str!("../../app/prompts/judge_rubric_system.md");
+const JUDGE_CITATION_SYSTEM: &str = include_str!("../../app/prompts/judge_citation_system.md");
 
 /// Parse a JSON payload that may be wrapped in markdown fences or
 /// surrounded by stray prose. Strips fences and falls back to the
