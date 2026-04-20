@@ -371,7 +371,7 @@ fn fixture_summary() -> SummaryRow {
 fn make_app(db: Arc<InMemoryDb>) -> EvalsApp<InMemoryDb, DummyEnv, MockError> {
     let cfg = EvalRuntimeConfig {
         database_url: "memory://".to_string(),
-        eval_version: "v1.0".to_string(),
+        eval_version: "v0.1.0".to_string(),
         judge_chat_model: "mock-judge".to_string(),
         rubric_chat_model: "mock-rubric".to_string(),
         embedding_model: "mock-embed".to_string(),
