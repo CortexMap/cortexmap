@@ -1,0 +1,34 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.dependencies]
+domain = { package = "evals-domain", path = "crates/domain" }
+api = { package = "evals-api", path = "crates/api" }
+rpc-types = { package = "evals-rpc-types", path = "crates/rpc-types" }
+services = { package = "evals-services", path = "crates/services" }
+app = { package = "evals-app", path = "crates/app" }
+infra = { package = "evals-infra", path = "crates/infra" }
+
+# Cross-workspace dependency on brainatlas-be domain so we share eval wire
+# types (ClaimsResponse, GroundednessVerdict, RubricScores) without forking.
+brainatlas-domain = { package = "domain", path = "../brainatlas-be/crates/domain" }
+brainatlas-rpc-types = { package = "rpc-types", path = "../brainatlas-be/crates/rpc-types" }
+
+serde = { version = "1.0", features = ["derive"] }
+uuid = { version = "1.11", features = ["serde", "v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+thiserror = "2.0"
+diesel = { version = "2.3.2", features = ["postgres", "r2d2", "chrono", "uuid", "serde_json"] }
+deadpool-diesel = { version = "0.6", features = ["postgres"] }
+tokio = { version = "1", features = ["full"] }
+dotenvy = "0.15"
+reqwest = { version = "0.12", features = ["json"] }
+tracing = "0.1"
+strum = { version = "0.26", features = ["derive"] }
+backon = "1.4"
+serde_json = "1.0"
+futures = "0.3"
+sha2 = "0.10"
+pgvector = { version = "0.4", features = ["diesel"] }

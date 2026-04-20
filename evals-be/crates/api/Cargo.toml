@@ -1,0 +1,13 @@
+[package]
+name = "evals-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait.workspace = true
+thiserror.workspace = true
+domain.workspace = true
+rpc-types.workspace = true
+app.workspace = true
+services.workspace = true
+uuid.workspace = true

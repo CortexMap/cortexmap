@@ -1,0 +1,21 @@
+[package]
+name = "evals-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait.workspace = true
+thiserror.workspace = true
+domain.workspace = true
+services.workspace = true
+rpc-types.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+serde_json.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+brainatlas-rpc-types.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
