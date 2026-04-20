@@ -344,6 +344,26 @@ impl services::RegionMappingQueries for OrchInfra {
         self.pg.get_pending_fetch_task_count(database_url).await
     }
 
+    async fn get_latest_active_summary_age(
+        &self,
+        database_url: &str,
+        region_id: Uuid,
+    ) -> Result<Option<chrono::NaiveDateTime>, Self::Error> {
+        self.pg
+            .get_latest_active_summary_age(database_url, region_id)
+            .await
+    }
+
+    async fn get_summary_freshness_counts(
+        &self,
+        database_url: &str,
+        staleness_days: i64,
+    ) -> Result<services::SummaryFreshnessCounts, Self::Error> {
+        self.pg
+            .get_summary_freshness_counts(database_url, staleness_days)
+            .await
+    }
+
     async fn get_system_stats(
         &self,
         database_url: &str,

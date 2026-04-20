@@ -935,6 +935,96 @@ impl services::RegionMappingQueries for OrchPostgresql {
         Ok(result)
     }
 
+    async fn get_latest_active_summary_age(
+        &self,
+        database_url: &str,
+        region_id: Uuid,
+    ) -> Result<Option<chrono::NaiveDateTime>, Self::Error> {
+        let conn = self.pool(database_url).await?.get().await?;
+        let result = conn
+            .interact(move |c| {
+                use diesel::sql_query;
+                use diesel::sql_types::{Nullable, Timestamp, Uuid as SqlUuid};
+
+                #[derive(QueryableByName)]
+                struct AgeRow {
+                    #[diesel(sql_type = Nullable<Timestamp>)]
+                    created_at: Option<chrono::NaiveDateTime>,
+                }
+
+                sql_query(
+                    "SELECT MAX(rs.created_at) AS created_at
+                     FROM region_summary rs
+                     JOIN region_mapping rm ON rm.region_id = rs.region_id
+                     WHERE rm.id = $1
+                       AND rs.is_active = TRUE
+                       AND COALESCE(LENGTH(rs.summary), 0) > 0",
+                )
+                .bind::<SqlUuid, _>(region_id)
+                .get_result::<AgeRow>(c)
+                .map(|r| r.created_at)
+            })
+            .await??;
+
+        Ok(result)
+    }
+
+    async fn get_summary_freshness_counts(
+        &self,
+        database_url: &str,
+        staleness_days: i64,
+    ) -> Result<services::SummaryFreshnessCounts, Self::Error> {
+        let conn = self.pool(database_url).await?.get().await?;
+        let result = conn
+            .interact(move |c| {
+                use diesel::sql_query;
+                use diesel::sql_types::BigInt;
+
+                #[derive(QueryableByName)]
+                struct CountsRow {
+                    #[diesel(sql_type = BigInt)]
+                    fresh: i64,
+                    #[diesel(sql_type = BigInt)]
+                    stale: i64,
+                    #[diesel(sql_type = BigInt)]
+                    no_summary: i64,
+                }
+
+                // Latest active non-empty summary age per region. Regions with no usable
+                // summary fall into the `no_summary` bucket.
+                sql_query(
+                    "WITH latest AS (
+                       SELECT rm.id AS region_uuid,
+                              MAX(rs.created_at) FILTER (
+                                  WHERE rs.is_active = TRUE
+                                    AND COALESCE(LENGTH(rs.summary), 0) > 0
+                              ) AS last_summary_at
+                       FROM region_mapping rm
+                       LEFT JOIN region_summary rs ON rs.region_id = rm.region_id
+                       GROUP BY rm.id
+                     )
+                     SELECT
+                       COUNT(*) FILTER (WHERE last_summary_at IS NOT NULL
+                                          AND last_summary_at >= NOW() - ($1::bigint || ' days')::interval) AS fresh,
+                       COUNT(*) FILTER (WHERE last_summary_at IS NOT NULL
+                                          AND last_summary_at <  NOW() - ($1::bigint || ' days')::interval) AS stale,
+                       COUNT(*) FILTER (WHERE last_summary_at IS NULL) AS no_summary
+                     FROM latest",
+                )
+                .bind::<BigInt, _>(staleness_days)
+                .get_result::<CountsRow>(c)
+                .map(|r| services::SummaryFreshnessCounts {
+                    fresh: r.fresh,
+                    stale: r.stale,
+                    no_summary: r.no_summary,
+                    staleness_days,
+                })
+            })
+            .await??;
+
+        Ok(result)
+    }
+
     async fn get_system_stats(
         &self,
         database_url: &str,

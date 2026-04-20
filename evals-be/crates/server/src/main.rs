@@ -20,14 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()?;
 
     let infra = Arc::new(EvalsInfra::new());
-    let app = Arc::new(EvalsApp::new(infra.clone(), infra.clone(), infra.clone())?);
-
-    info!("Checking health of brainatlas...");
-    if let Err(e) = app.brainatlas_health().await {
-        tracing::warn!("⚠️  brainatlas health check failed: {}. Continuing anyway.", e);
-    } else {
-        info!("✅ brainatlas reachable");
-    }
+    let app = Arc::new(EvalsApp::new(infra.clone(), infra.clone())?);
 
     let api = Arc::new(Evals::new(app));
     let server = EvalsServer::new(api);

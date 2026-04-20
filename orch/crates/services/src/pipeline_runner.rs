@@ -295,12 +295,54 @@ where
             .and_then(|v| v.parse().ok())
             .unwrap_or(3);
 
+        // Read summary staleness window. Regions whose latest active summary is
+        // younger than this are considered fresh and skipped by Phase 2 — the
+        // background pipeline will not regenerate work that's still valid.
+        // Manual `/api/regions/:id/generate` ignores this gate.
+        let staleness_days: i64 = self
+            .infra
+            .get_config(&database_url, ConfigKey::SummaryStalenessDays)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        let stale_cutoff = chrono::Utc::now().naive_utc()
+            - chrono::Duration::days(staleness_days);
+
         let mut regions_scanned = 0usize;
+        let mut regions_skipped_fresh = 0usize;
         let mut total_new_tasks = 0usize;
 
         // For each region, re-run all queries against NCBI
         // UNIQUE(pmc_id) constraint deduplicates — only genuinely new papers get tasks
         for (region_id, region_name, queries) in &regions_with_queries {
+            // Staleness gate: if the region already has a recent non-empty
+            // summary, skip Phase 2 work entirely.
+            match self
+                .infra
+                .get_latest_active_summary_age(&database_url, *region_id)
+                .await
+            {
+                Ok(Some(age)) if age >= stale_cutoff => {
+                    regions_skipped_fresh += 1;
+                    tracing::debug!(
+                        region_id = %region_id,
+                        region_name = %region_name,
+                        last_summary = %age,
+                        "Phase 2: Skipping fresh region (within staleness window)"
+                    );
+                    continue;
+                }
+                Ok(_) => { /* stale or no summary -> proceed */ }
+                Err(e) => {
+                    tracing::warn!(
+                        region_id = %region_id,
+                        error = %e,
+                        "Phase 2: Failed to read summary age, proceeding without staleness gate"
+                    );
+                }
+            }
+
             let mut region_task_ids = Vec::new();
 
             for query in queries {
@@ -437,6 +479,15 @@ where
             }
 
             regions_scanned += 1;
+        }
+
+        if regions_skipped_fresh > 0 {
+            tracing::info!(
+                regions_scanned,
+                regions_skipped_fresh,
+                staleness_days,
+                "Phase 2: Staleness gate skipped fresh regions"
+            );
         }
 
         Ok((regions_scanned, total_new_tasks))

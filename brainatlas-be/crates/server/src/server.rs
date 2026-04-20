@@ -5,6 +5,10 @@ use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use domain::rpc_types::evals::{
+    EmbedRequest, EmbedResponse, ExtractClaimsRequest, JudgeGroundednessRequest,
+    JudgeRubricRequest,
+};
 use domain::rpc_types::{
     GenerateQueriesRequest, ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest,
 };
@@ -64,6 +68,13 @@ impl BrainAtlasServer {
             .route("/api/status", post(status_handler))
             .route("/api/process", post(process_region_handler))
             .route("/api/generate-queries", post(generate_queries_handler))
+            .route("/api/llm/embed", post(llm_embed_handler))
+            .route("/api/llm/extract-claims", post(llm_extract_claims_handler))
+            .route(
+                "/api/llm/judge-groundedness",
+                post(llm_judge_groundedness_handler),
+            )
+            .route("/api/llm/judge-rubric", post(llm_judge_rubric_handler))
             .route(
                 "/api/chunks/{chunk_id}/source",
                 get(get_chunk_source_handler),
@@ -190,4 +201,74 @@ async fn get_chunk_source_handler(
         Some(source) => Ok(Json(serde_json::json!(source))),
         None => Err(ServerError(Error::MissingOrInvalidId)),
     }
+}
+
+/// Convert an `AppError` into a `ServerError` for the eval handlers (which
+/// bypass the `BrainRegionApi` trait and so don't get the `ApiError` wrapper).
+fn from_app_error(e: AppError<ServiceError<InfraError>>) -> ServerError {
+    ServerError(Error::AppError(e))
+}
+
+/// POST /brainatlas-be/api/llm/embed
+async fn llm_embed_handler(
+    State(server): State<BrainAtlasServer>,
+    Json(body): Json<EmbedRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let embedding = server
+        .api
+        .embed(&body.text, body.embedding_model.as_deref())
+        .await
+        .map_err(from_app_error)?;
+    Ok(Json(EmbedResponse { embedding }))
+}
+
+/// POST /brainatlas-be/api/llm/extract-claims
+async fn llm_extract_claims_handler(
+    State(server): State<BrainAtlasServer>,
+    Json(body): Json<ExtractClaimsRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let claims = server
+        .api
+        .extract_claims(
+            &body.summary_text,
+            &body.region_name,
+            body.chat_model.as_deref(),
+        )
+        .await
+        .map_err(from_app_error)?;
+    Ok(Json(claims))
+}
+
+/// POST /brainatlas-be/api/llm/judge-groundedness
+async fn llm_judge_groundedness_handler(
+    State(server): State<BrainAtlasServer>,
+    Json(body): Json<JudgeGroundednessRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let verdict = server
+        .api
+        .judge_groundedness(
+            &body.claim_text,
+            &body.evidence_chunks,
+            body.chat_model.as_deref(),
+        )
+        .await
+        .map_err(from_app_error)?;
+    Ok(Json(verdict))
+}
+
+/// POST /brainatlas-be/api/llm/judge-rubric
+async fn llm_judge_rubric_handler(
+    State(server): State<BrainAtlasServer>,
+    Json(body): Json<JudgeRubricRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let scores = server
+        .api
+        .judge_rubric(
+            &body.summary_text,
+            &body.region_name,
+            body.chat_model.as_deref(),
+        )
+        .await
+        .map_err(from_app_error)?;
+    Ok(Json(scores))
 }

@@ -4,8 +4,8 @@ use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
     GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, PipelineTriggerRequest,
     PipelineTriggerResult, RedisStats, Region, RegionStatusResult, SearchRegionResult,
-    SearchResponse, StopWorkersRequest, SystemStats, WorkerAllocationResponse, WorkerStatus,
-    WorkerStopResponse,
+    SearchResponse, StopWorkersRequest, SummaryFreshness, SystemStats, WorkerAllocationResponse,
+    WorkerStatus, WorkerStopResponse,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -179,6 +179,13 @@ where
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
+    async fn get_summary_freshness(&self) -> Result<SummaryFreshness, Self::Error> {
+        self.app()
+            .get_summary_freshness()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
     async fn trigger_pipeline(
         &self,
         req: PipelineTriggerRequest,
@@ -192,6 +199,24 @@ where
     async fn get_redis_stats(&self) -> Result<RedisStats, Self::Error> {
         self.app()
             .get_redis_stats()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_eval_status(&self) -> Result<app::EvalStatusSummary, Self::Error> {
+        self.app()
+            .get_eval_status()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_eval_worst(
+        &self,
+        metric: String,
+        limit: i64,
+    ) -> Result<app::EvalWorstOffenders, Self::Error> {
+        self.app()
+            .get_eval_worst(metric, limit)
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }

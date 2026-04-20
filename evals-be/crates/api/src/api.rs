@@ -4,10 +4,10 @@
 use crate::error::ApiError;
 use app::{AppError, EvalsApp};
 use rpc_types::{
-    EvalSummaryResponse, ScoreRequest, ScoreResponse, ScoresForSummaryResponse, UnscoredResponse,
-    WorstOffendersResponse,
+    EvalSummaryResponse, InitScoreRequest, InitScoreResponse, ScoresForSummaryResponse,
+    StepRequest, StepResponse, UnscoredResponse, WorstOffendersResponse,
 };
-use services::{BrainatlasClient, EnvInfra, EvalsDatabase};
+use services::{EnvInfra, EvalsDatabase};
 use std::error::Error;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -16,7 +16,8 @@ use uuid::Uuid;
 pub trait EvalsApi: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    async fn score(&self, req: ScoreRequest) -> Result<ScoreResponse, Self::Error>;
+    async fn init_score(&self, req: InitScoreRequest) -> Result<InitScoreResponse, Self::Error>;
+    async fn step_score(&self, req: StepRequest) -> Result<StepResponse, Self::Error>;
     async fn scores_for_summary(
         &self,
         summary_id: Uuid,
@@ -31,7 +32,6 @@ pub trait EvalsApi: Send + Sync {
         limit: i64,
         eval_version: Option<String>,
     ) -> Result<WorstOffendersResponse, Self::Error>;
-    async fn brainatlas_health(&self) -> Result<(), Self::Error>;
     async fn list_unscored_summary_ids(
         &self,
         eval_version: Option<String>,
@@ -39,43 +39,41 @@ pub trait EvalsApi: Send + Sync {
     ) -> Result<UnscoredResponse, Self::Error>;
 }
 
-pub struct Evals<DB, BC, EN, E>
+pub struct Evals<DB, EN, E>
 where
     DB: EvalsDatabase<Error = E>,
-    BC: BrainatlasClient<Error = E>,
     EN: EnvInfra<Error = E>,
     E: Error + Send + Sync + 'static,
 {
-    pub app: Arc<EvalsApp<DB, BC, EN, E>>,
+    pub app: Arc<EvalsApp<DB, EN, E>>,
 }
 
-impl<DB, BC, EN, E> Evals<DB, BC, EN, E>
+impl<DB, EN, E> Evals<DB, EN, E>
 where
     DB: EvalsDatabase<Error = E>,
-    BC: BrainatlasClient<Error = E>,
     EN: EnvInfra<Error = E>,
     E: Error + Send + Sync + 'static,
 {
-    pub fn new(app: Arc<EvalsApp<DB, BC, EN, E>>) -> Self {
+    pub fn new(app: Arc<EvalsApp<DB, EN, E>>) -> Self {
         Self { app }
     }
 }
 
 #[async_trait::async_trait]
-impl<DB, BC, EN, E> EvalsApi for Evals<DB, BC, EN, E>
+impl<DB, EN, E> EvalsApi for Evals<DB, EN, E>
 where
     DB: EvalsDatabase<Error = E>,
-    BC: BrainatlasClient<Error = E>,
     EN: EnvInfra<Error = E>,
     E: Error + Send + Sync + 'static,
 {
     type Error = ApiError<AppError<E>>;
 
-    async fn score(&self, req: ScoreRequest) -> Result<ScoreResponse, Self::Error> {
-        self.app
-            .score_summary(req.summary_id, req.eval_version)
-            .await
-            .map_err(ApiError::AppError)
+    async fn init_score(&self, req: InitScoreRequest) -> Result<InitScoreResponse, Self::Error> {
+        self.app.init_score(req).await.map_err(ApiError::AppError)
+    }
+
+    async fn step_score(&self, req: StepRequest) -> Result<StepResponse, Self::Error> {
+        self.app.step_score(req).await.map_err(ApiError::AppError)
     }
 
     async fn scores_for_summary(
@@ -108,10 +106,6 @@ where
             .worst_offenders(metric, limit, eval_version)
             .await
             .map_err(ApiError::AppError)
-    }
-
-    async fn brainatlas_health(&self) -> Result<(), Self::Error> {
-        self.app.brainatlas_health().await.map_err(ApiError::AppError)
     }
 
     async fn list_unscored_summary_ids(

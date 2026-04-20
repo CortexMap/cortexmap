@@ -280,6 +280,12 @@
       <div class="stat-box"><div class="val" id="s_papers">-</div><div class="lbl">Total Papers</div></div>
       <div class="stat-box"><div class="val" id="s_summaries">-</div><div class="lbl">Total Summaries</div></div>
     </div>
+    <div class="stat-row" style="margin-top:0.8rem">
+      <div class="stat-box" data-tip="Regions whose latest active summary is younger than the staleness window. Phase 2 will skip these on the next cycle."><div class="val" id="f_fresh">-</div><div class="lbl">Fresh</div></div>
+      <div class="stat-box" data-tip="Regions whose latest active summary is older than the staleness window. Phase 2 will regenerate these on the next cycle."><div class="val" id="f_stale">-</div><div class="lbl">Stale</div></div>
+      <div class="stat-box" data-tip="Regions with no usable active summary yet. Eligible for first generation."><div class="val" id="f_none">-</div><div class="lbl">No Summary</div></div>
+      <div class="stat-box" data-tip="Cutoff (in days) used to bucket summaries as fresh vs stale. Configured by `summary_staleness_days`."><div class="val" id="f_days">-</div><div class="lbl">Staleness (days)</div></div>
+    </div>
   </div>
 
   <!-- Query Stats -->
@@ -310,6 +316,15 @@
     <div id="redisStatus" style="margin-bottom: 0.8rem"></div>
     <div class="stat-row" id="redisOverview" style="margin-bottom: 0.8rem"></div>
     <div id="redisPrefixes" style="overflow-x:auto"></div>
+  </div>
+
+  <!-- Evals -->
+  <div class="card wide">
+    <h2>Evals <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim); margin-left: 0.5rem;" data-tip="Phase-4 quality evaluation: structural metrics + LLM-judged groundedness/rubric over generated region summaries.">automated quality scoring</span></h2>
+    <div id="evalStatus" style="margin-bottom: 0.8rem"></div>
+    <div class="stat-row" id="evalOverview" style="margin-bottom: 0.8rem"></div>
+    <h3 style="margin-top: 1rem; font-size: 1rem;">Worst offenders by groundedness <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim);" data-tip="Lowest groundedness scores: indicates summaries with claims poorly supported by retrieved chunks.">(top 10)</span></h3>
+    <div id="evalWorst" style="overflow-x:auto"></div>
   </div>
 </div>
 
@@ -535,13 +550,16 @@ async function poll() {
   fetching = true;
   $('spinner').classList.add('active');
 
-  const [health, stats, config, workers, sysStats, redis] = await Promise.all([
+  const [health, stats, config, workers, sysStats, redis, evalStatus, evalWorst, freshness] = await Promise.all([
     safeFetch(BASE + '/api/pipeline/status'),
     safeFetch(BASE + '/api/pipeline/stats'),
     safeFetch(BASE + '/api/config'),
     safeFetch(BASE + '/api/workers/status'),
     safeFetch(BASE + '/dev/api/system-stats'),
     safeFetch(BASE + '/dev/api/redis-stats'),
+    safeFetch(BASE + '/api/evals/status'),
+    safeFetch(BASE + '/api/evals/worst?metric=claim_groundedness&limit=10'),
+    safeFetch(BASE + '/dev/api/summary-freshness'),
   ]);
 
   // Pipeline Health
@@ -566,6 +584,14 @@ async function poll() {
     renderQueryDist(sysStats.query_distribution);
   }
 
+  // Summary Freshness
+  if (freshness) {
+    $('f_fresh').textContent = fmt(freshness.fresh);
+    $('f_stale').textContent = fmt(freshness.stale);
+    $('f_none').textContent = fmt(freshness.no_summary);
+    $('f_days').textContent = fmt(freshness.staleness_days);
+  }
+
   // Workers
   renderWorkers(workers);
 
@@ -574,6 +600,9 @@ async function poll() {
 
   // Redis
   renderRedis(redis);
+
+  // Evals
+  renderEvals(evalStatus, evalWorst);
 
   $('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
   $('spinner').classList.remove('active');
@@ -693,6 +722,56 @@ $('triggerBtn').addEventListener('click', async () => {
     btn.textContent = 'Trigger Pipeline';
   }
 });
+
+function renderEvals(status, worst) {
+  const statusEl = $('evalStatus');
+  const overEl   = $('evalOverview');
+  const tableEl  = $('evalWorst');
+
+  if (!status) {
+    statusEl.innerHTML = '<span class="badge badge-red">offline</span> <span style="color:var(--text-dim)">/api/evals/status unreachable</span>';
+    overEl.innerHTML = '';
+    tableEl.innerHTML = '';
+    return;
+  }
+
+  statusEl.innerHTML = '<span class="badge badge-green">online</span>';
+
+  const fmtPct = (n) => n == null ? '-' : (n * 100).toFixed(1) + '%';
+  const fmtScore = (n) => n == null ? '-' : Number(n).toFixed(2);
+  const total = status.total_summaries || 0;
+  const scored = status.total_scored || 0;
+  const coverage = total > 0 ? scored / total : 0;
+  const pm = status.per_metric || {};
+  const grounded = pm.claim_groundedness ? pm.claim_groundedness.avg : null;
+  // Rubric overall = mean of all rubric_* metric averages present in per_metric.
+  const rubricEntries = Object.entries(pm).filter(([k]) => k.startsWith('rubric_'));
+  const rubric = rubricEntries.length > 0
+    ? rubricEntries.reduce((s, [, v]) => s + (v.avg || 0), 0) / rubricEntries.length
+    : null;
+
+  overEl.innerHTML = `
+    <div class="stat"><div class="label" data-tip="Total active region_summary rows in the DB.">Total summaries</div><div class="value">${fmt(total)}</div></div>
+    <div class="stat"><div class="label" data-tip="Summaries that have at least one row in eval_runs for the current eval_version.">Scored</div><div class="value">${fmt(scored)}</div></div>
+    <div class="stat"><div class="label" data-tip="Coverage = scored / total. 100% means all summaries have been evaluated for the current eval_version.">Coverage</div><div class="value">${fmtPct(coverage)}</div></div>
+    <div class="stat"><div class="label" data-tip="Average groundedness score (0–1): fraction of LLM-extracted claims supported by the retrieved chunks.">Avg groundedness</div><div class="value">${fmtScore(grounded)}</div></div>
+    <div class="stat"><div class="label" data-tip="Average rubric score (1–5): LLM judges accuracy, completeness, clarity, and format on a 5-point scale.">Avg rubric</div><div class="value">${fmtScore(rubric)}</div></div>
+    <div class="stat"><div class="label" data-tip="Eval scoring schema version. Bump this in orch config to force re-scoring of all summaries with the new prompts/judges.">Eval version</div><div class="value">${status.eval_version || '-'}</div></div>
+  `;
+
+  if (!worst || !worst.entries || worst.entries.length === 0) {
+    tableEl.innerHTML = '<div style="color:var(--text-dim)">No data yet. Eval orchestrator may be disabled or no scores recorded.</div>';
+    return;
+  }
+
+  let html = '<table><thead><tr><th>Region</th><th>Summary ID</th><th>Score</th><th>Metric</th></tr></thead><tbody>';
+  for (const it of worst.entries) {
+    const sid = it.summary_id ? String(it.summary_id).substring(0, 8) : '-';
+    html += `<tr><td>${it.region_name || '-'}</td><td><code>${sid}</code></td><td>${fmtScore(it.score)}</td><td>${it.metric || '-'}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  tableEl.innerHTML = html;
+}
 </script>
 </body>
 </html>

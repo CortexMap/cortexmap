@@ -8,4 +8,7 @@ pub enum ServiceError<E: std::error::Error + Send + Sync + 'static> {
 
     #[error("region not found")]
     NotFound,
+
+    #[error("{0}")]
+    Other(String),
 }

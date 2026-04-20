@@ -2749,8 +2749,10 @@ dependencies = [
  "app",
  "async-trait",
  "domain",
+ "serde",
  "serde_json",
  "thiserror",
+ "tracing",
  "uuid",
 ]
 

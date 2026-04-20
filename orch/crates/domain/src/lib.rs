@@ -59,6 +59,19 @@ pub enum ConfigKey {
     FetcherMonitorIntervalSecs,
     /// Page size for NCBI ESearch enqueue requests in the pipeline's Phase 2 (default 20)
     EnqueuePageSize,
+    /// Enable Phase-4 eval orchestrator background loop
+    EvalOrchestratorEnabled,
+    /// Poll interval (seconds) for the eval orchestrator
+    EvalOrchestratorPollIntervalSecs,
+    /// Max parallel `POST /evals-be/api/evals/score` calls
+    EvalOrchestratorConcurrency,
+    /// Base URL for evals-be (e.g. `http://evals-be:8083`)
+    EvalsBaseUrl,
+    /// Cache version passed to evals-be on every score request
+    EvalVersion,
+    /// Number of days a region's summary remains "fresh" before Phase 2 will
+    /// re-process the region. Manual `/regions/:id/generate` ignores this gate.
+    SummaryStalenessDays,
 }
 
 /// Result of polling for completed fetch tasks

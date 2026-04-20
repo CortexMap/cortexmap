@@ -389,4 +389,57 @@ where
             .await
             .map_err(AppError::ServiceError)
     }
+
+    // ---- Eval LLM helpers (stateless wrappers over the LlmService trait) ----
+
+    /// Generate an embedding for a single text string.
+    pub async fn embed(
+        &self,
+        text: &str,
+        embedding_model: Option<&str>,
+    ) -> Result<Vec<f32>, AppError<E>> {
+        self.services
+            .generate_embedding(text, embedding_model)
+            .await
+            .map_err(AppError::ServiceError)
+    }
+
+    /// Extract atomic claims from a summary.
+    pub async fn extract_claims(
+        &self,
+        summary_text: &str,
+        region_name: &str,
+        chat_model: Option<&str>,
+    ) -> Result<domain::ClaimsResponse, AppError<E>> {
+        self.services
+            .extract_claims(summary_text, region_name, chat_model)
+            .await
+            .map_err(AppError::ServiceError)
+    }
+
+    /// Judge a single claim against retrieved evidence chunks.
+    pub async fn judge_groundedness(
+        &self,
+        claim_text: &str,
+        evidence_chunks: &[String],
+        chat_model: Option<&str>,
+    ) -> Result<domain::GroundednessVerdict, AppError<E>> {
+        self.services
+            .judge_groundedness(claim_text, evidence_chunks, chat_model)
+            .await
+            .map_err(AppError::ServiceError)
+    }
+
+    /// Score the summary against the fixed five-criterion rubric.
+    pub async fn judge_rubric(
+        &self,
+        summary_text: &str,
+        region_name: &str,
+        chat_model: Option<&str>,
+    ) -> Result<domain::RubricScores, AppError<E>> {
+        self.services
+            .judge_rubric(summary_text, region_name, chat_model)
+            .await
+            .map_err(AppError::ServiceError)
+    }
 }

@@ -80,7 +80,10 @@ impl OrchServer {
             .route("/api/pipeline/trigger", post(trigger_pipeline_handler))
             .route("/dev/stats", get(dev_stats_page_handler))
             .route("/dev/api/system-stats", get(dev_system_stats_handler))
+            .route("/dev/api/summary-freshness", get(dev_summary_freshness_handler))
             .route("/dev/api/redis-stats", get(dev_redis_stats_handler))
+            .route("/api/evals/status", get(get_eval_status_handler))
+            .route("/api/evals/worst", get(get_eval_worst_handler))
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
@@ -239,6 +242,13 @@ async fn dev_system_stats_handler(
     Ok(Json(result))
 }
 
+async fn dev_summary_freshness_handler(
+    State(server): State<OrchServer>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_summary_freshness().await?;
+    Ok(Json(result))
+}
+
 async fn dev_stats_page_handler() -> impl IntoResponse {
     axum::response::Html(include_str!("dev_stats.html"))
 }
@@ -255,5 +265,28 @@ async fn dev_redis_stats_handler(
     State(server): State<OrchServer>,
 ) -> Result<impl IntoResponse, ServerError> {
     let result = server.api.get_redis_stats().await?;
+    Ok(Json(result))
+}
+
+async fn get_eval_status_handler(
+    State(server): State<OrchServer>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_eval_status().await?;
+    Ok(Json(result))
+}
+
+#[derive(serde::Deserialize)]
+struct WorstQuery {
+    metric: Option<String>,
+    limit: Option<u32>,
+}
+
+async fn get_eval_worst_handler(
+    State(server): State<OrchServer>,
+    axum::extract::Query(q): axum::extract::Query<WorstQuery>,
+) -> Result<impl IntoResponse, ServerError> {
+    let metric = q.metric.unwrap_or_else(|| "groundedness".to_string());
+    let limit = q.limit.unwrap_or(10) as i64;
+    let result = server.api.get_eval_worst(metric, limit).await?;
     Ok(Json(result))
 }

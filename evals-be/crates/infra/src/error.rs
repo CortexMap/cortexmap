@@ -27,11 +27,7 @@ pub enum InfraError {
     EnvVarNotFound(String),
     #[error("not found")]
     NotFound,
-    #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
-    #[error("HTTP {status}: {body}")]
-    HttpStatus { status: u16, body: String },
-    #[error("invalid response from brainatlas: {0}")]
+    #[error("invalid data: {0}")]
     InvalidResponse(String),
 }
 

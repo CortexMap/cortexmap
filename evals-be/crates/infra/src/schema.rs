@@ -41,6 +41,21 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    use diesel::sql_types::*;
+
+    eval_run_state (run_id) {
+        run_id -> Uuid,
+        summary_id -> Uuid,
+        eval_version -> Text,
+        state -> Jsonb,
+        pending_step_id -> Nullable<Uuid>,
+        pending_endpoint -> Nullable<Text>,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
 // ---- Read-only tables (owned by brainatlas-be) ----
 
 diesel::table! {

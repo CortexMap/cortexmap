@@ -1,6 +1,6 @@
 use domain::{
-    BrainRegionEntry, ChunkSource, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary,
-    RegionMapping, SimilarChunk,
+    BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
+    LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RubricScores, SimilarChunk,
 };
 use std::error::Error;
 use uuid::Uuid;
@@ -44,6 +44,33 @@ pub trait LlmService: Send + Sync {
         region_name: &str,
         count: u32,
     ) -> Result<Vec<String>, Self::Error>;
+
+    /// Split a summary into atomic factual claims tagged with their section heading.
+    /// Used by the evals pipeline.
+    async fn extract_claims(
+        &self,
+        summary_text: &str,
+        region_name: &str,
+        chat_model_override: Option<&str>,
+    ) -> Result<ClaimsResponse, Self::Error>;
+
+    /// Judge whether a single claim is supported by a list of candidate evidence chunks.
+    /// `evidence_chunks` is a list of plain-text chunks; the judge returns 1-based indices
+    /// into this list for the supporting subset.
+    async fn judge_groundedness(
+        &self,
+        claim_text: &str,
+        evidence_chunks: &[String],
+        chat_model_override: Option<&str>,
+    ) -> Result<GroundednessVerdict, Self::Error>;
+
+    /// Score a full summary against the fixed five-criterion rubric.
+    async fn judge_rubric(
+        &self,
+        summary_text: &str,
+        region_name: &str,
+        chat_model_override: Option<&str>,
+    ) -> Result<RubricScores, Self::Error>;
 }
 
 /// Embedding generation service

@@ -50,12 +50,35 @@ pub struct SummarySource {
 /// A single region summary entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegionSummary {
+    /// `region_summary.id` — also used as the evals lookup key.
+    pub summary_id: Uuid,
     pub summary: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// The batch that generated this summary
     pub batch_id: Uuid,
     /// Source chunks used to generate this summary
     pub sources: Vec<SummarySource>,
+    /// Eval scores for this summary, if any have been computed.
+    /// `None` means evals-be has never scored this summary (or the fetch
+    /// failed). When present, the map is keyed by metric name
+    /// (e.g. `"claim_groundedness"`, `"rubric_relevance"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eval_scores: Option<SummaryEvalScores>,
+}
+
+/// Compact per-metric score payload attached to a `RegionSummary`.
+///
+/// This is a condensed view of evals-be's `GET /api/evals/scores/:summary_id`
+/// response: we keep just the score values + judge models (dropping the
+/// verbose per-claim `details` JSON), because the summaries route is hot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummaryEvalScores {
+    pub eval_version: String,
+    /// metric_name -> score in [0, 1]
+    pub scores: std::collections::HashMap<String, f32>,
+    /// metric_name -> model identifier (only set for LLM-judged metrics)
+    #[serde(default)]
+    pub judge_models: std::collections::HashMap<String, String>,
 }
 
 /// Result of searching/listing summaries for a region
@@ -228,6 +251,19 @@ pub struct PipelineHealthStatus {
     pub pending_fetch_tasks: i64,
     /// Active (running) fetcher workers
     pub worker_count: usize,
+}
+
+/// Per-region summary freshness buckets, surfaced on `/dev/api/summary-freshness`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SummaryFreshness {
+    /// Regions whose latest active summary is younger than `staleness_days`.
+    pub fresh: i64,
+    /// Regions whose latest active summary is older than `staleness_days`.
+    pub stale: i64,
+    /// Regions with no usable active summary.
+    pub no_summary: i64,
+    /// Cutoff used to bucket the rows.
+    pub staleness_days: i64,
 }
 
 /// Comprehensive system stats for the /dev/stats dashboard

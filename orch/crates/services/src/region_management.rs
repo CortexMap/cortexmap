@@ -6,11 +6,39 @@ use crate::{
 use app::RegionManagement;
 use domain::{
     BatchStatus, ChunkSourceResponse, ConfigKey, ProcessingBatch, RegionQuery, RegionSummary,
-    SummarySource,
+    SummaryEvalScores, SummarySource,
 };
+use futures::stream::{self, StreamExt};
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::sync::Arc;
 use uuid::Uuid;
+
+// ── Wire shapes for GET /evals-be/api/evals/scores/:summary_id ──
+// Mirrored locally (instead of depending on evals-rpc-types) so orch stays
+// decoupled from the evals-be crate graph.
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct EvalsScoresWire {
+    #[allow(dead_code)]
+    pub summary_id: Uuid,
+    #[serde(default)]
+    pub scores: Vec<EvalsScoreEntryWire>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct EvalsScoreEntryWire {
+    pub metric: String,
+    pub score: f32,
+    pub eval_version: String,
+    #[serde(default)]
+    pub judge_model: Option<String>,
+}
+
+/// Concurrency cap for per-summary eval score fetches. Each summary costs one
+/// cheap GET against evals-be (pure DB lookup, no LLM), so we keep this
+/// reasonably high.
+const EVAL_SCORES_FETCH_CONCURRENCY: usize = 16;
 
 pub struct OrchRegionManagement<I> {
     infra: Arc<I>,
@@ -70,6 +98,7 @@ where
                         .map_err(ServiceError::InfraError)?;
 
                     result.push(RegionSummary {
+                        summary_id: s.id,
                         summary: s.summary.unwrap_or_default(),
                         created_at: chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
                             s.created_at,
@@ -85,7 +114,37 @@ where
                                 source_query: src.source_query,
                             })
                             .collect(),
+                        eval_scores: None,
                     });
+                }
+
+                // Enrich each summary with its eval scores from evals-be. Fetches
+                // run concurrently; a single failure just leaves that row's
+                // `eval_scores` as `None` — it never fails the whole request.
+                if !result.is_empty()
+                    && let Ok(evals_base) =
+                        resolve_evals_base_url(infra.as_ref(), &database_url).await
+                {
+                    let summary_ids: Vec<Uuid> =
+                        result.iter().map(|s| s.summary_id).collect();
+                    let enriched: Vec<(Uuid, Option<SummaryEvalScores>)> =
+                        stream::iter(summary_ids)
+                            .map(|sid| {
+                                let base = evals_base.clone();
+                                let infra = Arc::clone(infra);
+                                async move {
+                                    (sid, fetch_summary_eval_scores(&*infra, &base, sid).await)
+                                }
+                            })
+                            .buffer_unordered(EVAL_SCORES_FETCH_CONCURRENCY)
+                            .collect()
+                            .await;
+
+                    let by_id: std::collections::HashMap<Uuid, Option<SummaryEvalScores>> =
+                        enriched.into_iter().collect();
+                    for s in result.iter_mut() {
+                        s.eval_scores = by_id.get(&s.summary_id).and_then(|v| v.clone());
+                    }
                 }
 
                 Ok(result)
@@ -314,6 +373,49 @@ where
             .map_err(ServiceError::InfraError)
     }
 
+    async fn get_latest_active_summary_age(
+        &self,
+        region_id: Uuid,
+    ) -> Result<Option<chrono::NaiveDateTime>, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .get_latest_active_summary_age(&database_url, region_id)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+
+    async fn get_summary_freshness(&self) -> Result<domain::SummaryFreshness, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let staleness_days: i64 = self
+            .infra
+            .get_config(&database_url, ConfigKey::SummaryStalenessDays)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+
+        let counts = self
+            .infra
+            .get_summary_freshness_counts(&database_url, staleness_days)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        Ok(domain::SummaryFreshness {
+            fresh: counts.fresh,
+            stale: counts.stale,
+            no_summary: counts.no_summary,
+            staleness_days: counts.staleness_days,
+        })
+    }
+
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error> {
         let database_url = self
             .infra
@@ -512,4 +614,106 @@ where
         )
         .await
     }
+}
+
+// ── Eval score fetch helpers ───────────────────────────────────────────────
+
+/// Resolve the evals-be base URL from env (`EVALS_BASE_URL`) then config
+/// (`ConfigKey::EvalsBaseUrl`). Returns `Err` if neither is set — callers
+/// should treat that as "eval enrichment disabled" rather than a hard
+/// failure.
+async fn resolve_evals_base_url<I, E>(
+    infra: &I,
+    database_url: &str,
+) -> Result<String, ServiceError<E>>
+where
+    E: Error + Send + Sync + 'static,
+    I: EnvInfra<Error = E> + crate::OrchDatabase<Error = E> + Send + Sync,
+{
+    fn normalize_url(addr: &str) -> String {
+        if addr.starts_with("http://") || addr.starts_with("https://") {
+            addr.to_string()
+        } else {
+            let replaced = addr.replace("0.0.0.0", "localhost");
+            format!("http://{}", replaced)
+        }
+    }
+
+    if let Ok(url) = infra.get_env_var("EVALS_BASE_URL") {
+        return Ok(normalize_url(&url));
+    }
+
+    let from_config = infra
+        .get_config(database_url, ConfigKey::EvalsBaseUrl)
+        .await
+        .map_err(ServiceError::InfraError)?;
+    if let Some(url) = from_config {
+        return Ok(normalize_url(&url));
+    }
+
+    Err(ServiceError::ConfigNotFound {
+        key: "evals_base_url (EVALS_BASE_URL env or evals_base_url config row)".to_string(),
+    })
+}
+
+/// Fetch the eval scores for one summary. Returns:
+/// - `Some(SummaryEvalScores)` iff evals-be has at least one score row for
+///   this summary,
+/// - `None` if the summary has never been evaluated (the `scores` array is
+///   empty) OR the fetch itself failed (network / 5xx / decode error).
+///
+/// A failure to fetch must never abort the surrounding request — we just drop
+/// the eval_scores field on the returned `RegionSummary`.
+async fn fetch_summary_eval_scores<I, E>(
+    infra: &I,
+    evals_base: &str,
+    summary_id: Uuid,
+) -> Option<SummaryEvalScores>
+where
+    E: Error + Send + Sync + 'static,
+    I: HttpClient<Error = E> + Send + Sync,
+{
+    let url = format!(
+        "{}/evals-be/api/evals/scores/{}",
+        evals_base.trim_end_matches('/'),
+        summary_id
+    );
+
+    let wire: EvalsScoresWire = match infra.get(&url).await {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::debug!(%summary_id, error = %e, "evals-be scores fetch failed; omitting eval_scores");
+            return None;
+        }
+    };
+
+    // Key contract: only attach `eval_scores` when there's real data.
+    // An empty `scores` array means the summary has never been evaluated.
+    if wire.scores.is_empty() {
+        return None;
+    }
+
+    // All scores for a given summary share the same eval_version (enforced by
+    // the eval_scores unique index (summary_hash, metric, eval_version)).
+    // Pick the first one's version as the representative.
+    let eval_version = wire
+        .scores
+        .first()
+        .map(|s| s.eval_version.clone())
+        .unwrap_or_default();
+
+    let mut scores = std::collections::HashMap::with_capacity(wire.scores.len());
+    let mut judge_models = std::collections::HashMap::new();
+    for entry in wire.scores {
+        if let Some(m) = entry.judge_model.clone() {
+            judge_models.insert(entry.metric.clone(), m);
+        }
+        scores.insert(entry.metric, entry.score);
+    }
+
+    Some(SummaryEvalScores {
+        eval_version,
+        scores,
+        judge_models,
+    })
 }

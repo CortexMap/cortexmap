@@ -123,3 +123,53 @@ where
             .map_err(ApiError::AppError)
     }
 }
+
+// Stateless eval-related helpers exposed directly on `BrainAtlasApi` (not part
+// of the `BrainRegionApi` trait because they are pure LLM proxies, not part
+// of the brain-region domain).
+impl<E, S> BrainAtlasApi<S>
+where
+    E: std::error::Error + Send + Sync + 'static,
+    S: Services<Error = E> + 'static,
+{
+    pub async fn embed(
+        &self,
+        text: &str,
+        embedding_model: Option<&str>,
+    ) -> Result<Vec<f32>, AppError<E>> {
+        self.app().embed(text, embedding_model).await
+    }
+
+    pub async fn extract_claims(
+        &self,
+        summary_text: &str,
+        region_name: &str,
+        chat_model: Option<&str>,
+    ) -> Result<domain::ClaimsResponse, AppError<E>> {
+        self.app()
+            .extract_claims(summary_text, region_name, chat_model)
+            .await
+    }
+
+    pub async fn judge_groundedness(
+        &self,
+        claim_text: &str,
+        evidence_chunks: &[String],
+        chat_model: Option<&str>,
+    ) -> Result<domain::GroundednessVerdict, AppError<E>> {
+        self.app()
+            .judge_groundedness(claim_text, evidence_chunks, chat_model)
+            .await
+    }
+
+    pub async fn judge_rubric(
+        &self,
+        summary_text: &str,
+        region_name: &str,
+        chat_model: Option<&str>,
+    ) -> Result<domain::RubricScores, AppError<E>> {
+        self.app()
+            .judge_rubric(summary_text, region_name, chat_model)
+            .await
+    }
+}

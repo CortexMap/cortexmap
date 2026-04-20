@@ -85,6 +85,16 @@ pub trait RegionManagement: Send + Sync {
     /// Count collecting batches with at least one in_progress fetch task
     async fn count_actively_fetching_regions(&self) -> Result<i64, Self::Error>;
 
+    /// Latest active non-empty summary's age for a region. `None` if absent.
+    async fn get_latest_active_summary_age(
+        &self,
+        region_id: Uuid,
+    ) -> Result<Option<chrono::NaiveDateTime>, Self::Error>;
+
+    /// Aggregate summary-freshness counts (fresh / stale / no_summary) using
+    /// `summary_staleness_days` from config.
+    async fn get_summary_freshness(&self) -> Result<domain::SummaryFreshness, Self::Error>;
+
     /// Get query generation limit from config (or default)
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error>;
 
@@ -242,6 +252,71 @@ pub trait PipelineRunner: Send + Sync {
     async fn get_redis_stats(&self) -> Result<domain::RedisStats, Self::Error>;
 }
 
+/// Trait for the Phase-4 eval orchestrator. Polls evals-be for unscored
+/// summaries and fans out score requests at configured concurrency.
+#[async_trait::async_trait]
+pub trait EvalOrchestration: Send + Sync {
+    type Error: Error + Send + Sync;
+
+    /// Whether the orchestrator is enabled (config-driven, hot-reloadable).
+    async fn eval_orchestrator_enabled(&self) -> bool;
+
+    /// How long the background loop should sleep between cycles.
+    async fn eval_orchestrator_poll_interval_secs(&self) -> u64;
+
+    /// Run one orchestration cycle. Returns `(succeeded, failed)`.
+    async fn eval_orchestrator_run_cycle(&self) -> Result<(usize, usize), Self::Error>;
+
+    /// Aggregate eval status for `/orch/api/evals/status`.
+    async fn eval_orchestrator_get_status(&self) -> Result<EvalStatusSummary, Self::Error>;
+
+    /// `N` lowest-scoring summaries for one metric, joined with region name.
+    /// Backs `/orch/api/evals/worst`.
+    async fn eval_orchestrator_get_worst(
+        &self,
+        metric: String,
+        limit: i64,
+    ) -> Result<EvalWorstOffenders, Self::Error>;
+}
+
+/// Aggregate eval status returned by `EvalOrchestration::eval_orchestrator_get_status`.
+/// Mirrors the JSON returned by `GET /evals-be/api/evals/summary` so the orch
+/// server layer can pass it straight through to API consumers.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EvalStatusSummary {
+    pub eval_version: String,
+    pub total_summaries: i64,
+    pub total_scored: i64,
+    #[serde(default)]
+    pub per_metric: std::collections::HashMap<String, EvalMetricStatsView>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EvalMetricStatsView {
+    pub avg: f32,
+    pub min: f32,
+    pub max: f32,
+    pub count: i64,
+}
+
+/// Worst-offenders payload returned by `EvalOrchestration::eval_orchestrator_get_worst`.
+/// Mirrors the JSON returned by `GET /evals-be/api/evals/worst`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EvalWorstOffenders {
+    pub metric: String,
+    pub limit: i64,
+    pub entries: Vec<EvalWorstOffenderEntry>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EvalWorstOffenderEntry {
+    pub summary_id: uuid::Uuid,
+    pub region_name: Option<String>,
+    pub metric: String,
+    pub score: f32,
+    pub eval_version: String,
+}
+
 pub trait Services:
     CompletionOrchestrator<Error = <Self as Services>::Error>
     + RegionManagement<Error = <Self as Services>::Error>
@@ -250,6 +325,7 @@ pub trait Services:
     + WorkerManagement<Error = <Self as Services>::Error>
     + HealthCheck<Error = <Self as Services>::Error>
     + PipelineRunner<Error = <Self as Services>::Error>
+    + EvalOrchestration<Error = <Self as Services>::Error>
 {
     type Error: Error + Send + Sync;
 }
@@ -262,7 +338,8 @@ where
         + ConfigManagement<Error = E>
         + WorkerManagement<Error = E>
         + HealthCheck<Error = E>
-        + PipelineRunner<Error = E>,
+        + PipelineRunner<Error = E>
+        + EvalOrchestration<Error = E>,
     E: Error + Send + Sync,
 {
     type Error = E;

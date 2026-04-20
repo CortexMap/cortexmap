@@ -1,12 +1,14 @@
 use crate::batch_orchestration::OrchBatchOrchestration;
 use crate::completion_watcher::CompletionWatcher;
 use crate::config_management::OrchConfigManagement;
+use crate::eval_orchestrator::EvalOrchestrator;
 use crate::pipeline_runner::OrchPipelineRunner;
 use crate::region_management::OrchRegionManagement;
 use crate::{Infra, ServiceError};
 use app::{
-    BatchOrchestration, CompletionOrchestrator, ConfigManagement, HealthCheck, PipelineRunner,
-    RegionManagement, WorkerManagement,
+    BatchOrchestration, CompletionOrchestrator, ConfigManagement, EvalOrchestration,
+    EvalStatusSummary, EvalWorstOffenders, HealthCheck, PipelineRunner, RegionManagement,
+    WorkerManagement,
 };
 use domain::{
     AllocateWorkersRequest, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult,
@@ -23,6 +25,7 @@ pub struct OrchServices<I> {
     batch_orchestration: OrchBatchOrchestration<I>,
     config_management: OrchConfigManagement<I>,
     pipeline_runner: OrchPipelineRunner<I>,
+    eval_orchestrator: EvalOrchestrator<I>,
     infra: Arc<I>,
 }
 
@@ -33,17 +36,18 @@ impl<I: Infra> OrchServices<I> {
         let batch_orchestration = OrchBatchOrchestration::new(infra.clone());
         let config_management = OrchConfigManagement::new(infra.clone());
         let pipeline_runner = OrchPipelineRunner::new(infra.clone());
+        let eval_orchestrator = EvalOrchestrator::new(infra.clone());
         Self {
             completion_watcher,
             region_management,
             batch_orchestration,
             config_management,
             pipeline_runner,
+            eval_orchestrator,
             infra,
         }
     }
 }
-
 #[async_trait::async_trait]
 impl<E, I> CompletionOrchestrator for OrchServices<I>
 where
@@ -149,6 +153,19 @@ where
         self.region_management
             .count_actively_fetching_regions()
             .await
+    }
+
+    async fn get_latest_active_summary_age(
+        &self,
+        region_id: Uuid,
+    ) -> Result<Option<chrono::NaiveDateTime>, Self::Error> {
+        self.region_management
+            .get_latest_active_summary_age(region_id)
+            .await
+    }
+
+    async fn get_summary_freshness(&self) -> Result<domain::SummaryFreshness, Self::Error> {
+        self.region_management.get_summary_freshness().await
     }
 
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error> {
@@ -405,5 +422,38 @@ where
 
     async fn get_redis_stats(&self) -> Result<domain::RedisStats, Self::Error> {
         self.pipeline_runner.get_redis_stats().await
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> EvalOrchestration for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn eval_orchestrator_enabled(&self) -> bool {
+        self.eval_orchestrator.is_enabled().await
+    }
+
+    async fn eval_orchestrator_poll_interval_secs(&self) -> u64 {
+        self.eval_orchestrator.poll_interval_secs().await
+    }
+
+    async fn eval_orchestrator_run_cycle(&self) -> Result<(usize, usize), Self::Error> {
+        self.eval_orchestrator.run_cycle().await
+    }
+
+    async fn eval_orchestrator_get_status(&self) -> Result<EvalStatusSummary, Self::Error> {
+        self.eval_orchestrator.get_status().await
+    }
+
+    async fn eval_orchestrator_get_worst(
+        &self,
+        metric: String,
+        limit: i64,
+    ) -> Result<EvalWorstOffenders, Self::Error> {
+        self.eval_orchestrator.get_worst(metric, limit).await
     }
 }

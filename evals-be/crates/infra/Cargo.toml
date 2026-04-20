@@ -11,10 +11,8 @@ diesel.workspace = true
 deadpool-diesel.workspace = true
 services.workspace = true
 domain.workspace = true
-brainatlas-rpc-types.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tracing.workspace = true

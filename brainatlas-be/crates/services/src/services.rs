@@ -9,8 +9,8 @@ use app::{
     VectorDatabase,
 };
 use domain::{
-    BrainRegionEntry, ChunkSource, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary,
-    RegionMapping, SimilarChunk,
+    BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
+    LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RubricScores, SimilarChunk,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -74,6 +74,39 @@ where
         count: u32,
     ) -> Result<Vec<String>, Self::Error> {
         self.llm_service.generate_queries(region_name, count).await
+    }
+
+    async fn extract_claims(
+        &self,
+        summary_text: &str,
+        region_name: &str,
+        chat_model_override: Option<&str>,
+    ) -> Result<ClaimsResponse, Self::Error> {
+        self.llm_service
+            .extract_claims(summary_text, region_name, chat_model_override)
+            .await
+    }
+
+    async fn judge_groundedness(
+        &self,
+        claim_text: &str,
+        evidence_chunks: &[String],
+        chat_model_override: Option<&str>,
+    ) -> Result<GroundednessVerdict, Self::Error> {
+        self.llm_service
+            .judge_groundedness(claim_text, evidence_chunks, chat_model_override)
+            .await
+    }
+
+    async fn judge_rubric(
+        &self,
+        summary_text: &str,
+        region_name: &str,
+        chat_model_override: Option<&str>,
+    ) -> Result<RubricScores, Self::Error> {
+        self.llm_service
+            .judge_rubric(summary_text, region_name, chat_model_override)
+            .await
     }
 }
 

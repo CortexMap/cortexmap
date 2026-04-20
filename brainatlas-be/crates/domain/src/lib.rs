@@ -2,11 +2,13 @@
 pub use rpc_types;
 
 pub mod boolean_query;
+mod evals;
 mod hash;
 mod processing;
 mod tool_calling;
 
 pub use boolean_query::BooleanQuery;
+pub use evals::*;
 pub use hash::compute_hash;
 pub use processing::*;
 pub use tool_calling::*;

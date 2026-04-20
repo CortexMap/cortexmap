@@ -191,6 +191,46 @@ where
             }
         });
 
+        // Spawn the Phase-4 eval orchestrator loop.
+        // Gated on `ConfigKey::EvalOrchestratorEnabled` (config-table driven, hot-reloadable).
+        // Each cycle: ask evals-be for unscored summary IDs, fan out
+        // `POST /evals-be/api/evals/score` calls at configured concurrency.
+        let eval_services = Arc::clone(&services);
+        tokio::spawn(async move {
+            // Generous initial delay so this loop never races startup of the
+            // other services.
+            tokio::time::sleep(Duration::from_secs(20)).await;
+            tracing::info!("Eval orchestrator loop started");
+
+            loop {
+                let interval_secs = eval_services
+                    .eval_orchestrator_poll_interval_secs()
+                    .await;
+
+                if eval_services.eval_orchestrator_enabled().await {
+                    match eval_services.eval_orchestrator_run_cycle().await {
+                        Ok((succeeded, failed)) if succeeded + failed > 0 => {
+                            tracing::info!(
+                                succeeded,
+                                failed,
+                                "Eval orchestrator: cycle complete"
+                            );
+                        }
+                        Ok(_) => {
+                            tracing::debug!("Eval orchestrator: no unscored summaries");
+                        }
+                        Err(e) => {
+                            tracing::error!(error = ?e, "Eval orchestrator: cycle failed");
+                        }
+                    }
+                } else {
+                    tracing::debug!("Eval orchestrator: disabled, skipping cycle");
+                }
+
+                tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+            }
+        });
+
         Ok(())
     }
 
@@ -367,6 +407,21 @@ where
         entries: Vec<ConfigEntryUpdate>,
     ) -> Result<Vec<ConfigEntry>, E> {
         self.services.update_config(entries).await
+    }
+
+    /// Aggregate eval status (proxies to evals-be `/api/evals/summary`).
+    pub async fn get_eval_status(&self) -> Result<crate::EvalStatusSummary, E> {
+        self.services.eval_orchestrator_get_status().await
+    }
+
+    /// `N` lowest-scoring summaries for one metric (proxies to evals-be
+    /// `/api/evals/worst`).
+    pub async fn get_eval_worst(
+        &self,
+        metric: String,
+        limit: i64,
+    ) -> Result<crate::EvalWorstOffenders, E> {
+        self.services.eval_orchestrator_get_worst(metric, limit).await
     }
 
     /// Get all brain regions from region_mapping
@@ -688,6 +743,12 @@ where
     /// Get comprehensive system stats for the dev dashboard
     pub async fn get_system_stats(&self) -> Result<domain::SystemStats, E> {
         self.services.get_system_stats().await
+    }
+
+    /// Per-region summary freshness (fresh / stale / no_summary), bucketed by
+    /// the `summary_staleness_days` config value.
+    pub async fn get_summary_freshness(&self) -> Result<domain::SummaryFreshness, E> {
+        self.services.get_summary_freshness().await
     }
 
     /// Snapshot of the Redis cache (key counts per prefix, memory, hit rate).

@@ -12,9 +12,9 @@ use chrono::Utc;
 use deadpool_diesel::Runtime;
 use deadpool_diesel::postgres::{BuildError, Manager, Pool};
 use diesel::prelude::*;
-use diesel::sql_types::{BigInt, Float4, Float8, Int4, Nullable, Text, Varchar};
+use diesel::sql_types::{BigInt, Float4, Float8, Int4, Jsonb, Nullable, Text, Varchar};
 use domain::{EvalRun, EvalRunStatus, EvalScore, NewEvalScore};
-use services::{EvalAggregate, MetricStatsRaw, RetrievedChunk, SummaryRow, WorstOffenderRow};
+use services::{EvalAggregate, LoadedRunState, MetricStatsRaw, RetrievedChunk, SummaryRow, WorstOffenderRow};
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 
@@ -538,5 +538,153 @@ impl EvalsPostgresql {
             })
             .await??;
         Ok(rows)
+    }
+
+    // ---- eval_run_state ----
+
+    pub async fn insert_run_state(
+        &self,
+        database_url: &str,
+        summary_id: Uuid,
+        eval_version: &str,
+        state: &serde_json::Value,
+        pending_step_id: Option<Uuid>,
+        pending_endpoint: Option<&str>,
+    ) -> Result<Uuid, InfraError> {
+        let conn = self.pool(database_url).await?.get().await?;
+        let ver = eval_version.to_string();
+        let state = state.clone();
+        let endpoint = pending_endpoint.map(|s| s.to_string());
+
+        let run_id = conn
+            .interact(move |c| -> Result<Uuid, diesel::result::Error> {
+                #[derive(QueryableByName)]
+                struct R {
+                    #[diesel(sql_type = diesel::sql_types::Uuid)]
+                    run_id: Uuid,
+                }
+                let rows: Vec<R> = diesel::sql_query(
+                    "INSERT INTO eval_run_state
+                        (summary_id, eval_version, state, pending_step_id, pending_endpoint)
+                     VALUES ($1, $2, $3, $4, $5)
+                     RETURNING run_id",
+                )
+                .bind::<diesel::sql_types::Uuid, _>(summary_id)
+                .bind::<Text, _>(&ver)
+                .bind::<Jsonb, _>(&state)
+                .bind::<Nullable<diesel::sql_types::Uuid>, _>(pending_step_id)
+                .bind::<Nullable<Text>, _>(endpoint.as_deref())
+                .load(c)?;
+                rows.into_iter()
+                    .next()
+                    .map(|r| r.run_id)
+                    .ok_or(diesel::result::Error::NotFound)
+            })
+            .await??;
+
+        Ok(run_id)
+    }
+
+    pub async fn load_run_state(
+        &self,
+        database_url: &str,
+        run_id: Uuid,
+    ) -> Result<Option<LoadedRunState>, InfraError> {
+        let conn = self.pool(database_url).await?.get().await?;
+
+        let row = conn
+            .interact(move |c| -> Result<Option<LoadedRunState>, diesel::result::Error> {
+                #[derive(QueryableByName)]
+                struct R {
+                    #[diesel(sql_type = diesel::sql_types::Uuid)]
+                    summary_id: Uuid,
+                    #[diesel(sql_type = Text)]
+                    eval_version: String,
+                    #[diesel(sql_type = Jsonb)]
+                    state: serde_json::Value,
+                    #[diesel(sql_type = Nullable<diesel::sql_types::Uuid>)]
+                    pending_step_id: Option<Uuid>,
+                }
+                let rows: Vec<R> = diesel::sql_query(
+                    "SELECT summary_id, eval_version, state, pending_step_id
+                     FROM eval_run_state WHERE run_id = $1",
+                )
+                .bind::<diesel::sql_types::Uuid, _>(run_id)
+                .load(c)?;
+                Ok(rows
+                    .into_iter()
+                    .next()
+                    .map(|r| (r.summary_id, r.eval_version, r.state, r.pending_step_id)))
+            })
+            .await??;
+
+        Ok(row)
+    }
+
+    pub async fn save_run_state(
+        &self,
+        database_url: &str,
+        run_id: Uuid,
+        state: &serde_json::Value,
+        pending_step_id: Option<Uuid>,
+        pending_endpoint: Option<&str>,
+    ) -> Result<(), InfraError> {
+        let conn = self.pool(database_url).await?.get().await?;
+        let state = state.clone();
+        let endpoint = pending_endpoint.map(|s| s.to_string());
+
+        conn.interact(move |c| -> Result<usize, diesel::result::Error> {
+            diesel::sql_query(
+                "UPDATE eval_run_state
+                 SET state = $2,
+                     pending_step_id = $3,
+                     pending_endpoint = $4,
+                     updated_at = now()
+                 WHERE run_id = $1",
+            )
+            .bind::<diesel::sql_types::Uuid, _>(run_id)
+            .bind::<Jsonb, _>(&state)
+            .bind::<Nullable<diesel::sql_types::Uuid>, _>(pending_step_id)
+            .bind::<Nullable<Text>, _>(endpoint.as_deref())
+            .execute(c)
+        })
+        .await??;
+
+        Ok(())
+    }
+
+    pub async fn delete_run_state(
+        &self,
+        database_url: &str,
+        run_id: Uuid,
+    ) -> Result<(), InfraError> {
+        let conn = self.pool(database_url).await?.get().await?;
+        conn.interact(move |c| -> Result<usize, diesel::result::Error> {
+            diesel::sql_query("DELETE FROM eval_run_state WHERE run_id = $1")
+                .bind::<diesel::sql_types::Uuid, _>(run_id)
+                .execute(c)
+        })
+        .await??;
+        Ok(())
+    }
+
+    pub async fn delete_run_states_for_summary(
+        &self,
+        database_url: &str,
+        summary_id: Uuid,
+        eval_version: &str,
+    ) -> Result<(), InfraError> {
+        let conn = self.pool(database_url).await?.get().await?;
+        let ver = eval_version.to_string();
+        conn.interact(move |c| -> Result<usize, diesel::result::Error> {
+            diesel::sql_query(
+                "DELETE FROM eval_run_state WHERE summary_id = $1 AND eval_version = $2",
+            )
+            .bind::<diesel::sql_types::Uuid, _>(summary_id)
+            .bind::<Text, _>(&ver)
+            .execute(c)
+        })
+        .await??;
+        Ok(())
     }
 }

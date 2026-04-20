@@ -1,23 +1,21 @@
 mod env;
 mod error;
-mod http;
 mod pg;
 mod schema;
 
 pub use env::*;
 pub use error::*;
-pub use http::*;
 pub use pg::*;
 
-use services::{BrainatlasClient, EnvInfra, EvalsDatabase};
+use services::{EnvInfra, EvalsDatabase};
 use std::sync::Arc;
 
-/// Top-level infra struct: bundles all infra-side adapters into one type so
-/// the server can hand a single `Arc<EvalsInfra>` to the app.
+/// Top-level infra struct: bundles Postgres + env into a single adapter the
+/// app can share via `Arc`. No HTTP client here — evals-be is a pure state
+/// machine as of 2026-04-19.
 pub struct EvalsInfra {
     pub env: EvalsEnvInfra,
     pub pg: EvalsPostgresql,
-    pub http: EvalsHttpClient,
 }
 
 impl EvalsInfra {
@@ -25,7 +23,6 @@ impl EvalsInfra {
         Self {
             env: EvalsEnvInfra::new(),
             pg: EvalsPostgresql::new(),
-            http: EvalsHttpClient::new(),
         }
     }
 }
@@ -141,46 +138,66 @@ impl EvalsDatabase for EvalsInfra {
             .retrieve_chunks_for_summary(database_url, summary_id, embedding, top_k, min_similarity)
             .await
     }
-}
 
-#[async_trait::async_trait]
-impl BrainatlasClient for EvalsInfra {
-    type Error = InfraError;
-
-    async fn extract_claims(
+    async fn insert_run_state(
         &self,
-        base_url: &str,
-        req: brainatlas_rpc_types::evals::ExtractClaimsRequest,
-    ) -> Result<domain::ClaimsResponse, Self::Error> {
-        self.http.extract_claims(base_url, req).await
+        database_url: &str,
+        summary_id: uuid::Uuid,
+        eval_version: &str,
+        state: &serde_json::Value,
+        pending_step_id: Option<uuid::Uuid>,
+        pending_endpoint: Option<&str>,
+    ) -> Result<uuid::Uuid, Self::Error> {
+        self.pg
+            .insert_run_state(
+                database_url,
+                summary_id,
+                eval_version,
+                state,
+                pending_step_id,
+                pending_endpoint,
+            )
+            .await
     }
 
-    async fn embed(
+    async fn load_run_state(
         &self,
-        base_url: &str,
-        req: brainatlas_rpc_types::evals::EmbedRequest,
-    ) -> Result<brainatlas_rpc_types::evals::EmbedResponse, Self::Error> {
-        self.http.embed(base_url, req).await
+        database_url: &str,
+        run_id: uuid::Uuid,
+    ) -> Result<Option<services::LoadedRunState>, Self::Error> {
+        self.pg.load_run_state(database_url, run_id).await
     }
 
-    async fn judge_groundedness(
+    async fn save_run_state(
         &self,
-        base_url: &str,
-        req: brainatlas_rpc_types::evals::JudgeGroundednessRequest,
-    ) -> Result<domain::GroundednessVerdict, Self::Error> {
-        self.http.judge_groundedness(base_url, req).await
+        database_url: &str,
+        run_id: uuid::Uuid,
+        state: &serde_json::Value,
+        pending_step_id: Option<uuid::Uuid>,
+        pending_endpoint: Option<&str>,
+    ) -> Result<(), Self::Error> {
+        self.pg
+            .save_run_state(database_url, run_id, state, pending_step_id, pending_endpoint)
+            .await
     }
 
-    async fn judge_rubric(
+    async fn delete_run_state(
         &self,
-        base_url: &str,
-        req: brainatlas_rpc_types::evals::JudgeRubricRequest,
-    ) -> Result<domain::RubricScores, Self::Error> {
-        self.http.judge_rubric(base_url, req).await
+        database_url: &str,
+        run_id: uuid::Uuid,
+    ) -> Result<(), Self::Error> {
+        self.pg.delete_run_state(database_url, run_id).await
     }
 
-    async fn check_health(&self, base_url: &str) -> Result<(), Self::Error> {
-        self.http.check_health(base_url).await
+    async fn delete_run_states_for_summary(
+        &self,
+        database_url: &str,
+        summary_id: uuid::Uuid,
+        eval_version: &str,
+    ) -> Result<(), Self::Error> {
+        self.pg
+            .delete_run_states_for_summary(database_url, summary_id, eval_version)
+            .await
     }
 }
 

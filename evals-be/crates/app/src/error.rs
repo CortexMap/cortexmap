@@ -14,6 +14,9 @@ pub enum AppError<E: Error + Send + Sync + 'static> {
 
     #[error("invalid config value for {key}: {value}")]
     InvalidConfig { key: String, value: String },
+
+    #[error("invalid argument: {0}")]
+    InvalidArg(String),
 }
 
 impl<E: Error + Send + Sync + 'static> From<ServiceError<E>> for AppError<E> {

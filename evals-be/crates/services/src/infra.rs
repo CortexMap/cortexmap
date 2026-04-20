@@ -1,15 +1,17 @@
 //! Infra-facing trait abstractions used by the eval app/service layer.
 //!
 //! Concrete implementations live in the `infra` crate:
-//!  - `EvalsDatabase` — Postgres access for `eval_scores`, `eval_runs`, plus
-//!    read-only access to `region_summary` and `brain_region_embeddings`.
-//!  - `BrainatlasClient` — HTTP client against brainatlas-be's stateless
-//!    `/api/llm/*` endpoints.
+//!  - `EvalsDatabase` — Postgres access for `eval_scores`, `eval_runs`,
+//!    `eval_run_state`, plus read-only access to `region_summary` and
+//!    `brain_region_embeddings`.
 //!  - `EnvInfra` — env var lookup.
+//!
+//! As of 2026-04-19 evals-be is stateless w.r.t. outbound HTTP: the brainatlas
+//! loop is driven externally by orch via `NextAction::CallLlm` envelopes in
+//! the wire protocol, so there is no longer a `BrainatlasClient` trait.
 
 use crate::ServiceError;
 use async_trait::async_trait;
-use brainatlas_rpc_types::evals as brpc;
 use domain::{EvalRun, EvalRunStatus, EvalScore, NewEvalScore};
 use std::error::Error;
 use uuid::Uuid;
@@ -32,7 +34,7 @@ pub struct SummaryRow {
     pub summary: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetrievedChunk {
     pub chunk_index: i32,
     pub chunk_text: String,
@@ -41,6 +43,9 @@ pub struct RetrievedChunk {
 }
 
 // ---- Eval DB trait ----
+
+/// Loaded state row for a run: (summary_id, eval_version, state_json, pending_step_id).
+pub type LoadedRunState = (Uuid, String, serde_json::Value, Option<Uuid>);
 
 #[async_trait]
 pub trait EvalsDatabase: Send + Sync {
@@ -123,6 +128,55 @@ pub trait EvalsDatabase: Send + Sync {
         top_k: i64,
         min_similarity: f32,
     ) -> Result<Vec<RetrievedChunk>, Self::Error>;
+
+    // ---- eval_run_state (state machine persistence) ----
+
+    /// Insert a fresh run-state row. Returns the generated `run_id`. The row
+    /// is expected to hold the next pending step id + endpoint.
+    async fn insert_run_state(
+        &self,
+        database_url: &str,
+        summary_id: Uuid,
+        eval_version: &str,
+        state: &serde_json::Value,
+        pending_step_id: Option<Uuid>,
+        pending_endpoint: Option<&str>,
+    ) -> Result<Uuid, Self::Error>;
+
+    /// Load a run state by id. Returns `None` if no row exists.
+    async fn load_run_state(
+        &self,
+        database_url: &str,
+        run_id: Uuid,
+    ) -> Result<Option<LoadedRunState>, Self::Error>;
+
+    /// Rewrite the state + pending step for an existing run.
+    async fn save_run_state(
+        &self,
+        database_url: &str,
+        run_id: Uuid,
+        state: &serde_json::Value,
+        pending_step_id: Option<Uuid>,
+        pending_endpoint: Option<&str>,
+    ) -> Result<(), Self::Error>;
+
+    /// Delete a run-state row (called on Done, or on /init re-entry for the
+    /// same `summary_id` to clean up an abandoned run).
+    async fn delete_run_state(
+        &self,
+        database_url: &str,
+        run_id: Uuid,
+    ) -> Result<(), Self::Error>;
+
+    /// Remove every stale `eval_run_state` row for the given
+    /// `(summary_id, eval_version)` pair. Called on `/init` re-entry so
+    /// abandoned runs don't leak forever.
+    async fn delete_run_states_for_summary(
+        &self,
+        database_url: &str,
+        summary_id: Uuid,
+        eval_version: &str,
+    ) -> Result<(), Self::Error>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -147,39 +201,6 @@ pub struct WorstOffenderRow {
     pub metric: String,
     pub score: f32,
     pub eval_version: String,
-}
-
-// ---- Brainatlas HTTP client trait ----
-
-#[async_trait]
-pub trait BrainatlasClient: Send + Sync {
-    type Error: Error + Send + Sync + 'static;
-
-    async fn extract_claims(
-        &self,
-        base_url: &str,
-        req: brpc::ExtractClaimsRequest,
-    ) -> Result<domain::ClaimsResponse, Self::Error>;
-
-    async fn embed(
-        &self,
-        base_url: &str,
-        req: brpc::EmbedRequest,
-    ) -> Result<brpc::EmbedResponse, Self::Error>;
-
-    async fn judge_groundedness(
-        &self,
-        base_url: &str,
-        req: brpc::JudgeGroundednessRequest,
-    ) -> Result<domain::GroundednessVerdict, Self::Error>;
-
-    async fn judge_rubric(
-        &self,
-        base_url: &str,
-        req: brpc::JudgeRubricRequest,
-    ) -> Result<domain::RubricScores, Self::Error>;
-
-    async fn check_health(&self, base_url: &str) -> Result<(), Self::Error>;
 }
 
 // ---- Convenience: convert any infra error into a ServiceError ----

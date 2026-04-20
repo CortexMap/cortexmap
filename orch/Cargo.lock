@@ -45,6 +45,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "domain",
+ "serde",
  "thiserror",
  "tokio",
  "tracing",

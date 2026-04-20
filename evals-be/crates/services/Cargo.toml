@@ -13,6 +13,5 @@ tracing.workspace = true
 chrono.workspace = true
 domain.workspace = true
 brainatlas-rpc-types.workspace = true
-futures.workspace = true
-backon.workspace = true
+rpc-types.workspace = true
 tokio.workspace = true

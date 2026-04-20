@@ -1,14 +1,19 @@
-//! Phase-4 eval orchestrator service.
+//! Eval orchestrator — loop driver for the stateless evals-be service.
 //!
-//! Periodically discovers active summaries that have not yet been scored
-//! against the current `eval_version`, then fans out
-//! `POST /evals-be/api/evals/score` calls with a configurable concurrency.
+//! As of 2026-04-19 evals-be makes ZERO outbound HTTP calls. All LLM calls
+//! flow through orch:
 //!
-//! Decoupled by design: orch never touches `eval_scores` / `eval_runs`
-//! directly. It asks evals-be which summaries are unscored
-//! (`GET /evals-be/api/evals/unscored?eval_version=...&limit=...`) and lets
-//! evals-be do all the DB work. If evals-be is down, every cycle becomes a
-//! no-op until it recovers — no retry queue or cursor state is needed.
+//!  1. orch calls `POST /evals-be/api/evals/score/init` with a summary id.
+//!  2. evals-be returns a `NextAction::CallLlm { path, body, step_id }`
+//!     describing the LLM request it wants run on its behalf.
+//!  3. orch POSTs `body` to `{brainatlas_base_url}{path}` and gets the LLM
+//!     response JSON.
+//!  4. orch POSTs that response back to `POST /evals-be/api/evals/score/step`
+//!     with the original `run_id` + `step_id` inside a typed
+//!     `LlmResponsePayload`.
+//!  5. orch loops on (3)+(4) until `NextAction::Done` arrives.
+//!
+//! GET-shaped endpoints (`/status`, `/worst`) are unchanged.
 
 use crate::{EnvInfra, HttpClient, OrchDatabase, ServiceError};
 use app::{
@@ -21,9 +26,8 @@ use std::error::Error;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Wire types matching `evals-be/crates/rpc-types/src/lib.rs`. Duplicated here
-/// to avoid a workspace-cross-dependency from orch into the evals-be crate
-/// tree (orch and evals-be ship and version independently).
+// ---- Wire-type mirrors (matching evals-be/crates/rpc-types) ----
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UnscoredResponse {
     pub eval_version: String,
@@ -32,10 +36,64 @@ struct UnscoredResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ScoreRequest {
+struct InitScoreRequest {
     pub summary_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eval_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InitScoreResponse {
+    pub run_id: Uuid,
+    pub summary_id: Uuid,
+    pub eval_version: String,
+    pub next: NextAction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StepRequest {
+    pub run_id: Uuid,
+    pub step_id: Uuid,
+    pub llm_response: LlmResponsePayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StepResponse {
+    pub run_id: Uuid,
+    pub next: NextAction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum NextAction {
+    CallLlm {
+        step_id: Uuid,
+        endpoint: LlmEndpoint,
+        path: String,
+        body: serde_json::Value,
+    },
+    Done {
+        #[serde(default)]
+        metrics: Vec<MetricResult>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum LlmEndpoint {
+    ExtractClaims,
+    Embed,
+    JudgeGroundedness,
+    JudgeRubric,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum LlmResponsePayload {
+    Claims(serde_json::Value),
+    Embed(serde_json::Value),
+    Groundedness(serde_json::Value),
+    Rubric(serde_json::Value),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,13 +102,6 @@ struct MetricResult {
     pub score: f32,
     pub cached: bool,
     pub judge_model: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ScoreResponse {
-    pub summary_id: Uuid,
-    pub eval_version: String,
-    pub metrics: Vec<MetricResult>,
 }
 
 /// JSON shape returned by `GET /evals-be/api/evals/summary`. Decoded into
@@ -72,7 +123,6 @@ struct MetricStatsWire {
     pub count: i64,
 }
 
-/// Wire shape for `GET /evals-be/api/evals/worst`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WorstOffendersWire {
     pub metric: String,
@@ -92,6 +142,9 @@ struct WorstOffenderWire {
 /// How many summary IDs to request per `/unscored` call. Each cycle drains
 /// up to this many; if there are more, the next cycle picks them up.
 const UNSCORED_PAGE_SIZE: i64 = 200;
+/// Safety bound on the number of CallLlm steps orch will execute for a
+/// single summary before giving up.
+const MAX_STEPS_PER_RUN: usize = 100;
 
 pub struct EvalOrchestrator<I> {
     infra: Arc<I>,
@@ -108,8 +161,6 @@ where
     E: Error + Send + Sync + 'static,
     I: EnvInfra<Error = E> + OrchDatabase<Error = E> + HttpClient<Error = E> + Send + Sync,
 {
-    /// Read the orch config table. Falls back to the `ConfigKey` default if
-    /// the row is missing or unparsable.
     async fn get_config_string(&self, key: ConfigKey) -> Option<String> {
         let database_url = self.infra.get_env_var("DATABASE_URL").ok()?;
         self.infra
@@ -120,16 +171,32 @@ where
     }
 
     async fn evals_base_url(&self) -> Result<String, ServiceError<E>> {
-        // 1) explicit env var (preferred — survives DB outages)
         if let Ok(url) = self.infra.get_env_var("EVALS_BASE_URL") {
             return Ok(normalize_url(&url));
         }
-        // 2) orch_config row
         if let Some(url) = self.get_config_string(ConfigKey::EvalsBaseUrl).await {
             return Ok(normalize_url(&url));
         }
         Err(ServiceError::ConfigNotFound {
             key: "evals_base_url (EVALS_BASE_URL env or evals_base_url config row)".to_string(),
+        })
+    }
+
+    /// Brainatlas base URL — used by orch to execute `NextAction::CallLlm`
+    /// on evals-be's behalf. Prefer env (`BRAINATLAS_HTTP_ADDR`) then config.
+    async fn brainatlas_base_url(&self) -> Result<String, ServiceError<E>> {
+        if let Ok(url) = self.infra.get_env_var("BRAINATLAS_HTTP_ADDR") {
+            return Ok(normalize_url(&url));
+        }
+        if let Some(url) = self
+            .get_config_string(ConfigKey::BrainatlasBaseUrl)
+            .await
+        {
+            return Ok(normalize_url(&url));
+        }
+        Err(ServiceError::ConfigNotFound {
+            key: "brainatlas_base_url (BRAINATLAS_HTTP_ADDR env or brainatlas_base_url config row)"
+                .to_string(),
         })
     }
 
@@ -139,7 +206,6 @@ where
             .unwrap_or_else(|| "v1.0".to_string())
     }
 
-    /// Returns true if the orchestrator is enabled in config.
     pub async fn is_enabled(&self) -> bool {
         self.get_config_string(ConfigKey::EvalOrchestratorEnabled)
             .await
@@ -161,17 +227,18 @@ where
             .unwrap_or(5)
     }
 
-    /// Run a single orchestrator cycle: discover unscored summaries and fan
-    /// out score requests with the configured concurrency. Returns the count
-    /// of (succeeded, failed) score invocations so the caller can log it.
+    /// Run a single orchestrator cycle: discover unscored summaries and
+    /// drive the init→step→...→Done loop for each with the configured
+    /// concurrency. Returns (succeeded, failed).
     pub async fn run_cycle(&self) -> Result<(usize, usize), ServiceError<E>> {
-        let base_url = self.evals_base_url().await?;
+        let evals_base = self.evals_base_url().await?;
+        let brainatlas_base = self.brainatlas_base_url().await?;
         let version = self.eval_version().await;
         let concurrency = self.concurrency().await;
 
         let unscored_url = format!(
             "{}/evals-be/api/evals/unscored?eval_version={}&limit={}",
-            base_url, version, UNSCORED_PAGE_SIZE
+            evals_base, version, UNSCORED_PAGE_SIZE
         );
 
         let unscored: UnscoredResponse = self
@@ -190,26 +257,27 @@ where
             "Eval orchestrator: discovered unscored summaries"
         );
 
-        let score_url = format!("{}/evals-be/api/evals/score", base_url);
         let infra = Arc::clone(&self.infra);
+        let evals_base = Arc::new(evals_base);
+        let brainatlas_base = Arc::new(brainatlas_base);
+        let version = Arc::new(version);
 
-        let results: Vec<Result<ScoreResponse, ()>> = stream::iter(unscored.summary_ids)
+        let results: Vec<Result<(), ()>> = stream::iter(unscored.summary_ids)
             .map(|summary_id| {
-                let url = score_url.clone();
-                let ver = version.clone();
                 let infra = Arc::clone(&infra);
+                let evals_base = Arc::clone(&evals_base);
+                let brainatlas_base = Arc::clone(&brainatlas_base);
+                let version = Arc::clone(&version);
                 async move {
-                    let req = ScoreRequest {
-                        summary_id,
-                        eval_version: Some(ver),
-                    };
-                    match infra.post::<ScoreRequest, ScoreResponse>(&url, &req).await {
-                        Ok(resp) => Ok(resp),
+                    match drive_one(&*infra, &evals_base, &brainatlas_base, summary_id, &version)
+                        .await
+                    {
+                        Ok(_) => Ok(()),
                         Err(e) => {
                             tracing::warn!(
                                 error = %e,
                                 %summary_id,
-                                "Eval orchestrator: score request failed"
+                                "Eval orchestrator: scoring loop failed"
                             );
                             Err(())
                         }
@@ -225,8 +293,6 @@ where
         Ok((succeeded, failed))
     }
 
-    /// Fetch the per-metric aggregate from evals-be for the
-    /// `/orch/api/evals/status` endpoint.
     pub async fn get_status(&self) -> Result<EvalStatusSummary, ServiceError<E>> {
         let base_url = self.evals_base_url().await?;
         let version = self.eval_version().await;
@@ -258,8 +324,6 @@ where
         })
     }
 
-    /// Fetch the N worst-scoring summaries for the given metric. Backs
-    /// `/orch/api/evals/worst` and the dashboard "Worst Offenders" table.
     pub async fn get_worst(
         &self,
         metric: String,
@@ -289,6 +353,91 @@ where
                 .collect(),
         })
     }
+}
+
+/// Drive the full init→step→...→Done loop for one summary. Makes LLM calls
+/// against `brainatlas_base` on evals-be's behalf.
+async fn drive_one<I, E>(
+    infra: &I,
+    evals_base: &str,
+    brainatlas_base: &str,
+    summary_id: Uuid,
+    eval_version: &str,
+) -> Result<usize, Box<dyn Error + Send + Sync>>
+where
+    E: Error + Send + Sync + 'static,
+    I: HttpClient<Error = E> + Send + Sync,
+{
+    let init_url = format!("{}/evals-be/api/evals/score/init", evals_base);
+    let step_url = format!("{}/evals-be/api/evals/score/step", evals_base);
+
+    let init_req = InitScoreRequest {
+        summary_id,
+        eval_version: Some(eval_version.to_string()),
+    };
+    let init_resp: InitScoreResponse = infra
+        .post(&init_url, &init_req)
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+    let mut run_id = init_resp.run_id;
+    let mut next = init_resp.next;
+    let mut step_count = 0usize;
+
+    for _ in 0..MAX_STEPS_PER_RUN {
+        match next {
+            NextAction::Done { metrics } => {
+                tracing::debug!(
+                    %summary_id,
+                    metric_count = metrics.len(),
+                    step_count,
+                    "eval loop complete"
+                );
+                return Ok(step_count);
+            }
+            NextAction::CallLlm {
+                step_id,
+                endpoint,
+                path,
+                body,
+            } => {
+                step_count += 1;
+                // Call brainatlas with the body evals-be handed us.
+                let llm_url = format!("{}{}", brainatlas_base, path);
+                let llm_resp_json: serde_json::Value = infra
+                    .post::<serde_json::Value, serde_json::Value>(&llm_url, &body)
+                    .await
+                    .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+
+                // Wrap into the typed envelope evals-be expects.
+                let payload = match endpoint {
+                    LlmEndpoint::ExtractClaims => LlmResponsePayload::Claims(llm_resp_json),
+                    LlmEndpoint::Embed => LlmResponsePayload::Embed(llm_resp_json),
+                    LlmEndpoint::JudgeGroundedness => {
+                        LlmResponsePayload::Groundedness(llm_resp_json)
+                    }
+                    LlmEndpoint::JudgeRubric => LlmResponsePayload::Rubric(llm_resp_json),
+                };
+
+                let step_req = StepRequest {
+                    run_id,
+                    step_id,
+                    llm_response: payload,
+                };
+                let step_resp: StepResponse = infra
+                    .post(&step_url, &step_req)
+                    .await
+                    .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
+                run_id = step_resp.run_id;
+                next = step_resp.next;
+            }
+        }
+    }
+    Err(format!(
+        "eval loop for {} exceeded {} steps without Done",
+        summary_id, MAX_STEPS_PER_RUN
+    )
+    .into())
 }
 
 /// Normalize an HTTP address: prepend `http://` if missing, and replace

@@ -10,7 +10,7 @@ import {
   generateSummary,
   fetchBatchStatus,
 } from '../../api/cortexmap';
-import type { CortexmapRegion, OntologyNode, RegionSummary, RegionStatus, SummarySource } from '../../types';
+import type { CortexmapRegion, OntologyNode, RegionSummary, RegionStatus, SummarySource, SummaryEvalScores } from '../../types';
 import styles from './RegionDetail.module.css';
 
 interface BatchStatusData {
@@ -484,6 +484,76 @@ function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?:
             {summary.sources.length} chunks{uniquePapers > 0 ? ` / ${uniquePapers} papers` : ''}
           </span>
         )}
+      </div>
+      {summary.eval_scores && <EvalScoresBar scores={summary.eval_scores} />}
+    </div>
+  );
+}
+
+// ─── Eval scores strip (rendered at the bottom of each scored summary) ──
+
+const METRIC_DISPLAY: { key: string; label: string; invert?: boolean }[] = [
+  { key: 'rubric_relevance',        label: 'Relevance' },
+  { key: 'rubric_coherence',        label: 'Coherence' },
+  { key: 'rubric_specificity',      label: 'Specificity' },
+  { key: 'rubric_clinical_utility', label: 'Utility' },
+  { key: 'rubric_terminology',      label: 'Terminology' },
+  { key: 'claim_groundedness',      label: 'Groundedness' },
+  { key: 'hallucination_rate',      label: 'Hallucination', invert: true },
+  { key: 'section_completeness',    label: 'Completeness' },
+  { key: 'length_in_range',         label: 'Length' },
+  { key: 'acronym_mention',         label: 'Acronyms' },
+  { key: 'no_placeholder_text',     label: 'No Placeholders' },
+];
+
+function scoreColor(score: number, invert: boolean): string {
+  // For "invert" metrics (hallucination), a low value is good.
+  const good = invert ? 1 - score : score;
+  if (good >= 0.8) return '#15803d'; // green
+  if (good >= 0.5) return '#b45309'; // amber
+  return '#dc2626';                  // red
+}
+
+function EvalScoresBar({ scores }: { scores: SummaryEvalScores }) {
+  const entries = METRIC_DISPLAY
+    .map((m) => ({ ...m, value: scores.scores[m.key] }))
+    .filter((m) => typeof m.value === 'number');
+
+  if (entries.length === 0) return null;
+
+  // Overall score: mean of displayed metrics, flipping "invert" metrics to a "higher is better" scale.
+  const overall = entries.reduce((acc, m) => acc + (m.invert ? 1 - (m.value as number) : (m.value as number)), 0) / entries.length;
+
+  return (
+    <div className={styles.evalBar} title={`Eval version: ${scores.eval_version}`}>
+      <div className={styles.evalHeader}>
+        <span className={styles.evalTitle}>Evaluation</span>
+        <span className={styles.evalOverall} style={{ color: scoreColor(overall, false) }}>
+          {(overall * 100).toFixed(0)}%
+        </span>
+        <span className={styles.evalVersion}>{scores.eval_version}</span>
+      </div>
+      <div className={styles.evalGrid}>
+        {entries.map((m) => {
+          const color = scoreColor(m.value as number, !!m.invert);
+          const pct = Math.round(((m.value as number)) * 100);
+          return (
+            <div
+              key={m.key}
+              className={styles.evalMetric}
+              title={`${m.label}: ${(m.value as number).toFixed(3)}${scores.judge_models[m.key] ? ` — judge: ${scores.judge_models[m.key]}` : ''}`}
+            >
+              <span className={styles.evalLabel}>{m.label}</span>
+              <span className={styles.evalValue} style={{ color }}>{pct}%</span>
+              <span className={styles.evalTrack}>
+                <span
+                  className={styles.evalFill}
+                  style={{ width: `${(m.value as number) * 100}%`, backgroundColor: color }}
+                />
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

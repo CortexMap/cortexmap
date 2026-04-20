@@ -2,8 +2,8 @@ use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
     GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, PipelineTriggerRequest,
     PipelineTriggerResult, RedisStats, Region, RegionStatusResult, SearchRegionResult,
-    SearchResponse, StopWorkersRequest, SystemStats, WorkerAllocationResponse, WorkerStatus,
-    WorkerStopResponse,
+    SearchResponse, StopWorkersRequest, SummaryFreshness, SystemStats, WorkerAllocationResponse,
+    WorkerStatus, WorkerStopResponse,
 };
 use uuid::Uuid;
 
@@ -90,6 +90,11 @@ pub trait OrchApi: Send + Sync {
     /// Get comprehensive system statistics for the dev dashboard
     async fn get_system_stats(&self) -> Result<SystemStats, Self::Error>;
 
+    /// Per-region summary freshness counts (fresh / stale / no_summary).
+    /// Backs `/dev/api/summary-freshness`. Cutoff comes from
+    /// `summary_staleness_days` config (default 30).
+    async fn get_summary_freshness(&self) -> Result<SummaryFreshness, Self::Error>;
+
     /// Manually trigger pipeline phases on demand. Each phase is opt-in via
     /// the request body so clients can e.g. only rediscover papers without
     /// regenerating queries. Phases run sequentially in the fixed order:
@@ -103,4 +108,16 @@ pub trait OrchApi: Send + Sync {
     /// per prefix, memory usage, hit rate). Always succeeds: a Redis outage
     /// surfaces as `connected: false` with an `error` string.
     async fn get_redis_stats(&self) -> Result<RedisStats, Self::Error>;
+
+    /// Aggregate eval status: proxies the latest evals-be `/api/evals/summary`
+    /// for the configured `eval_version`. Powers `/orch/api/evals/status` and
+    /// the dashboard "Evals" panel.
+    async fn get_eval_status(&self) -> Result<app::EvalStatusSummary, Self::Error>;
+
+    /// Worst-offenders for one metric. Proxies `/evals-be/api/evals/worst`.
+    async fn get_eval_worst(
+        &self,
+        metric: String,
+        limit: i64,
+    ) -> Result<app::EvalWorstOffenders, Self::Error>;
 }

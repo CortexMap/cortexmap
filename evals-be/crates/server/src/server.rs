@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use infra::{EvalsInfra, InfraError};
-use rpc_types::ScoreRequest;
+use rpc_types::{InitScoreRequest, StepRequest};
 use serde::Deserialize;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -24,6 +24,7 @@ impl IntoResponse for ServerError {
             Error::AppError(AppError::SummaryNotFound) => {
                 (StatusCode::NOT_FOUND, "summary not found".to_string())
             }
+            Error::AppError(AppError::InvalidArg(m)) => (StatusCode::BAD_REQUEST, m.clone()),
             Error::AppError(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         };
         (status, Json(serde_json::json!({ "error": msg }))).into_response()
@@ -37,7 +38,7 @@ impl From<Error> for ServerError {
 }
 
 pub struct EvalsServer {
-    api: Arc<Evals<EvalsInfra, EvalsInfra, EvalsInfra, InfraError>>,
+    api: Arc<Evals<EvalsInfra, EvalsInfra, InfraError>>,
 }
 
 impl Clone for EvalsServer {
@@ -49,7 +50,7 @@ impl Clone for EvalsServer {
 }
 
 impl EvalsServer {
-    pub fn new(api: Arc<Evals<EvalsInfra, EvalsInfra, EvalsInfra, InfraError>>) -> Self {
+    pub fn new(api: Arc<Evals<EvalsInfra, EvalsInfra, InfraError>>) -> Self {
         Self { api }
     }
 
@@ -58,7 +59,8 @@ impl EvalsServer {
 
         let routes = Router::new()
             .route("/health", get(health))
-            .route("/api/evals/score", post(score))
+            .route("/api/evals/score/init", post(init_score))
+            .route("/api/evals/score/step", post(step_score))
             .route("/api/evals/scores/{summary_id}", get(scores_for_summary))
             .route("/api/evals/summary", get(aggregate_summary))
             .route("/api/evals/worst", get(worst_offenders))
@@ -96,11 +98,19 @@ async fn health() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
 }
 
-async fn score(
+async fn init_score(
     State(server): State<EvalsServer>,
-    Json(req): Json<ScoreRequest>,
+    Json(req): Json<InitScoreRequest>,
 ) -> Result<impl IntoResponse, ServerError> {
-    let resp = server.api.score(req).await?;
+    let resp = server.api.init_score(req).await?;
+    Ok(Json(resp))
+}
+
+async fn step_score(
+    State(server): State<EvalsServer>,
+    Json(req): Json<StepRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let resp = server.api.step_score(req).await?;
     Ok(Json(resp))
 }
 

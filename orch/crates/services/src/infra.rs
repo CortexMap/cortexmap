@@ -239,6 +239,19 @@ pub struct SystemStatsRaw {
     pub total_summaries: i64,
 }
 
+/// Counts buckets for the summary-freshness dashboard panel.
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
+pub struct SummaryFreshnessCounts {
+    /// Regions whose latest active summary is younger than `staleness_days`.
+    pub fresh: i64,
+    /// Regions whose latest active summary is older than `staleness_days`.
+    pub stale: i64,
+    /// Regions with no usable active summary.
+    pub no_summary: i64,
+    /// Cutoff used to bucket the rows.
+    pub staleness_days: i64,
+}
+
 /// Region mapping information from region_mapping table
 #[derive(Debug, Clone)]
 pub struct RegionMapping {
@@ -357,6 +370,22 @@ pub trait RegionMappingQueries: Send + Sync {
 
     /// Count fetch_tasks that are pending or in_progress.
     async fn get_pending_fetch_task_count(&self, database_url: &str) -> Result<i64, Self::Error>;
+
+    /// Get the latest active non-empty summary's `created_at` for a region.
+    /// Returns `None` if the region has never produced a usable summary.
+    async fn get_latest_active_summary_age(
+        &self,
+        database_url: &str,
+        region_id: Uuid,
+    ) -> Result<Option<chrono::NaiveDateTime>, Self::Error>;
+
+    /// Aggregate summary-freshness counts for the dev dashboard.
+    /// `staleness_days` is the cutoff: summaries older than this are "stale".
+    async fn get_summary_freshness_counts(
+        &self,
+        database_url: &str,
+        staleness_days: i64,
+    ) -> Result<SummaryFreshnessCounts, Self::Error>;
 
     /// Get comprehensive system stats for the dev dashboard (aggregate counts).
     async fn get_system_stats(&self, database_url: &str) -> Result<SystemStatsRaw, Self::Error>;

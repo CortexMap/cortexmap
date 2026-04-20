@@ -15,3 +15,5 @@ pub use proto::{
     brain_region_service_client::BrainRegionServiceClient,
     brain_region_service_server::{BrainRegionService, BrainRegionServiceServer},
 };
+
+pub mod evals;
