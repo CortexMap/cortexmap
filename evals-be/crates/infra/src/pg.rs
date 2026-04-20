@@ -279,7 +279,7 @@ impl EvalsPostgresql {
                 }
 
                 let total_summaries: Vec<CountRow> = diesel::sql_query(
-                    "SELECT COUNT(*) AS count FROM region_summary WHERE is_active = true",
+                    "SELECT COUNT(*) AS count FROM region_summary WHERE summary IS NOT NULL",
                 )
                 .load(c)?;
 
@@ -464,8 +464,7 @@ impl EvalsPostgresql {
                      FROM region_summary rs
                      LEFT JOIN eval_runs er
                             ON er.summary_id = rs.id AND er.eval_version = $1
-                     WHERE rs.is_active = true
-                       AND rs.summary IS NOT NULL
+                     WHERE rs.summary IS NOT NULL
                        AND (er.id IS NULL OR er.status = 'failed')
                      ORDER BY rs.created_at ASC NULLS FIRST
                      LIMIT $2",
