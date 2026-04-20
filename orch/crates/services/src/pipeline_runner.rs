@@ -306,8 +306,7 @@ where
             .map_err(ServiceError::InfraError)?
             .and_then(|v| v.parse().ok())
             .unwrap_or(30);
-        let stale_cutoff = chrono::Utc::now().naive_utc()
-            - chrono::Duration::days(staleness_days);
+        let stale_cutoff = chrono::Utc::now().naive_utc() - chrono::Duration::days(staleness_days);
 
         let mut regions_scanned = 0usize;
         let mut regions_skipped_fresh = 0usize;

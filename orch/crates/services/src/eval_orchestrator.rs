@@ -16,9 +16,7 @@
 //! GET-shaped endpoints (`/status`, `/worst`) are unchanged.
 
 use crate::{EnvInfra, HttpClient, OrchDatabase, ServiceError};
-use app::{
-    EvalMetricStatsView, EvalStatusSummary, EvalWorstOffenderEntry, EvalWorstOffenders,
-};
+use app::{EvalMetricStatsView, EvalStatusSummary, EvalWorstOffenderEntry, EvalWorstOffenders};
 use domain::ConfigKey;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -188,10 +186,7 @@ where
         if let Ok(url) = self.infra.get_env_var("BRAINATLAS_HTTP_ADDR") {
             return Ok(normalize_url(&url));
         }
-        if let Some(url) = self
-            .get_config_string(ConfigKey::BrainatlasBaseUrl)
-            .await
-        {
+        if let Some(url) = self.get_config_string(ConfigKey::BrainatlasBaseUrl).await {
             return Ok(normalize_url(&url));
         }
         Err(ServiceError::ConfigNotFound {
@@ -300,8 +295,11 @@ where
             "{}/evals-be/api/evals/summary?eval_version={}",
             base_url, version
         );
-        let wire: EvalSummaryWire =
-            self.infra.get(&url).await.map_err(ServiceError::InfraError)?;
+        let wire: EvalSummaryWire = self
+            .infra
+            .get(&url)
+            .await
+            .map_err(ServiceError::InfraError)?;
         Ok(EvalStatusSummary {
             eval_version: wire.eval_version,
             total_summaries: wire.total_summaries,
@@ -335,8 +333,11 @@ where
             "{}/evals-be/api/evals/worst?metric={}&limit={}&eval_version={}",
             base_url, metric, limit, version
         );
-        let wire: WorstOffendersWire =
-            self.infra.get(&url).await.map_err(ServiceError::InfraError)?;
+        let wire: WorstOffendersWire = self
+            .infra
+            .get(&url)
+            .await
+            .map_err(ServiceError::InfraError)?;
         Ok(EvalWorstOffenders {
             metric: wire.metric,
             limit: wire.limit,

@@ -6,8 +6,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use domain::rpc_types::evals::{
-    EmbedRequest, EmbedResponse, ExtractClaimsRequest, JudgeGroundednessRequest,
-    JudgeRubricRequest,
+    EmbedRequest, EmbedResponse, ExtractClaimsRequest, JudgeGroundednessRequest, JudgeRubricRequest,
 };
 use domain::rpc_types::{
     GenerateQueriesRequest, ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest,

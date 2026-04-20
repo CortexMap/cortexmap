@@ -203,18 +203,12 @@ where
             tracing::info!("Eval orchestrator loop started");
 
             loop {
-                let interval_secs = eval_services
-                    .eval_orchestrator_poll_interval_secs()
-                    .await;
+                let interval_secs = eval_services.eval_orchestrator_poll_interval_secs().await;
 
                 if eval_services.eval_orchestrator_enabled().await {
                     match eval_services.eval_orchestrator_run_cycle().await {
                         Ok((succeeded, failed)) if succeeded + failed > 0 => {
-                            tracing::info!(
-                                succeeded,
-                                failed,
-                                "Eval orchestrator: cycle complete"
-                            );
+                            tracing::info!(succeeded, failed, "Eval orchestrator: cycle complete");
                         }
                         Ok(_) => {
                             tracing::debug!("Eval orchestrator: no unscored summaries");
@@ -421,7 +415,9 @@ where
         metric: String,
         limit: i64,
     ) -> Result<crate::EvalWorstOffenders, E> {
-        self.services.eval_orchestrator_get_worst(metric, limit).await
+        self.services
+            .eval_orchestrator_get_worst(metric, limit)
+            .await
     }
 
     /// Get all brain regions from region_mapping

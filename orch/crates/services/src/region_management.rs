@@ -125,8 +125,7 @@ where
                     && let Ok(evals_base) =
                         resolve_evals_base_url(infra.as_ref(), &database_url).await
                 {
-                    let summary_ids: Vec<Uuid> =
-                        result.iter().map(|s| s.summary_id).collect();
+                    let summary_ids: Vec<Uuid> = result.iter().map(|s| s.summary_id).collect();
                     let enriched: Vec<(Uuid, Option<SummaryEvalScores>)> =
                         stream::iter(summary_ids)
                             .map(|sid| {

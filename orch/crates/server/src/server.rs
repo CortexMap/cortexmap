@@ -80,7 +80,10 @@ impl OrchServer {
             .route("/api/pipeline/trigger", post(trigger_pipeline_handler))
             .route("/dev/stats", get(dev_stats_page_handler))
             .route("/dev/api/system-stats", get(dev_system_stats_handler))
-            .route("/dev/api/summary-freshness", get(dev_summary_freshness_handler))
+            .route(
+                "/dev/api/summary-freshness",
+                get(dev_summary_freshness_handler),
+            )
             .route("/dev/api/redis-stats", get(dev_redis_stats_handler))
             .route("/api/evals/status", get(get_eval_status_handler))
             .route("/api/evals/worst", get(get_eval_worst_handler))

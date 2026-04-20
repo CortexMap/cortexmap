@@ -159,12 +159,10 @@ where
 // Prompt templates loaded at compile time. Live in the `app` crate per the
 // project convention; we reference them via a relative path so the service
 // layer can use them without a runtime file dependency.
-const EXTRACT_CLAIMS_SYSTEM: &str =
-    include_str!("../../app/prompts/extract_claims_system.md");
+const EXTRACT_CLAIMS_SYSTEM: &str = include_str!("../../app/prompts/extract_claims_system.md");
 const JUDGE_GROUNDEDNESS_SYSTEM: &str =
     include_str!("../../app/prompts/judge_groundedness_system.md");
-const JUDGE_RUBRIC_SYSTEM: &str =
-    include_str!("../../app/prompts/judge_rubric_system.md");
+const JUDGE_RUBRIC_SYSTEM: &str = include_str!("../../app/prompts/judge_rubric_system.md");
 
 /// Parse a JSON payload that may be wrapped in markdown fences or
 /// surrounded by stray prose. Strips fences and falls back to the
