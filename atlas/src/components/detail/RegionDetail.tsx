@@ -492,18 +492,63 @@ function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?:
 
 // ─── Eval scores strip (rendered at the bottom of each scored summary) ──
 
-const METRIC_DISPLAY: { key: string; label: string; invert?: boolean }[] = [
-  { key: 'rubric_relevance',        label: 'Relevance' },
-  { key: 'rubric_coherence',        label: 'Coherence' },
-  { key: 'rubric_specificity',      label: 'Specificity' },
-  { key: 'rubric_clinical_utility', label: 'Utility' },
-  { key: 'rubric_terminology',      label: 'Terminology' },
-  { key: 'claim_groundedness',      label: 'Groundedness' },
-  { key: 'hallucination_rate',      label: 'Hallucination', invert: true },
-  { key: 'section_completeness',    label: 'Completeness' },
-  { key: 'length_in_range',         label: 'Length' },
-  { key: 'acronym_mention',         label: 'Acronyms' },
-  { key: 'no_placeholder_text',     label: 'No Placeholders' },
+const METRIC_DISPLAY: { key: string; label: string; invert?: boolean; description: string }[] = [
+  {
+    key: 'rubric_relevance',
+    label: 'Relevance',
+    description: 'Rubric judge (gpt-4o): does the summary actually describe the named region rather than drifting to neighbouring or parent structures?',
+  },
+  {
+    key: 'rubric_coherence',
+    label: 'Coherence',
+    description: 'Rubric judge (gpt-4o): is the prose well-organised, internally consistent, and free of contradiction or redundancy?',
+  },
+  {
+    key: 'rubric_specificity',
+    label: 'Specificity',
+    description: 'Rubric judge (gpt-4o): does it contain concrete neuroanatomical detail (cell types, layers, connections) rather than generic filler?',
+  },
+  {
+    key: 'rubric_clinical_utility',
+    label: 'Utility',
+    description: 'Rubric judge (gpt-4o): would a clinician or neuroscientist find the summary actionable — named pathologies, functional roles, diagnostic relevance?',
+  },
+  {
+    key: 'rubric_terminology',
+    label: 'Terminology',
+    description: 'Rubric judge (gpt-4o): does it use correct, standard neuroanatomical terminology (canonical Latin/Greek names, standard pathway labels)?',
+  },
+  {
+    key: 'claim_groundedness',
+    label: 'Groundedness',
+    description: 'Groundedness judge (gpt-4o-mini): extracts atomic factual claims, retrieves the top-k most-similar source chunks, asks the judge whether each claim is supported. Score = fraction rated "supported".',
+  },
+  {
+    key: 'hallucination_rate',
+    label: 'Hallucination',
+    invert: true,
+    description: 'Inverse of groundedness: the fraction of atomic claims the judge rated unsupported or partial. Low = good.',
+  },
+  {
+    key: 'section_completeness',
+    label: 'Completeness',
+    description: 'Structural check (no LLM): fraction of required markdown sections present — Overview, Anatomy & Connectivity, Function, Clinical Relevance.',
+  },
+  {
+    key: 'length_in_range',
+    label: 'Length',
+    description: 'Structural check (no LLM): binary score confirming the summary word count falls within an acceptable window (not too short or bloated).',
+  },
+  {
+    key: 'acronym_mention',
+    label: 'Acronyms',
+    description: 'Structural check (no LLM): verifies the region\u2019s acronym (e.g. "IPN") appears at least once in the summary body.',
+  },
+  {
+    key: 'no_placeholder_text',
+    label: 'No Placeholders',
+    description: 'Structural check (no LLM): scans for LLM failure strings like "I cannot", "insufficient information", [TODO], etc. 0 if any found, 1 otherwise.',
+  },
 ];
 
 function scoreColor(score: number, invert: boolean): string {
@@ -515,6 +560,8 @@ function scoreColor(score: number, invert: boolean): string {
 }
 
 function EvalScoresBar({ scores }: { scores: SummaryEvalScores }) {
+  const [infoOpen, setInfoOpen] = useState(false);
+
   const entries = METRIC_DISPLAY
     .map((m) => ({ ...m, value: scores.scores[m.key] }))
     .filter((m) => typeof m.value === 'number');
@@ -528,11 +575,50 @@ function EvalScoresBar({ scores }: { scores: SummaryEvalScores }) {
     <div className={styles.evalBar} title={`Eval version: ${scores.eval_version}`}>
       <div className={styles.evalHeader}>
         <span className={styles.evalTitle}>Evaluation</span>
+        <button
+          type="button"
+          className={styles.evalInfoBtn}
+          onClick={(e) => { e.stopPropagation(); setInfoOpen((v) => !v); }}
+          aria-expanded={infoOpen}
+          aria-label="What do these metrics mean?"
+          title="What do these metrics mean?"
+        >
+          i
+        </button>
         <span className={styles.evalOverall} style={{ color: scoreColor(overall, false) }}>
           {(overall * 100).toFixed(0)}%
         </span>
         <span className={styles.evalVersion}>{scores.eval_version}</span>
       </div>
+
+      {infoOpen && (
+        <div className={styles.evalInfoPanel}>
+          <div className={styles.evalInfoHeader}>
+            <span>Metric definitions</span>
+            <button
+              type="button"
+              className={styles.evalInfoClose}
+              onClick={() => setInfoOpen(false)}
+              aria-label="Close"
+            >
+              {'\u00D7'}
+            </button>
+          </div>
+          <dl className={styles.evalInfoList}>
+            {METRIC_DISPLAY.map((m) => (
+              <div key={m.key} className={styles.evalInfoItem}>
+                <dt className={styles.evalInfoLabel}>{m.label}</dt>
+                <dd className={styles.evalInfoDesc}>{m.description}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className={styles.evalInfoFooter}>
+            Overall = mean of all present metrics (hallucination flipped so higher = better).
+            Green &#8805; 80%, amber 50\u201379%, red &lt; 50%.
+          </div>
+        </div>
+      )}
+
       <div className={styles.evalGrid}>
         {entries.map((m) => {
           const color = scoreColor(m.value as number, !!m.invert);
@@ -541,7 +627,7 @@ function EvalScoresBar({ scores }: { scores: SummaryEvalScores }) {
             <div
               key={m.key}
               className={styles.evalMetric}
-              title={`${m.label}: ${(m.value as number).toFixed(3)}${scores.judge_models[m.key] ? ` — judge: ${scores.judge_models[m.key]}` : ''}`}
+              title={`${m.label}: ${(m.value as number).toFixed(3)}${scores.judge_models[m.key] ? ` \u2014 judge: ${scores.judge_models[m.key]}` : ''}\n\n${m.description}`}
             >
               <span className={styles.evalLabel}>{m.label}</span>
               <span className={styles.evalValue} style={{ color }}>{pct}%</span>
