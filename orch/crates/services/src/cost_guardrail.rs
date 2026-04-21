@@ -27,6 +27,49 @@ struct UsageAggregateWire {
     pub total_calls: i64,
 }
 
+/// Full mirror of brainatlas-be's `UsageAggregate`. Used by the detailed
+/// dev-dashboard endpoint (distinct from the scalar `UsageAggregateWire`
+/// used by the guardrail threshold check to keep that hot path small).
+#[derive(Debug, Clone, Default, Deserialize)]
+struct UsageAggregateDetailedWire {
+    #[serde(default)]
+    pub total_cost_usd: f64,
+    #[serde(default)]
+    pub total_tokens: i64,
+    #[serde(default)]
+    pub total_prompt_tokens: i64,
+    #[serde(default)]
+    pub total_completion_tokens: i64,
+    #[serde(default)]
+    pub total_calls: i64,
+    #[serde(default)]
+    pub by_model: Vec<UsageByModelWire>,
+    #[serde(default)]
+    pub by_caller_tag: Vec<UsageByCallerTagWire>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UsageByModelWire {
+    pub model: String,
+    #[serde(default)]
+    pub total_cost_usd: f64,
+    #[serde(default)]
+    pub total_tokens: i64,
+    #[serde(default)]
+    pub total_calls: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UsageByCallerTagWire {
+    pub caller_tag: String,
+    #[serde(default)]
+    pub total_cost_usd: f64,
+    #[serde(default)]
+    pub total_tokens: i64,
+    #[serde(default)]
+    pub total_calls: i64,
+}
+
 pub struct CostGuardrail<I> {
     infra: Arc<I>,
 }
@@ -125,12 +168,15 @@ where
         };
 
         let since = chrono::Utc::now() - chrono::Duration::hours(24);
-        // RFC 3339 uses only `-`, `:`, `T`, `.`, and digits — all URL-safe
-        // in a query string. No percent-encoding needed.
+        // Emit RFC 3339 with a `Z` suffix instead of `+00:00`. An unescaped `+`
+        // inside a query-string value is decoded to space by axum's `Query`
+        // extractor (per the `application/x-www-form-urlencoded` spec), which
+        // broke brainatlas-be's RFC 3339 parse. `Z` sidesteps that entirely
+        // and is the canonical UTC form anyway. See also `get_summary` below.
         let url = format!(
             "{}/brainatlas-be/api/llm/usage?since={}",
             base.trim_end_matches('/'),
-            since.to_rfc3339()
+            since.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
         );
 
         let agg: UsageAggregateWire = match self.infra.get(&url).await {
@@ -174,6 +220,68 @@ where
         }
 
         Some(agg.total_cost_usd)
+    }
+
+    /// Fetch a detailed usage aggregate from brainatlas-be for the
+    /// dev-dashboard. Unlike `run_once`, this surfaces errors to the caller
+    /// so the HTTP handler can return a meaningful 5xx.
+    ///
+    /// `since_hours = None` means "all time" (no `since` query param).
+    pub async fn get_summary(
+        &self,
+        since_hours: Option<u32>,
+    ) -> Result<domain::LlmCostSummary, ServiceError<E>> {
+        let base = self.brainatlas_base_url().await?;
+        let url = match since_hours {
+            Some(hours) => {
+                let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+                // Use `Z` form (not `+00:00`) — see comment in `run_once`.
+                format!(
+                    "{}/brainatlas-be/api/llm/usage?since={}",
+                    base.trim_end_matches('/'),
+                    since.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+                )
+            }
+            None => format!(
+                "{}/brainatlas-be/api/llm/usage",
+                base.trim_end_matches('/')
+            ),
+        };
+
+        let wire: UsageAggregateDetailedWire = self
+            .infra
+            .get(&url)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        Ok(domain::LlmCostSummary {
+            since_hours,
+            total_cost_usd: wire.total_cost_usd,
+            total_tokens: wire.total_tokens,
+            total_prompt_tokens: wire.total_prompt_tokens,
+            total_completion_tokens: wire.total_completion_tokens,
+            total_calls: wire.total_calls,
+            by_model: wire
+                .by_model
+                .into_iter()
+                .map(|m| domain::LlmCostByModel {
+                    model: m.model,
+                    total_cost_usd: m.total_cost_usd,
+                    total_tokens: m.total_tokens,
+                    total_calls: m.total_calls,
+                })
+                .collect(),
+            by_caller_tag: wire
+                .by_caller_tag
+                .into_iter()
+                .map(|t| domain::LlmCostByCallerTag {
+                    caller_tag: t.caller_tag,
+                    total_cost_usd: t.total_cost_usd,
+                    total_tokens: t.total_tokens,
+                    total_calls: t.total_calls,
+                })
+                .collect(),
+        })
     }
 }
 

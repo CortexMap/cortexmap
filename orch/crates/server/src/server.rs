@@ -120,6 +120,10 @@ where
                 get(dev_summary_freshness_handler::<E, S>),
             )
             .route("/dev/api/redis-stats", get(dev_redis_stats_handler::<E, S>))
+            .route(
+                "/dev/api/llm-cost",
+                get(dev_llm_cost_handler::<E, S>),
+            )
             .route("/api/evals/status", get(get_eval_status_handler::<E, S>))
             .route("/api/evals/worst", get(get_eval_worst_handler::<E, S>))
             .route(
@@ -426,5 +430,23 @@ where
     S: Services<Error = E> + 'static,
 {
     let result = server.api.get_eval_run_cost(run_id).await?;
+    Ok(Json(result))
+}
+
+#[derive(serde::Deserialize)]
+struct LlmCostQuery {
+    /// Time window in hours; omit for "all time".
+    since_hours: Option<u32>,
+}
+
+async fn dev_llm_cost_handler<E, S>(
+    State(server): State<OrchServer<S>>,
+    axum::extract::Query(q): axum::extract::Query<LlmCostQuery>,
+) -> Result<impl IntoResponse, ServerError<E>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+    S: Services<Error = E> + 'static,
+{
+    let result = server.api.get_llm_cost_summary(q.since_hours).await?;
     Ok(Json(result))
 }

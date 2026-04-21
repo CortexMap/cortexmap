@@ -488,4 +488,11 @@ where
     async fn cost_guardrail_run_once(&self) -> Option<f64> {
         self.cost_guardrail.run_once().await
     }
+
+    async fn get_llm_cost_summary(
+        &self,
+        since_hours: Option<u32>,
+    ) -> Result<domain::LlmCostSummary, Self::Error> {
+        self.cost_guardrail.get_summary(since_hours).await
+    }
 }

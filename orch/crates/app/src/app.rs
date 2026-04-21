@@ -451,6 +451,17 @@ where
         self.services.eval_orchestrator_get_run_cost(run_id).await
     }
 
+    /// Detailed LLM cost aggregate for the dev dashboard. Proxies to
+    /// brainatlas-be's `/api/llm/usage` with an optional `since` filter.
+    ///
+    /// `since_hours = None` means "all time".
+    pub async fn get_llm_cost_summary(
+        &self,
+        since_hours: Option<u32>,
+    ) -> Result<domain::LlmCostSummary, E> {
+        self.services.get_llm_cost_summary(since_hours).await
+    }
+
     /// Get all brain regions from region_mapping
     pub async fn get_all_regions(&self) -> Result<Vec<domain::Region>, E> {
         self.services.get_all_regions().await

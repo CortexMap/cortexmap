@@ -227,4 +227,14 @@ where
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
+
+    async fn get_llm_cost_summary(
+        &self,
+        since_hours: Option<u32>,
+    ) -> Result<domain::LlmCostSummary, Self::Error> {
+        self.app()
+            .get_llm_cost_summary(since_hours)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
 }

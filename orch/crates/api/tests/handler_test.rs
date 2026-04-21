@@ -506,6 +506,12 @@ impl CostGuardrailOrchestration for FakeServices {
     async fn cost_guardrail_run_once(&self) -> Option<f64> {
         None
     }
+    async fn get_llm_cost_summary(
+        &self,
+        _since_hours: Option<u32>,
+    ) -> Result<domain::LlmCostSummary, Self::Error> {
+        Ok(domain::LlmCostSummary::default())
+    }
 }
 
 // ---------------------------------------------------------------------------

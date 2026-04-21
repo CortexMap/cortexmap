@@ -338,6 +338,14 @@ pub trait CostGuardrailOrchestration: Send + Sync {
     /// succeeded, `None` when it was skipped or failed. Never errors — all
     /// failures are swallowed and logged.
     async fn cost_guardrail_run_once(&self) -> Option<f64>;
+
+    /// Fetch a detailed LLM cost summary over the requested window.
+    /// `since_hours = None` means all time; otherwise the query restricts
+    /// the rows to the last `N` hours. Backs `/orch/dev/api/llm-cost`.
+    async fn get_llm_cost_summary(
+        &self,
+        since_hours: Option<u32>,
+    ) -> Result<domain::LlmCostSummary, Self::Error>;
 }
 
 pub trait Services:

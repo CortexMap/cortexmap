@@ -318,6 +318,36 @@
     <div id="redisPrefixes" style="overflow-x:auto"></div>
   </div>
 
+  <!-- LLM Cost -->
+  <div class="card wide">
+    <h2>
+      LLM Cost
+      <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim); margin-left: 0.5rem;" data-tip="Aggregated from brainatlas-be llm_call_usage. Cost is computed from the per-model USD rates recorded at call time.">brainatlas-be llm_call_usage aggregate</span>
+      <span style="float: right; display: inline-flex; align-items: center; gap: 0.4rem;">
+        <label for="costWindow" style="font-size: 0.78rem; color: var(--text-dim); text-transform: none; letter-spacing: 0;">Window:</label>
+        <select id="costWindow" style="background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: var(--mono); font-size: 0.78rem; padding: 0.25rem 0.4rem;">
+          <option value="1">1h</option>
+          <option value="24" selected>24h</option>
+          <option value="168">7d</option>
+          <option value="720">30d</option>
+          <option value="">All time</option>
+        </select>
+      </span>
+    </h2>
+    <div id="costStatus" style="margin-bottom: 0.8rem"></div>
+    <div class="stat-row" id="costOverview" style="margin-bottom: 0.8rem"></div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem;">
+      <div>
+        <h3 style="font-size: 0.95rem; margin-bottom: 0.5rem;">By Model <span style="font-weight: normal; font-size: 0.75rem; color: var(--text-dim);" data-tip="Cost, tokens and calls grouped by the model field on each llm_call_usage row.">grouped by <code>model</code></span></h3>
+        <div id="costByModel" style="overflow-x:auto"></div>
+      </div>
+      <div>
+        <h3 style="font-size: 0.95rem; margin-bottom: 0.5rem;">By Caller Tag <span style="font-weight: normal; font-size: 0.75rem; color: var(--text-dim);" data-tip="Cost, tokens and calls grouped by caller_tag (e.g. 'summary', 'eval:groundedness', 'query_gen').">grouped by <code>caller_tag</code></span></h3>
+        <div id="costByCaller" style="overflow-x:auto"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Evals -->
   <div class="card wide">
     <h2>Evals <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim); margin-left: 0.5rem;" data-tip="Phase-4 quality evaluation: structural metrics + LLM-judged groundedness/rubric over generated region summaries.">automated quality scoring</span></h2>
@@ -550,7 +580,10 @@ async function poll() {
   fetching = true;
   $('spinner').classList.add('active');
 
-  const [health, stats, config, workers, sysStats, redis, evalStatus, evalWorst, freshness] = await Promise.all([
+  const costWindow = $('costWindow').value; // '' means all time
+  const costUrl = BASE + '/dev/api/llm-cost' + (costWindow ? `?since_hours=${costWindow}` : '');
+
+  const [health, stats, config, workers, sysStats, redis, evalStatus, evalWorst, freshness, cost] = await Promise.all([
     safeFetch(BASE + '/api/pipeline/status'),
     safeFetch(BASE + '/api/pipeline/stats'),
     safeFetch(BASE + '/api/config'),
@@ -560,6 +593,7 @@ async function poll() {
     safeFetch(BASE + '/api/evals/status'),
     safeFetch(BASE + '/api/evals/worst?metric=claim_groundedness&limit=10'),
     safeFetch(BASE + '/dev/api/summary-freshness'),
+    safeFetch(costUrl),
   ]);
 
   // Pipeline Health
@@ -603,6 +637,9 @@ async function poll() {
 
   // Evals
   renderEvals(evalStatus, evalWorst);
+
+  // LLM Cost
+  renderCost(cost, sysStats, evalStatus);
 
   $('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
   $('spinner').classList.remove('active');
@@ -778,6 +815,126 @@ function renderEvals(status, worst) {
   html += '</tbody></table>';
   tableEl.innerHTML = html;
 }
+
+// ---- LLM Cost ----
+
+// Format a USD amount with adaptive precision: full cents for < $1,
+// 4 decimals for < $100, 2 decimals otherwise. Small numbers get full
+// precision so $0.0003 doesn't render as $0.00.
+function fmtUsd(n) {
+  if (n == null) return '-';
+  const v = Number(n);
+  if (!isFinite(v)) return '-';
+  if (Math.abs(v) < 0.01) return '$' + v.toFixed(6);
+  if (Math.abs(v) < 1)    return '$' + v.toFixed(4);
+  if (Math.abs(v) < 100)  return '$' + v.toFixed(3);
+  return '$' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderCostBreakdownTable(containerId, rows, keyField, keyLabel, totalCost) {
+  const el = $(containerId);
+  if (!rows || rows.length === 0) {
+    el.innerHTML = '<div style="color:var(--text-dim);font-size:0.82rem;padding:0.4rem 0">No data.</div>';
+    return;
+  }
+  // Sort descending by total_cost_usd so the biggest spenders are on top.
+  const sorted = [...rows].sort((a, b) => (b.total_cost_usd || 0) - (a.total_cost_usd || 0));
+  let html = `<table>
+    <thead><tr>
+      <th>${keyLabel}</th>
+      <th class="num">Cost</th>
+      <th class="num">% of total</th>
+      <th class="num">Tokens</th>
+      <th class="num">Calls</th>
+      <th class="num">$/call</th>
+    </tr></thead><tbody>`;
+  for (const r of sorted) {
+    const cost = r.total_cost_usd || 0;
+    const tokens = r.total_tokens || 0;
+    const calls = r.total_calls || 0;
+    const share = totalCost > 0 ? ((cost / totalCost) * 100).toFixed(1) + '%' : '-';
+    const perCall = calls > 0 ? fmtUsd(cost / calls) : '-';
+    const name = r[keyField] == null || r[keyField] === '' ? '<span style="color:var(--text-dim)">(none)</span>' : r[keyField];
+    html += `<tr>
+      <td style="font-family:var(--mono);font-size:0.78rem">${name}</td>
+      <td class="num">${fmtUsd(cost)}</td>
+      <td class="num">${share}</td>
+      <td class="num">${fmt(tokens)}</td>
+      <td class="num">${fmt(calls)}</td>
+      <td class="num">${perCall}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function renderCost(c, sysStats, evalStatus) {
+  const statusEl = $('costStatus');
+  const overEl   = $('costOverview');
+
+  if (!c) {
+    statusEl.innerHTML = '<span class="badge badge-red">offline</span> <span style="color:var(--text-dim)">/dev/api/llm-cost unreachable (brainatlas-be may be down)</span>';
+    overEl.innerHTML = '';
+    $('costByModel').innerHTML = '';
+    $('costByCaller').innerHTML = '';
+    return;
+  }
+
+  const totalCost = c.total_cost_usd || 0;
+  const totalCalls = c.total_calls || 0;
+  const totalTokens = c.total_tokens || 0;
+  const windowLabel = c.since_hours == null
+    ? 'all time'
+    : (c.since_hours >= 24 && c.since_hours % 24 === 0
+        ? `last ${c.since_hours / 24}d`
+        : `last ${c.since_hours}h`);
+
+  statusEl.innerHTML = `<span class="badge badge-green">${windowLabel}</span> <span style="color:var(--text-dim)">aggregated from <code>llm_call_usage</code></span>`;
+
+  // Denominators are all-time (papers fetched via completed fetch_tasks,
+  // scored summaries in evals-be). When the user picks a non-"all time" window
+  // for cost, these ratios mix windowed cost with all-time denominators —
+  // surfaced in the tooltips below.
+  //
+  // We use completed fetch_tasks rather than papers.total_papers because the
+  // latter is 0 on brainatlas-only deploys (papers live in the fetcher DB,
+  // not accessible from orch's system-stats). Each completed fetch_task
+  // represents one paper successfully fetched + summarised.
+  let totalPapers = 0;
+  if (sysStats && Array.isArray(sysStats.fetch_tasks_by_status)) {
+    const done = sysStats.fetch_tasks_by_status.find(r => r.status === 'completed');
+    if (done) totalPapers = done.count || 0;
+  }
+  // Fall back to total_papers if the fetch_tasks breakdown is empty.
+  if (totalPapers === 0 && sysStats && sysStats.total_papers) {
+    totalPapers = sysStats.total_papers;
+  }
+  const totalEvals  = (evalStatus && evalStatus.total_scored) || 0;
+  const costPerPaper = totalPapers > 0 ? totalCost / totalPapers : 0;
+  const costPerEval  = totalEvals  > 0 ? totalCost / totalEvals  : 0;
+
+  // When the cost window is not "all time", the per-paper / per-eval ratios
+  // are only a rough long-run signal — mark them as such in the tooltip.
+  const mixNote = c.since_hours == null
+    ? ''
+    : ' Note: the denominator is all-time while the numerator is windowed, so this is only meaningful for the &quot;All time&quot; window.';
+
+  overEl.innerHTML = `
+    <div class="stat-box"><div class="val">${fmtUsd(totalCost)}</div><div class="lbl" data-tip="Sum of cost_usd across all llm_call_usage rows in the selected window.">Total Cost</div></div>
+    <div class="stat-box"><div class="val">${fmt(totalCalls)}</div><div class="lbl" data-tip="Number of LLM API calls recorded.">Calls</div></div>
+    <div class="stat-box"><div class="val">${fmt(totalTokens)}</div><div class="lbl" data-tip="prompt_tokens + completion_tokens across all calls.">Total Tokens</div></div>
+    <div class="stat-box"><div class="val">${fmt(c.total_prompt_tokens || 0)}</div><div class="lbl" data-tip="Sum of prompt_tokens (input).">Prompt Tokens</div></div>
+    <div class="stat-box"><div class="val">${fmt(c.total_completion_tokens || 0)}</div><div class="lbl" data-tip="Sum of completion_tokens (output).">Completion Tokens</div></div>
+    <div class="stat-box"><div class="val">${fmtUsd(costPerPaper)}</div><div class="lbl" data-tip="Total LLM cost divided by the number of completed fetch_tasks (one task = one paper successfully fetched + summarised). Includes all LLM-driven work per paper: abstract summarisation, query generation, eval judging, etc.${mixNote}">Avg cost / paper</div></div>
+    <div class="stat-box"><div class="val">${fmtUsd(costPerEval)}</div><div class="lbl" data-tip="Total LLM cost divided by the number of distinct summaries scored for the current eval_version (what the Evals card calls &quot;Scored&quot;). One scored summary = one eval_runs row covering all metrics (groundedness, rubric, citation).${mixNote}">Avg cost / eval</div></div>
+  `;
+
+  renderCostBreakdownTable('costByModel',  c.by_model,      'model',      'Model',      totalCost);
+  renderCostBreakdownTable('costByCaller', c.by_caller_tag, 'caller_tag', 'Caller Tag', totalCost);
+}
+
+// Re-poll immediately when the user picks a new window.
+$('costWindow').addEventListener('change', () => { poll(); });
 </script>
 </body>
 </html>

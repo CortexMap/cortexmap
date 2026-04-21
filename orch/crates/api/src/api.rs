@@ -124,4 +124,12 @@ pub trait OrchApi: Send + Sync {
     /// Aggregate LLM cost for a single eval run. Proxies brainatlas-be's
     /// `/api/llm/usage?correlation_id_prefix=eval:{run_id}:`.
     async fn get_eval_run_cost(&self, run_id: Uuid) -> Result<domain::EvalRunCost, Self::Error>;
+
+    /// Detailed LLM cost aggregate for the dev dashboard. Proxies
+    /// brainatlas-be's `/api/llm/usage`, optionally restricted to the last
+    /// `since_hours` hours (`None` = all time).
+    async fn get_llm_cost_summary(
+        &self,
+        since_hours: Option<u32>,
+    ) -> Result<domain::LlmCostSummary, Self::Error>;
 }

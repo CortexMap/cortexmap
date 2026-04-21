@@ -396,6 +396,44 @@ pub struct EvalRunCost {
     pub total_calls: i64,
 }
 
+/// Dev-dashboard LLM cost summary returned by
+/// `GET /orch/dev/api/llm-cost?since_hours=…`. Mirrors the shape of
+/// brainatlas-be's `UsageAggregate` response (defined in
+/// `brainatlas-be/crates/domain/src/cost.rs:88-114`) so the UI can render
+/// the same breakdowns orch itself uses for cost guardrail decisions.
+///
+/// `since_hours = None` means "all time". Orch passes the time window
+/// through to brainatlas-be as an RFC-3339 `since` filter.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LlmCostSummary {
+    /// Window used for this aggregation, in hours. `None` means no lower
+    /// bound (all-time).
+    pub since_hours: Option<u32>,
+    pub total_cost_usd: f64,
+    pub total_tokens: i64,
+    pub total_prompt_tokens: i64,
+    pub total_completion_tokens: i64,
+    pub total_calls: i64,
+    pub by_model: Vec<LlmCostByModel>,
+    pub by_caller_tag: Vec<LlmCostByCallerTag>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmCostByModel {
+    pub model: String,
+    pub total_cost_usd: f64,
+    pub total_tokens: i64,
+    pub total_calls: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmCostByCallerTag {
+    pub caller_tag: String,
+    pub total_cost_usd: f64,
+    pub total_tokens: i64,
+    pub total_calls: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
