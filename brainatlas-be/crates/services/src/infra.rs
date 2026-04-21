@@ -61,8 +61,7 @@ pub fn resolve_llm_provider<I: EnvInfra>(
         });
     }
     Err(ServiceError::Other(
-        "missing LLM provider credentials: set REQUESTY_API_KEY or OPENROUTER_API_KEY"
-            .to_string(),
+        "missing LLM provider credentials: set REQUESTY_API_KEY or OPENROUTER_API_KEY".to_string(),
     ))
 }
 
@@ -377,10 +376,7 @@ mod resolver_tests {
         // Matches the docker-compose pattern: ${REQUESTY_API_KEY:-} where an
         // unset host var expands to empty string. We must fall through to
         // OpenRouter in that case.
-        let infra = env(&[
-            ("REQUESTY_API_KEY", ""),
-            ("OPENROUTER_API_KEY", "or-key"),
-        ]);
+        let infra = env(&[("REQUESTY_API_KEY", ""), ("OPENROUTER_API_KEY", "or-key")]);
         let r = resolve_llm_provider(&infra).expect("resolves");
         assert_eq!(r.provider, LlmProvider::OpenRouter);
         assert_eq!(r.api_key, "or-key");

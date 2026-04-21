@@ -120,10 +120,7 @@ where
                 get(dev_summary_freshness_handler::<E, S>),
             )
             .route("/dev/api/redis-stats", get(dev_redis_stats_handler::<E, S>))
-            .route(
-                "/dev/api/llm-cost",
-                get(dev_llm_cost_handler::<E, S>),
-            )
+            .route("/dev/api/llm-cost", get(dev_llm_cost_handler::<E, S>))
             .route("/api/evals/status", get(get_eval_status_handler::<E, S>))
             .route("/api/evals/worst", get(get_eval_worst_handler::<E, S>))
             .route(

@@ -323,7 +323,10 @@ mod tests {
             "default OpenRouter base URL"
         );
         assert_eq!(calls[0].1, "sk-test", "api key forwarded");
-        assert_eq!(calls[0].2, "openai/text-embedding-3-small", "env model used");
+        assert_eq!(
+            calls[0].2, "openai/text-embedding-3-small",
+            "env model used"
+        );
         assert_eq!(calls[0].3, "hello", "text forwarded unchanged");
 
         // Caller tag defaults to "embed".

@@ -242,10 +242,7 @@ where
                     since.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
                 )
             }
-            None => format!(
-                "{}/brainatlas-be/api/llm/usage",
-                base.trim_end_matches('/')
-            ),
+            None => format!("{}/brainatlas-be/api/llm/usage", base.trim_end_matches('/')),
         };
 
         let wire: UsageAggregateDetailedWire = self
