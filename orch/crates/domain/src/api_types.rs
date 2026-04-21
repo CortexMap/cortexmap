@@ -64,6 +64,11 @@ pub struct RegionSummary {
     /// (e.g. `"claim_groundedness"`, `"rubric_relevance"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eval_scores: Option<SummaryEvalScores>,
+    /// Total LLM cost in USD attributed to this batch (sum of all LLM calls
+    /// whose `correlation_id == "batch:{batch_id}"`). `None` when the cost
+    /// could not be fetched from brainatlas-be (enrichment best-effort).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<String>,
 }
 
 /// Compact per-metric score payload attached to a `RegionSummary`.
@@ -375,4 +380,18 @@ pub struct RedisPrefixCount {
     pub description: String,
     /// Number of keys matching the pattern.
     pub count: u64,
+}
+
+/// Aggregate LLM cost for a single eval run. Returned by
+/// `GET /orch/api/evals/runs/{run_id}/cost`. Orch queries brainatlas-be's
+/// `/api/llm/usage?correlation_id_prefix=eval:{run_id}:` and forwards the
+/// result. Scalars are strings (not floats) to preserve full precision
+/// without a parse round-trip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalRunCost {
+    pub run_id: String,
+    pub total_cost_usd: String,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub total_calls: i64,
 }

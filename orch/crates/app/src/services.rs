@@ -277,6 +277,13 @@ pub trait EvalOrchestration: Send + Sync {
         metric: String,
         limit: i64,
     ) -> Result<EvalWorstOffenders, Self::Error>;
+
+    /// Aggregate the LLM cost for all steps of a single eval run.
+    /// Backs `/orch/api/evals/runs/{run_id}/cost`.
+    async fn eval_orchestrator_get_run_cost(
+        &self,
+        run_id: uuid::Uuid,
+    ) -> Result<domain::EvalRunCost, Self::Error>;
 }
 
 /// Aggregate eval status returned by `EvalOrchestration::eval_orchestrator_get_status`.
@@ -317,6 +324,22 @@ pub struct EvalWorstOffenderEntry {
     pub eval_version: String,
 }
 
+/// Trait for the cost-guardrail background loop. Polls
+/// brainatlas-be's `/api/llm/usage` and emits `tracing::warn!` / `error!`
+/// events when rolling 24h LLM spend exceeds configured thresholds. The loop
+/// itself never blocks any LLM call.
+#[async_trait::async_trait]
+pub trait CostGuardrailOrchestration: Send + Sync {
+    type Error: Error + Send + Sync;
+
+    async fn cost_guardrail_enabled(&self) -> bool;
+    async fn cost_guardrail_poll_interval_secs(&self) -> u64;
+    /// Run one check cycle. Returns the computed 24h spend when the probe
+    /// succeeded, `None` when it was skipped or failed. Never errors — all
+    /// failures are swallowed and logged.
+    async fn cost_guardrail_run_once(&self) -> Option<f64>;
+}
+
 pub trait Services:
     CompletionOrchestrator<Error = <Self as Services>::Error>
     + RegionManagement<Error = <Self as Services>::Error>
@@ -326,6 +349,7 @@ pub trait Services:
     + HealthCheck<Error = <Self as Services>::Error>
     + PipelineRunner<Error = <Self as Services>::Error>
     + EvalOrchestration<Error = <Self as Services>::Error>
+    + CostGuardrailOrchestration<Error = <Self as Services>::Error>
 {
     type Error: Error + Send + Sync;
 }
@@ -339,7 +363,8 @@ where
         + WorkerManagement<Error = E>
         + HealthCheck<Error = E>
         + PipelineRunner<Error = E>
-        + EvalOrchestration<Error = E>,
+        + EvalOrchestration<Error = E>
+        + CostGuardrailOrchestration<Error = E>,
     E: Error + Send + Sync,
 {
     type Error = E;

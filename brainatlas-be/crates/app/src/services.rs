@@ -1,6 +1,7 @@
 use domain::{
     BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
     LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RubricScores, SimilarChunk,
+    UsageAggregate, UsageAggregateFilter, UsageContext,
 };
 use std::error::Error;
 use uuid::Uuid;
@@ -25,7 +26,12 @@ pub trait Chunker: Send + Sync {
     fn chunk(&self, text: &str, chunk_size: usize, overlap: usize) -> Vec<String>;
 }
 
-/// LLM service for summarization and query generation
+/// LLM service for summarization and query generation.
+///
+/// Every method takes a `UsageContext` as its last argument. The context
+/// carries the `caller_tag`, `correlation_id` and any originating
+/// region/summary/batch identifiers. These are recorded together with the
+/// token usage in the `llm_call_usage` table at the services layer.
 #[async_trait::async_trait]
 pub trait LlmService: Send + Sync {
     type Error: Error + Send + Sync;
@@ -37,12 +43,14 @@ pub trait LlmService: Send + Sync {
         messages: &[serde_json::Value],
         tools: &[serde_json::Value],
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<LlmResponse, Self::Error>;
 
     async fn generate_queries(
         &self,
         region_name: &str,
         count: u32,
+        ctx: UsageContext,
     ) -> Result<Vec<String>, Self::Error>;
 
     /// Split a summary into atomic factual claims tagged with their section heading.
@@ -52,6 +60,7 @@ pub trait LlmService: Send + Sync {
         summary_text: &str,
         region_name: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<ClaimsResponse, Self::Error>;
 
     /// Judge whether a single claim is supported by a list of candidate evidence chunks.
@@ -62,6 +71,7 @@ pub trait LlmService: Send + Sync {
         claim_text: &str,
         evidence_chunks: &[String],
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<GroundednessVerdict, Self::Error>;
 
     /// Score a full summary against the fixed five-criterion rubric.
@@ -70,6 +80,7 @@ pub trait LlmService: Send + Sync {
         summary_text: &str,
         region_name: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<RubricScores, Self::Error>;
 
     /// Judge whether a single cited chunk actually supports the attached claim.
@@ -81,6 +92,7 @@ pub trait LlmService: Send + Sync {
         sentence_context: &str,
         chunk_text: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<GroundednessVerdict, Self::Error>;
 }
 
@@ -95,6 +107,7 @@ pub trait EmbeddingService: Send + Sync {
         &self,
         text: &str,
         model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<Vec<f32>, Self::Error>;
 }
 
@@ -135,6 +148,19 @@ pub trait VectorDatabase: Send + Sync {
     async fn get_chunk_source(&self, chunk_id: Uuid) -> Result<Option<ChunkSource>, Self::Error>;
 }
 
+/// Read-only aggregate view of `llm_call_usage`. Exposed at the services
+/// layer so the app/api layer can power the usage query endpoint without
+/// depending directly on infra.
+#[async_trait::async_trait]
+pub trait UsageQuery: Send + Sync {
+    type Error: Error + Send + Sync;
+
+    async fn usage_aggregate(
+        &self,
+        filter: UsageAggregateFilter,
+    ) -> Result<UsageAggregate, Self::Error>;
+}
+
 /// Combined services trait
 pub trait Services:
     ListBrainRegions<Error = <Self as Services>::Error>
@@ -144,6 +170,7 @@ pub trait Services:
     + EmbeddingService<Error = <Self as Services>::Error>
     + S3Storage<Error = <Self as Services>::Error>
     + VectorDatabase<Error = <Self as Services>::Error>
+    + UsageQuery<Error = <Self as Services>::Error>
 {
     type Error: Error + Send + Sync;
 }
@@ -156,7 +183,8 @@ where
         + LlmService<Error = E>
         + EmbeddingService<Error = E>
         + S3Storage<Error = E>
-        + VectorDatabase<Error = E>,
+        + VectorDatabase<Error = E>
+        + UsageQuery<Error = E>,
     E: Error + Send + Sync,
 {
     type Error = E;

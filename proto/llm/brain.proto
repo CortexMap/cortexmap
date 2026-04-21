@@ -103,6 +103,10 @@ message ProcessRegionRequest {
   // If true, only chunk and embed — skip RAG summarization.
   // Used by the background pipeline to grow the knowledge base without generating summaries.
   optional bool skip_summarization = 7;
+  // Optional opaque correlation id for LLM cost attribution. Typically set by
+  // orch as `batch:<batch_uuid>` so the persisted usage rows can be joined
+  // back to the triggering batch/region.
+  optional string correlation_id = 8;
 }
 
 // Metadata for a single paper fetched from PubMed
@@ -124,6 +128,10 @@ message ProcessRegionResponse {
 message GenerateQueriesRequest {
   string region_name = 1;  // Name of the brain region (e.g., "hippocampus")
   uint32 count = 2;        // Number of queries to generate (typically 3-5)
+  // Optional opaque correlation id for LLM cost attribution. Typically set by
+  // orch as `region:<region_id>` so the persisted usage rows can be joined
+  // back to the triggering region.
+  optional string correlation_id = 3;
 }
 
 message GenerateQueriesResponse {

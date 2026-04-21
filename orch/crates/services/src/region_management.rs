@@ -119,6 +119,7 @@ where
                             })
                             .collect(),
                         eval_scores: None,
+                        cost_usd: None,
                     });
                 }
 
@@ -147,6 +148,35 @@ where
                         enriched.into_iter().collect();
                     for s in result.iter_mut() {
                         s.eval_scores = by_id.get(&s.summary_id).and_then(|v| v.clone());
+                    }
+                }
+
+                // Enrich each summary with its batch-level LLM cost from
+                // brainatlas-be. Same best-effort semantics as eval scores:
+                // a failure leaves `cost_usd = None`.
+                if !result.is_empty()
+                    && let Ok(brainatlas_base) =
+                        resolve_brainatlas_base_url(infra.as_ref(), &database_url).await
+                {
+                    let batch_ids: Vec<Uuid> =
+                        result.iter().map(|s| s.batch_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
+                    let enriched_cost: Vec<(Uuid, Option<String>)> =
+                        stream::iter(batch_ids)
+                            .map(|bid| {
+                                let base = brainatlas_base.clone();
+                                let infra = Arc::clone(infra);
+                                async move {
+                                    (bid, fetch_batch_cost_usd(&*infra, &base, bid).await)
+                                }
+                            })
+                            .buffer_unordered(EVAL_SCORES_FETCH_CONCURRENCY)
+                            .collect()
+                            .await;
+
+                    let cost_by_batch: std::collections::HashMap<Uuid, Option<String>> =
+                        enriched_cost.into_iter().collect();
+                    for s in result.iter_mut() {
+                        s.cost_usd = cost_by_batch.get(&s.batch_id).and_then(|v| v.clone());
                     }
                 }
 
@@ -285,6 +315,7 @@ where
         let request = GenerateQueriesRequest {
             region_name: region_name.to_string(),
             count,
+            correlation_id: None,
         };
 
         tracing::info!(url = %url, region_name, count, "Calling brainatlas generate-queries endpoint");
@@ -738,4 +769,79 @@ where
         scores,
         judge_models,
     })
+}
+
+// ── Brainatlas cost fetch helpers ─────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+struct UsageAggregateWire {
+    #[serde(default)]
+    pub total_cost_usd: f64,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub total_calls: i64,
+}
+
+/// Resolve the brainatlas-be base URL from env (`BRAINATLAS_HTTP_ADDR`) then
+/// config (`ConfigKey::BrainatlasBaseUrl`). Returns `Err` if neither is set.
+async fn resolve_brainatlas_base_url<I, E>(
+    infra: &I,
+    database_url: &str,
+) -> Result<String, ServiceError<E>>
+where
+    E: Error + Send + Sync + 'static,
+    I: EnvInfra<Error = E> + crate::OrchDatabase<Error = E> + Send + Sync,
+{
+    fn normalize_url(addr: &str) -> String {
+        if addr.starts_with("http://") || addr.starts_with("https://") {
+            addr.to_string()
+        } else {
+            let replaced = addr.replace("0.0.0.0", "localhost");
+            format!("http://{}", replaced)
+        }
+    }
+
+    if let Ok(url) = infra.get_env_var("BRAINATLAS_HTTP_ADDR") {
+        return Ok(normalize_url(&url));
+    }
+
+    let from_config = infra
+        .get_config(database_url, ConfigKey::BrainatlasBaseUrl)
+        .await
+        .map_err(ServiceError::InfraError)?;
+    if let Some(url) = from_config {
+        return Ok(normalize_url(&url));
+    }
+
+    Err(ServiceError::ConfigNotFound {
+        key: "brainatlas_base_url (BRAINATLAS_HTTP_ADDR env or brainatlas_base_url config row)"
+            .to_string(),
+    })
+}
+
+/// Fetch total LLM cost attributed to a batch. Returns `None` on any failure
+/// (network, 5xx, decode error) so a missing cost never aborts the summaries
+/// request.
+async fn fetch_batch_cost_usd<I, E>(
+    infra: &I,
+    brainatlas_base: &str,
+    batch_id: Uuid,
+) -> Option<String>
+where
+    E: Error + Send + Sync + 'static,
+    I: HttpClient<Error = E> + Send + Sync,
+{
+    let url = format!(
+        "{}/brainatlas-be/api/llm/usage?correlation_id=batch:{}",
+        brainatlas_base.trim_end_matches('/'),
+        batch_id
+    );
+
+    match infra.get::<UsageAggregateWire>(&url).await {
+        Ok(agg) => Some(format!("{:.6}", agg.total_cost_usd)),
+        Err(e) => {
+            tracing::debug!(%batch_id, error = %e, "brainatlas-be cost fetch failed; omitting cost_usd");
+            None
+        }
+    }
 }

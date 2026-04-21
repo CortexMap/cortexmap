@@ -60,6 +60,11 @@ pub struct ProcessRegionRequest {
     /// If true, only chunk and embed — skip RAG summarization.
     #[serde(default, skip_serializing_if = "is_false")]
     pub skip_summarization: bool,
+    /// Opaque correlation id that brainatlas-be persists alongside every
+    /// `llm_call_usage` row produced while processing this batch. Typical
+    /// value is `batch:{batch_uuid}`. See `plans/2026-04-20-llm-cost-tracking-v1.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
 }
 
 fn is_false(v: &bool) -> bool {
@@ -76,6 +81,10 @@ pub struct ProcessRegionResponse {
 pub struct GenerateQueriesRequest {
     pub region_name: String,
     pub count: u32,
+    /// Correlation id for cost tracking; brainatlas-be persists this
+    /// alongside the `llm_call_usage` row. Typical value is `region:{region_id}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

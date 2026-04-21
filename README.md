@@ -86,6 +86,14 @@ CortexMap automates the research workflow for neuroscientists by:
    - Frontend: http://localhost:80
    - API: http://localhost:8082/orch/api
 
+> **LLM cost tracking rollout note:** When upgrading from a version without
+> cost tracking, deploy in this order: (1) run both new brainatlas-be
+> migrations (`add_llm_pricing`, `add_llm_call_usage`) — they are
+> backward-compatible and create new tables; (2) deploy the updated
+> brainatlas-be (the new `correlation_id` fields are optional, so older
+> orch/evals-be versions still work); (3) deploy the updated orch and
+> evals-be so every request is tagged.
+
 ### Development Setup
 
 1. **Start infrastructure**:
@@ -226,7 +234,57 @@ REDIS_URL=redis://localhost:6379
 
 # Logging
 RUST_LOG=info
+
+# LLM Cost Guardrail (optional; both must be set to activate alerts)
+# Soft warning threshold — warn-level log entries above this spend over
+# the last 24 hours.
+LLM_COST_WARN_THRESHOLD_USD=50.0
+# Hard daily budget — error-level alerts when the rolling 24h spend
+# breaches it. Orch does NOT enforce a block; this is observability only.
+LLM_COST_DAILY_USD_BUDGET=200.0
 ```
+
+## LLM Cost Tracking
+
+Every outbound LLM call (chat, tool-calling, and embeddings) is accounted for
+in the `llm_call_usage` table with token counts, cost in USD, and a
+correlation id that links it back to the work that triggered it
+(`batch:<uuid>`, `eval:<run_id>:<step_id>`, or `region:<int>`).
+
+Prices live in `llm_pricing` (seeded by migration; update via SQL when
+OpenRouter rates change):
+
+```sql
+INSERT INTO llm_pricing
+  (model, input_price_per_million, output_price_per_million,
+   embedding_price_per_million, currency, effective_from)
+VALUES
+  ('openai/gpt-4o-mini', 0.15, 0.60, NULL, 'USD', NOW());
+```
+
+### Usage Endpoints
+
+- `GET /brainatlas-be/api/llm/usage` — aggregate filtered by any of
+  `since`, `until` (RFC 3339), `model`, `correlation_id`,
+  `correlation_id_prefix`, `region_id`, `summary_id`, `batch_id`,
+  `caller_tag`.
+- `GET /orch/api/evals/runs/{run_id}/cost` — total cost of every LLM call
+  issued under one eval run.
+- Each `RegionSummary` returned by `GET /orch/api/regions/{id}/summaries`
+  carries an optional `cost_usd` field aggregated from
+  `correlation_id = "batch:{batch_id}"`.
+
+### Observability
+
+Every LLM call emits a structured `tracing::info!(target = "llm.call", …)`
+event containing model, endpoint, prompt/completion/total tokens,
+computed `cost_usd`, `correlation_id`, `caller_tag`, and latency —
+enough to pivot cost reports without a SQL query.
+
+The orch cost-guardrail loop (`ConfigKey::CostGuardrailEnabled`) polls
+`/api/llm/usage` every `cost_guardrail_poll_interval_secs` (default 300s)
+and logs at `warn`/`error` level when `LLM_COST_WARN_THRESHOLD_USD` /
+`LLM_COST_DAILY_USD_BUDGET` are breached.
 
 ## Data Flow
 

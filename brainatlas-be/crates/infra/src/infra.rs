@@ -1,13 +1,17 @@
 use crate::InfraError;
 use crate::env::BrainAtlasEnvInfra;
 use crate::llm::OpenRouterClient;
+use crate::llm_usage::BrainAtlasLlmUsage;
 use crate::pg::BrainAtlasPostgresql;
 use crate::s3::BrainAtlasS3;
 use crate::vectordb::BrainAtlasVectorDB;
 use domain::{
-    ChunkSource, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary, SimilarChunk,
+    ChunkSource, ExistingSummary, LlmCallOutcome, LlmPricing, LlmResponse, NewEmbedding,
+    NewLlmCallUsage, NewRegionSummary, SimilarChunk, UsageAggregate, UsageAggregateFilter,
 };
-use services::infra::{EmbeddingGenerator, LlmClient, S3Storage, VectorDatabase};
+use services::infra::{
+    EmbeddingGenerator, LlmClient, LlmPricingRepo, LlmUsageRepo, S3Storage, VectorDatabase,
+};
 use services::{EnvInfra, Postgres, Query, QueryResult};
 
 pub struct BrainAtlasInfra {
@@ -16,6 +20,7 @@ pub struct BrainAtlasInfra {
     s3: BrainAtlasS3,
     llm: OpenRouterClient,
     vectordb: BrainAtlasVectorDB,
+    llm_usage: BrainAtlasLlmUsage,
 }
 
 impl Default for BrainAtlasInfra {
@@ -38,6 +43,7 @@ impl BrainAtlasInfra {
         let s3 = BrainAtlasS3::new(s3_endpoint, s3_access_key, s3_secret_key, s3_bucket);
         let llm = OpenRouterClient::new();
         let vectordb = BrainAtlasVectorDB::new();
+        let llm_usage = BrainAtlasLlmUsage::new();
 
         Self {
             pg,
@@ -45,6 +51,7 @@ impl BrainAtlasInfra {
             s3,
             llm,
             vectordb,
+            llm_usage,
         }
     }
 }
@@ -86,7 +93,7 @@ impl EmbeddingGenerator for BrainAtlasInfra {
         api_key: &str,
         embedding_model: &str,
         text: &str,
-    ) -> Result<Vec<f32>, Self::Error> {
+    ) -> Result<LlmCallOutcome<Vec<f32>>, Self::Error> {
         self.llm
             .generate_embedding(api_key, embedding_model, text)
             .await
@@ -103,7 +110,7 @@ impl LlmClient for BrainAtlasInfra {
         chat_model: &str,
         messages: &[serde_json::Value],
         tools: &[serde_json::Value],
-    ) -> Result<LlmResponse, Self::Error> {
+    ) -> Result<LlmCallOutcome<LlmResponse>, Self::Error> {
         self.llm
             .summarize_with_tools(api_key, chat_model, messages, tools)
             .await
@@ -115,7 +122,7 @@ impl LlmClient for BrainAtlasInfra {
         chat_model: &str,
         region_name: &str,
         count: u32,
-    ) -> Result<Vec<String>, Self::Error> {
+    ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error> {
         self.llm
             .generate_queries(api_key, chat_model, region_name, count)
             .await
@@ -184,5 +191,39 @@ impl VectorDatabase for BrainAtlasInfra {
         chunk_id: uuid::Uuid,
     ) -> Result<Option<ChunkSource>, Self::Error> {
         self.vectordb.get_chunk_source(database_url, chunk_id).await
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmPricingRepo for BrainAtlasInfra {
+    type Error = InfraError;
+
+    async fn latest_for_model(
+        &self,
+        database_url: &str,
+        model: &str,
+    ) -> Result<Option<LlmPricing>, Self::Error> {
+        self.llm_usage.latest_for_model(database_url, model).await
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmUsageRepo for BrainAtlasInfra {
+    type Error = InfraError;
+
+    async fn record(
+        &self,
+        database_url: &str,
+        row: NewLlmCallUsage,
+    ) -> Result<(), Self::Error> {
+        self.llm_usage.record(database_url, row).await
+    }
+
+    async fn aggregate(
+        &self,
+        database_url: &str,
+        filter: UsageAggregateFilter,
+    ) -> Result<UsageAggregate, Self::Error> {
+        self.llm_usage.aggregate(database_url, filter).await
     }
 }

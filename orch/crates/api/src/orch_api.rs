@@ -220,4 +220,14 @@ where
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
+
+    async fn get_eval_run_cost(
+        &self,
+        run_id: Uuid,
+    ) -> Result<domain::EvalRunCost, Self::Error> {
+        self.app()
+            .get_eval_run_cost(run_id)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
 }

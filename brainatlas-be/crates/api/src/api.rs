@@ -38,6 +38,7 @@ pub trait BrainRegionApi: Send + Sync {
         chat_model: Option<String>,
         embedding_model: Option<String>,
         skip_summarization: bool,
+        correlation_id: Option<String>,
     ) -> Result<ProcessRegionResponse, Self::Error>;
 
     /// Generate search queries for a brain region using LLM.
@@ -46,6 +47,7 @@ pub trait BrainRegionApi: Send + Sync {
         &self,
         region_name: String,
         count: u32,
+        correlation_id: Option<String>,
     ) -> Result<GenerateQueriesResponse, Self::Error>;
 
     /// Resolve a chunk UUID to its full source details.

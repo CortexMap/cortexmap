@@ -455,6 +455,7 @@ where
             chat_model,
             embedding_model,
             skip_summarization: false,
+            correlation_id: Some(format!("batch:{}", batch.id)),
         };
 
         tracing::debug!(

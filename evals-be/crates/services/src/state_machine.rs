@@ -174,6 +174,7 @@ pub fn initial_action(
             summary_text: ctx.summary.summary.clone(),
             region_name: ctx.summary.name.clone(),
             chat_model: Some(ctx.judge_chat_model.to_string()),
+            correlation_id: None,
         })
         .expect("ExtractClaimsRequest serializable");
         return (
@@ -193,6 +194,7 @@ pub fn initial_action(
         summary_text: ctx.summary.summary.clone(),
         region_name: ctx.summary.name.clone(),
         chat_model: Some(ctx.rubric_chat_model.to_string()),
+        correlation_id: None,
     })
     .expect("JudgeRubricRequest serializable");
     (
@@ -390,6 +392,7 @@ where
         claim_text: claim.text.clone(),
         evidence_chunks: chunks.iter().map(|c| c.chunk_text.clone()).collect(),
         chat_model: Some(ctx.judge_chat_model.to_string()),
+        correlation_id: None,
     })
     .expect("JudgeGroundednessRequest serializable");
 
@@ -595,6 +598,7 @@ fn start_embed_step<E: Error + Send + Sync + 'static>(
     let body = serde_json::to_value(brpc::EmbedRequest {
         text: claim.text.clone(),
         embedding_model: Some(ctx.embedding_model.to_string()),
+        correlation_id: None,
     })
     .expect("EmbedRequest serializable");
     let step_id = Uuid::new_v4();
@@ -643,6 +647,7 @@ fn next_rubric_or_done(
         summary_text: ctx.summary.summary.clone(),
         region_name: ctx.summary.name.clone(),
         chat_model: Some(ctx.rubric_chat_model.to_string()),
+        correlation_id: None,
     })
     .expect("JudgeRubricRequest serializable");
     (
@@ -1023,6 +1028,7 @@ fn build_citation_support_action(
         sentence_context: sentence,
         chunk_text,
         chat_model: Some(ctx.judge_chat_model.to_string()),
+        correlation_id: None,
     })
     .expect("JudgeCitationRequest serializable");
 

@@ -1,4 +1,7 @@
-use crate::schema::{brain_region_embeddings, region_mapping, region_summary};
+use crate::schema::{
+    brain_region_embeddings, llm_call_usage, llm_pricing, region_mapping, region_summary,
+};
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use diesel::prelude::*;
 use domain::{BrainRegionEntry, RegionMapping, Rgb};
@@ -148,4 +151,72 @@ impl From<EmbeddingRow> for domain::SimilarChunk {
             source_char_end: row.source_char_end,
         }
     }
+}
+
+/// Diesel row for the `llm_pricing` table.
+///
+/// All columns are declared to match the table shape so Diesel's
+/// `Selectable`/`as_select()` can generate a type-checked SELECT. Not every
+/// field is read by the application (e.g., `id`, `created_at`) but they must
+/// exist on the struct for the Diesel macros to compile.
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = llm_pricing)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+#[allow(dead_code)]
+pub struct LlmPricingRow {
+    pub id: Uuid,
+    pub model: String,
+    pub input_price_per_million: BigDecimal,
+    pub output_price_per_million: BigDecimal,
+    pub embedding_price_per_million: Option<BigDecimal>,
+    pub currency: String,
+    pub effective_from: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Diesel insert model for the `llm_call_usage` table.
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = llm_call_usage)]
+pub struct NewLlmCallUsageRow {
+    pub endpoint: String,
+    pub model: String,
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
+    pub total_tokens: i32,
+    pub cost_usd: Option<BigDecimal>,
+    pub correlation_id: Option<String>,
+    pub region_id: Option<i32>,
+    pub summary_id: Option<Uuid>,
+    pub batch_id: Option<Uuid>,
+    pub caller_tag: Option<String>,
+    pub request_id: Option<String>,
+}
+
+/// Diesel queryable row for the `llm_call_usage` table.
+///
+/// All columns are declared to match the table shape so Diesel's
+/// `Selectable`/`as_select()` can generate a type-checked SELECT. The
+/// aggregation in `llm_usage::usage_aggregate` reads `model`, `cost_usd`,
+/// `prompt_tokens`, `completion_tokens`, `total_tokens`, and `caller_tag`;
+/// the remaining columns are kept on the struct to make the SELECT complete
+/// and to preserve flexibility for future per-row queries.
+#[derive(Queryable, Selectable, Debug, Clone)]
+#[diesel(table_name = llm_call_usage)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+#[allow(dead_code)]
+pub struct LlmCallUsageRow {
+    pub id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub endpoint: String,
+    pub model: String,
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
+    pub total_tokens: i32,
+    pub cost_usd: Option<BigDecimal>,
+    pub correlation_id: Option<String>,
+    pub region_id: Option<i32>,
+    pub summary_id: Option<Uuid>,
+    pub batch_id: Option<Uuid>,
+    pub caller_tag: Option<String>,
+    pub request_id: Option<String>,
 }

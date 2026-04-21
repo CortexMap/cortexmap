@@ -72,6 +72,10 @@ pub enum ConfigKey {
     /// Number of days a region's summary remains "fresh" before Phase 2 will
     /// re-process the region. Manual `/regions/:id/generate` ignores this gate.
     SummaryStalenessDays,
+    /// Enable the LLM cost guardrail background loop.
+    CostGuardrailEnabled,
+    /// Poll interval (seconds) for the cost guardrail loop.
+    CostGuardrailPollIntervalSecs,
 }
 
 /// Result of polling for completed fetch tasks

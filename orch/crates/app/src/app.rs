@@ -225,6 +225,33 @@ where
             }
         });
 
+        // ── Cost guardrail ───────────────────────────────────────────────
+        // Background loop that polls brainatlas-be's `/api/llm/usage` for
+        // the rolling 24h LLM spend and emits `tracing::warn!`/`error!`
+        // events when configured thresholds are breached. Never blocks any
+        // call — observability only. Gated on `ConfigKey::CostGuardrailEnabled`.
+        let cost_services = Arc::clone(&services);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(25)).await;
+            tracing::info!("Cost guardrail loop started");
+
+            loop {
+                let interval_secs = cost_services
+                    .cost_guardrail_poll_interval_secs()
+                    .await;
+
+                if cost_services.cost_guardrail_enabled().await {
+                    // Run once; errors are swallowed inside so this never
+                    // propagates.
+                    let _ = cost_services.cost_guardrail_run_once().await;
+                } else {
+                    tracing::debug!("Cost guardrail: disabled, skipping cycle");
+                }
+
+                tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+            }
+        });
+
         Ok(())
     }
 
@@ -418,6 +445,15 @@ where
         self.services
             .eval_orchestrator_get_worst(metric, limit)
             .await
+    }
+
+    /// Aggregate LLM cost for one eval run. Proxies to brainatlas-be's
+    /// `/api/llm/usage?correlation_id_prefix=eval:{run_id}:`.
+    pub async fn get_eval_run_cost(
+        &self,
+        run_id: uuid::Uuid,
+    ) -> Result<domain::EvalRunCost, E> {
+        self.services.eval_orchestrator_get_run_cost(run_id).await
     }
 
     /// Get all brain regions from region_mapping

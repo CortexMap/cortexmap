@@ -22,3 +22,4 @@ aws-config.workspace = true
 sha2.workspace = true
 serde.workspace = true
 schemars.workspace = true
+bigdecimal.workspace = true

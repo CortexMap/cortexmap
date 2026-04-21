@@ -64,6 +64,7 @@ where
         chat_model: Option<String>,
         embedding_model: Option<String>,
         skip_summarization: bool,
+        correlation_id: Option<String>,
     ) -> Result<ProcessRegionResponse, Self::Error> {
         // Validate region_id and batch_id are present
         let region_uuid = region_id.ok_or(ApiError::MissingOrInvalidId)?;
@@ -80,6 +81,7 @@ where
                 chat_model,
                 embedding_model,
                 skip_summarization,
+                correlation_id,
             )
             .await
             .map_err(ApiError::AppError)?;
@@ -105,11 +107,12 @@ where
         &self,
         region_name: String,
         count: u32,
+        correlation_id: Option<String>,
     ) -> Result<GenerateQueriesResponse, Self::Error> {
         // Call the LLM to generate queries
         let queries = self
             .app()
-            .generate_queries(&region_name, count)
+            .generate_queries(&region_name, count, correlation_id, None)
             .await
             .map_err(ApiError::AppError)?;
 
@@ -136,8 +139,9 @@ where
         &self,
         text: &str,
         embedding_model: Option<&str>,
+        correlation_id: Option<String>,
     ) -> Result<Vec<f32>, AppError<E>> {
-        self.app().embed(text, embedding_model).await
+        self.app().embed(text, embedding_model, correlation_id).await
     }
 
     pub async fn extract_claims(
@@ -145,9 +149,10 @@ where
         summary_text: &str,
         region_name: &str,
         chat_model: Option<&str>,
+        correlation_id: Option<String>,
     ) -> Result<domain::ClaimsResponse, AppError<E>> {
         self.app()
-            .extract_claims(summary_text, region_name, chat_model)
+            .extract_claims(summary_text, region_name, chat_model, correlation_id)
             .await
     }
 
@@ -156,9 +161,10 @@ where
         claim_text: &str,
         evidence_chunks: &[String],
         chat_model: Option<&str>,
+        correlation_id: Option<String>,
     ) -> Result<domain::GroundednessVerdict, AppError<E>> {
         self.app()
-            .judge_groundedness(claim_text, evidence_chunks, chat_model)
+            .judge_groundedness(claim_text, evidence_chunks, chat_model, correlation_id)
             .await
     }
 
@@ -167,9 +173,10 @@ where
         summary_text: &str,
         region_name: &str,
         chat_model: Option<&str>,
+        correlation_id: Option<String>,
     ) -> Result<domain::RubricScores, AppError<E>> {
         self.app()
-            .judge_rubric(summary_text, region_name, chat_model)
+            .judge_rubric(summary_text, region_name, chat_model, correlation_id)
             .await
     }
 
@@ -179,9 +186,25 @@ where
         sentence_context: &str,
         chunk_text: &str,
         chat_model: Option<&str>,
+        correlation_id: Option<String>,
     ) -> Result<domain::GroundednessVerdict, AppError<E>> {
         self.app()
-            .judge_citation(claim_text, sentence_context, chunk_text, chat_model)
+            .judge_citation(
+                claim_text,
+                sentence_context,
+                chunk_text,
+                chat_model,
+                correlation_id,
+            )
             .await
+    }
+
+    /// Aggregate LLM usage rows over the supplied filter. Powers the
+    /// `GET /brainatlas-be/api/llm/usage` endpoint.
+    pub async fn usage_aggregate(
+        &self,
+        filter: domain::UsageAggregateFilter,
+    ) -> Result<domain::UsageAggregate, AppError<E>> {
+        self.app().usage_aggregate(filter).await
     }
 }
