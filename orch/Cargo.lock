@@ -32,9 +32,17 @@ version = "0.1.0"
 dependencies = [
  "app",
  "async-trait",
+ "axum",
  "chrono",
  "domain",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "server",
+ "services",
  "thiserror",
+ "tokio",
+ "tower",
  "uuid",
 ]
 

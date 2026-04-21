@@ -23,3 +23,7 @@ chrono.workspace = true
 diesel = { version = "2.3.2", features = ["postgres", "r2d2"] }
 aws-sdk-s3 = { version = "1.108.0", features = ["behavior-version-latest"] }
 rand = "0.8"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+async-trait = "0.1"
+thiserror = "1"

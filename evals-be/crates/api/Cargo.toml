@@ -10,4 +10,16 @@ domain.workspace = true
 rpc-types.workspace = true
 app.workspace = true
 services.workspace = true
-uuid.workspace = true
+uuid = { workspace = true }
+serde = { workspace = true }
+serde_json.workspace = true
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+chrono = { workspace = true }
+brainatlas-rpc-types = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

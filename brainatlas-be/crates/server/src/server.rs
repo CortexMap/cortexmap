@@ -1,5 +1,5 @@
 use api::{ApiError, BrainAtlasApi, BrainRegionApi};
-use app::AppError;
+use app::{AppError, Services};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -13,19 +13,19 @@ use domain::rpc_types::evals::{
 use domain::rpc_types::{
     GenerateQueriesRequest, ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest,
 };
-use infra::{BrainAtlasInfra, InfraError};
-use services::{BrainAtlasServices, ServiceError};
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
-// Concrete error chain — no generics needed in server.
-type Error = ApiError<AppError<ServiceError<InfraError>>>;
+// Concrete error chain wrapper used by handlers.
+// `E` is the upstream service-layer error type (e.g. `ServiceError<InfraError>`
+// in production, or a lightweight test error in handler unit tests).
+type Error<E> = ApiError<AppError<E>>;
 
-struct ServerError(Error);
+struct ServerError<E: std::error::Error + Send + Sync + 'static>(Error<E>);
 
-impl IntoResponse for ServerError {
+impl<E: std::error::Error + Send + Sync + 'static> IntoResponse for ServerError<E> {
     fn into_response(self) -> Response {
         let (status, msg) = match &self.0 {
             Error::MissingOrInvalidId => (StatusCode::BAD_REQUEST, self.0.to_string()),
@@ -36,17 +36,20 @@ impl IntoResponse for ServerError {
     }
 }
 
-impl From<Error> for ServerError {
-    fn from(e: Error) -> Self {
+impl<E: std::error::Error + Send + Sync + 'static> From<Error<E>> for ServerError<E> {
+    fn from(e: Error<E>) -> Self {
         ServerError(e)
     }
 }
 
-pub struct BrainAtlasServer {
-    api: Arc<BrainAtlasApi<BrainAtlasServices<BrainAtlasInfra>>>,
+/// Generic axum server wrapper. The `S` parameter is the concrete `Services`
+/// implementation (production uses `BrainAtlasServices<BrainAtlasInfra>`; tests
+/// inject hand-rolled fakes).
+pub struct BrainAtlasServer<S> {
+    api: Arc<BrainAtlasApi<S>>,
 }
 
-impl Clone for BrainAtlasServer {
+impl<S> Clone for BrainAtlasServer<S> {
     fn clone(&self) -> Self {
         Self {
             api: self.api.clone(),
@@ -54,33 +57,48 @@ impl Clone for BrainAtlasServer {
     }
 }
 
-impl BrainAtlasServer {
-    pub fn new(api: Arc<BrainAtlasApi<BrainAtlasServices<BrainAtlasInfra>>>) -> Self {
+impl<S> BrainAtlasServer<S> {
+    pub fn new(api: Arc<BrainAtlasApi<S>>) -> Self {
         Self { api }
     }
+}
 
+impl<E, S> BrainAtlasServer<S>
+where
+    E: std::error::Error + Send + Sync + 'static,
+    S: Services<Error = E> + 'static,
+{
     pub fn into_router(self, cors_origin: Option<String>) -> Router {
         let cors = cors_layer(cors_origin);
 
         let api_routes = Router::new()
             .route("/health", get(health_handler))
-            .route("/api/list", get(list_brain_regions_handler))
-            .route("/api/search", post(search_brain_region_handler))
-            .route("/api/status", post(status_handler))
-            .route("/api/process", post(process_region_handler))
-            .route("/api/generate-queries", post(generate_queries_handler))
-            .route("/api/llm/embed", post(llm_embed_handler))
-            .route("/api/llm/extract-claims", post(llm_extract_claims_handler))
+            .route("/api/list", get(list_brain_regions_handler::<S>))
+            .route("/api/search", post(search_brain_region_handler::<S>))
+            .route("/api/status", post(status_handler::<S>))
+            .route("/api/process", post(process_region_handler::<S>))
+            .route("/api/generate-queries", post(generate_queries_handler::<S>))
+            .route("/api/llm/embed", post(llm_embed_handler::<S>))
+            .route(
+                "/api/llm/extract-claims",
+                post(llm_extract_claims_handler::<S>),
+            )
             .route(
                 "/api/llm/judge-groundedness",
-                post(llm_judge_groundedness_handler),
+                post(llm_judge_groundedness_handler::<S>),
             )
-            .route("/api/llm/judge-rubric", post(llm_judge_rubric_handler))
-            .route("/api/llm/judge-citation", post(llm_judge_citation_handler))
-            .route("/api/llm/usage", get(llm_usage_handler))
+            .route(
+                "/api/llm/judge-rubric",
+                post(llm_judge_rubric_handler::<S>),
+            )
+            .route(
+                "/api/llm/judge-citation",
+                post(llm_judge_citation_handler::<S>),
+            )
+            .route("/api/llm/usage", get(llm_usage_handler::<S>))
             .route(
                 "/api/chunks/{chunk_id}/source",
-                get(get_chunk_source_handler),
+                get(get_chunk_source_handler::<S>),
             )
             .layer(cors)
             .layer(
@@ -116,18 +134,26 @@ async fn health_handler() -> impl IntoResponse {
 }
 
 /// GET /brainatlas-be/api/list
-async fn list_brain_regions_handler(
-    State(server): State<BrainAtlasServer>,
-) -> Result<impl IntoResponse, ServerError> {
+async fn list_brain_regions_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let resp = server.api.list_brain_regions().await.map_err(ServerError)?;
     Ok(Json(resp))
 }
 
 /// POST /brainatlas-be/api/search  body: { "id": { "value": "<uuid>" } }
-async fn search_brain_region_handler(
-    State(server): State<BrainAtlasServer>,
+async fn search_brain_region_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Json(body): Json<SearchBrainRegionRequest>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let id = body.id.and_then(|u| u.value.parse::<uuid::Uuid>().ok());
     let resp = server
         .api
@@ -138,10 +164,14 @@ async fn search_brain_region_handler(
 }
 
 /// POST /brainatlas-be/api/status  body: { "id": { "value": "<uuid>" } }
-async fn status_handler(
-    State(server): State<BrainAtlasServer>,
+async fn status_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Json(body): Json<StatusRequest>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let id = body
         .id
         .and_then(|u| u.value.parse::<uuid::Uuid>().ok())
@@ -151,10 +181,14 @@ async fn status_handler(
 }
 
 /// POST /brainatlas-be/api/process  body: { "region_id": { "value": "<uuid>" }, "batch_id": { "value": "<uuid>" }, "s3_keys": ["..."], "paper_metadata": [...] }
-async fn process_region_handler(
-    State(server): State<BrainAtlasServer>,
+async fn process_region_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Json(body): Json<ProcessRegionRequest>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let region_id = body
         .region_id
         .and_then(|u| u.value.parse::<uuid::Uuid>().ok());
@@ -179,10 +213,14 @@ async fn process_region_handler(
 }
 
 /// POST /brainatlas-be/api/generate-queries  body: { "region_name": "hippocampus", "count": 3 }
-async fn generate_queries_handler(
-    State(server): State<BrainAtlasServer>,
+async fn generate_queries_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Json(body): Json<GenerateQueriesRequest>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let resp = server
         .api
         .generate_queries(body.region_name, body.count, body.correlation_id)
@@ -192,10 +230,14 @@ async fn generate_queries_handler(
 }
 
 /// GET /brainatlas-be/api/chunks/{chunk_id}/source
-async fn get_chunk_source_handler(
-    State(server): State<BrainAtlasServer>,
+async fn get_chunk_source_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Path(chunk_id): Path<uuid::Uuid>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let resp = server
         .api
         .get_chunk_source(chunk_id)
@@ -209,15 +251,21 @@ async fn get_chunk_source_handler(
 
 /// Convert an `AppError` into a `ServerError` for the eval handlers (which
 /// bypass the `BrainRegionApi` trait and so don't get the `ApiError` wrapper).
-fn from_app_error(e: AppError<ServiceError<InfraError>>) -> ServerError {
+fn from_app_error<E: std::error::Error + Send + Sync + 'static>(
+    e: AppError<E>,
+) -> ServerError<E> {
     ServerError(Error::AppError(e))
 }
 
 /// POST /brainatlas-be/api/llm/embed
-async fn llm_embed_handler(
-    State(server): State<BrainAtlasServer>,
+async fn llm_embed_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Json(body): Json<EmbedRequest>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let embedding = server
         .api
         .embed(
@@ -231,10 +279,14 @@ async fn llm_embed_handler(
 }
 
 /// POST /brainatlas-be/api/llm/extract-claims
-async fn llm_extract_claims_handler(
-    State(server): State<BrainAtlasServer>,
+async fn llm_extract_claims_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Json(body): Json<ExtractClaimsRequest>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let claims = server
         .api
         .extract_claims(
@@ -249,10 +301,14 @@ async fn llm_extract_claims_handler(
 }
 
 /// POST /brainatlas-be/api/llm/judge-groundedness
-async fn llm_judge_groundedness_handler(
-    State(server): State<BrainAtlasServer>,
+async fn llm_judge_groundedness_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Json(body): Json<JudgeGroundednessRequest>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let verdict = server
         .api
         .judge_groundedness(
@@ -267,10 +323,14 @@ async fn llm_judge_groundedness_handler(
 }
 
 /// POST /brainatlas-be/api/llm/judge-rubric
-async fn llm_judge_rubric_handler(
-    State(server): State<BrainAtlasServer>,
+async fn llm_judge_rubric_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Json(body): Json<JudgeRubricRequest>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let scores = server
         .api
         .judge_rubric(
@@ -285,10 +345,14 @@ async fn llm_judge_rubric_handler(
 }
 
 /// POST /brainatlas-be/api/llm/judge-citation
-async fn llm_judge_citation_handler(
-    State(server): State<BrainAtlasServer>,
+async fn llm_judge_citation_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Json(body): Json<JudgeCitationRequest>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let verdict = server
         .api
         .judge_citation(
@@ -304,12 +368,16 @@ async fn llm_judge_citation_handler(
 }
 
 /// GET /brainatlas-be/api/llm/usage?since=…&model=…&correlation_id=…
-async fn llm_usage_handler(
-    State(server): State<BrainAtlasServer>,
+async fn llm_usage_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
     Query(q): Query<UsageAggregateQuery>,
-) -> Result<impl IntoResponse, ServerError> {
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
     let parse_ts =
-        |s: Option<String>| -> Result<Option<chrono::DateTime<chrono::Utc>>, ServerError> {
+        |s: Option<String>| -> Result<Option<chrono::DateTime<chrono::Utc>>, ServerError<<S as Services>::Error>> {
             match s {
                 None => Ok(None),
                 Some(v) => chrono::DateTime::parse_from_rfc3339(&v)
@@ -317,7 +385,7 @@ async fn llm_usage_handler(
                     .map_err(|_| ServerError(Error::MissingOrInvalidId)),
             }
         };
-    let parse_uuid = |s: Option<String>| -> Result<Option<uuid::Uuid>, ServerError> {
+    let parse_uuid = |s: Option<String>| -> Result<Option<uuid::Uuid>, ServerError<<S as Services>::Error>> {
         match s {
             None => Ok(None),
             Some(v) => v

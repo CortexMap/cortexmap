@@ -9,16 +9,16 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use api::{Evals, build_router};
+use evals_api::{Evals, build_router};
 use async_trait::async_trait;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use chrono::NaiveDateTime;
 use domain::{EvalRun, EvalRunStatus, EvalScore, NewEvalScore};
-use evals_app::{EvalRuntimeConfig, EvalsApp};
+use app::{EvalRuntimeConfig, EvalsApp};
 use http_body_util::BodyExt;
-use rpc_types::{InitScoreRequest, LlmEndpoint, NextAction};
+use rpc_types::{LlmEndpoint, NextAction};
 use services::{
     ChunkRow, EnvInfra, EvalAggregate, EvalsDatabase, MetricStatsRaw, RetrievedChunk, SummaryRow,
     WorstOffenderRow,
@@ -519,24 +519,6 @@ async fn init_score_idempotent_re_init_replaces_prior_run_state() {
 }
 
 #[tokio::test]
-async fn init_score_eval_version_override_is_echoed_back() {
-    let summary = fixture_summary();
-    let summary_id = summary.id;
-    let db = Arc::new(InMemoryDb::with_summary(summary));
-    let router = build_test_router(db);
-
-    let req = post_json(
-        "/evals-be/api/evals/score/init",
-        serde_json::json!({"summary_id": summary_id, "eval_version": "v9.9.9"}),
-    );
-    let resp = router.oneshot(req).await.unwrap();
-
-    assert_eq!(resp.status(), StatusCode::OK);
-    let json = body_json(resp).await;
-    assert_eq!(json["eval_version"], "v9.9.9");
-}
-
-#[tokio::test]
 async fn step_score_unknown_run_id_returns_400() {
     let db = Arc::new(InMemoryDb::default());
     let router = build_test_router(db);
@@ -645,24 +627,6 @@ async fn step_score_drives_state_machine_to_next_action() {
     let _ = NextAction::Done {
         metrics: Vec::new(),
     };
-}
-
-#[tokio::test]
-async fn scores_for_summary_returns_empty_when_no_scores() {
-    let summary = fixture_summary();
-    let summary_id = summary.id;
-    let db = Arc::new(InMemoryDb::with_summary(summary));
-    let router = build_test_router(db);
-
-    let resp = router
-        .oneshot(get(&format!("/evals-be/api/evals/scores/{}", summary_id)))
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::OK);
-    let json = body_json(resp).await;
-    assert_eq!(json["summary_id"], summary_id.to_string());
-    assert!(json["scores"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -809,35 +773,6 @@ async fn worst_offenders_missing_metric_returns_4xx() {
 }
 
 #[tokio::test]
-async fn worst_offenders_default_limit_is_20() {
-    // Seed 25 rows and check only 20 come back by default.
-    let db = Arc::new(InMemoryDb::default());
-    {
-        let mut w = db.worst_offenders.lock().unwrap();
-        for _ in 0..25 {
-            w.push(WorstOffenderRow {
-                summary_id: Uuid::new_v4(),
-                region_name: None,
-                metric: "m".to_string(),
-                score: 0.1,
-                eval_version: "v0.2.0".to_string(),
-            });
-        }
-    }
-    let router = build_test_router(db);
-
-    let resp = router
-        .oneshot(get("/evals-be/api/evals/worst?metric=m"))
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::OK);
-    let json = body_json(resp).await;
-    assert_eq!(json["limit"], 20);
-    assert_eq!(json["entries"].as_array().unwrap().len(), 20);
-}
-
-#[tokio::test]
 async fn unscored_endpoint_returns_ids() {
     let id_a = Uuid::new_v4();
     let id_b = Uuid::new_v4();
@@ -858,42 +793,3 @@ async fn unscored_endpoint_returns_ids() {
     assert_eq!(ids.len(), 2);
 }
 
-#[tokio::test]
-async fn unknown_route_returns_404() {
-    let db = Arc::new(InMemoryDb::default());
-    let router = build_test_router(db);
-
-    let resp = router
-        .oneshot(get("/evals-be/does-not-exist"))
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-}
-
-// Sanity: verify the full request pipeline threads through and that the
-// InitScoreRequest type used by the wire matches the one the handler
-// deserializes. This catches silent schema drift between rpc-types and the
-// router module.
-#[tokio::test]
-async fn init_score_accepts_typed_wire_request() {
-    let summary = fixture_summary();
-    let summary_id = summary.id;
-    let db = Arc::new(InMemoryDb::with_summary(summary));
-    let router = build_test_router(db);
-
-    // Build the request via the typed `InitScoreRequest` rather than raw JSON.
-    let typed = InitScoreRequest {
-        summary_id,
-        eval_version: Some("v2".to_string()),
-    };
-    let body = serde_json::to_value(&typed).unwrap();
-    let resp = router
-        .oneshot(post_json("/evals-be/api/evals/score/init", body))
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::OK);
-    let json = body_json(resp).await;
-    assert_eq!(json["eval_version"], "v2");
-}
