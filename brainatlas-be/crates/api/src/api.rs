@@ -6,6 +6,7 @@ use domain::rpc_types::{
 use uuid::Uuid;
 
 #[async_trait::async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait BrainRegionApi: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 

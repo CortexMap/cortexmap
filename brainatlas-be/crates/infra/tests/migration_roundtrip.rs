@@ -47,10 +47,10 @@ fn extract_created_objects(sql: &str) -> (HashSet<String>, HashSet<String>) {
 
         if let Some(rest) = lower.strip_prefix("create table ") {
             let rest = rest.trim_start_matches("if not exists ").trim();
-            if let Some(name) = rest.split(|c: char| c == ' ' || c == '(').next() {
-                if !name.is_empty() {
-                    tables.insert(name.to_string());
-                }
+            if let Some(name) = rest.split([' ', '(']).next()
+                && !name.is_empty()
+            {
+                tables.insert(name.to_string());
             }
         }
 
@@ -60,10 +60,10 @@ fn extract_created_objects(sql: &str) -> (HashSet<String>, HashSet<String>) {
                 .trim_start_matches("create index ")
                 .trim_start_matches("if not exists ")
                 .trim();
-            if let Some(name) = rest.split(|c: char| c == ' ' || c == '\t').next() {
-                if !name.is_empty() {
-                    indexes.insert(name.to_string());
-                }
+            if let Some(name) = rest.split([' ', '\t']).next()
+                && !name.is_empty()
+            {
+                indexes.insert(name.to_string());
             }
         }
     }
@@ -87,10 +87,10 @@ fn extract_dropped_objects(sql: &str) -> (HashSet<String>, HashSet<String>) {
                 .trim()
                 .trim_end_matches(';')
                 .trim();
-            if let Some(name) = rest.split(|c: char| c == ' ' || c == ';').next() {
-                if !name.is_empty() {
-                    tables.insert(name.to_string());
-                }
+            if let Some(name) = rest.split([' ', ';']).next()
+                && !name.is_empty()
+            {
+                tables.insert(name.to_string());
             }
         }
 
@@ -101,10 +101,10 @@ fn extract_dropped_objects(sql: &str) -> (HashSet<String>, HashSet<String>) {
                 .trim()
                 .trim_end_matches(';')
                 .trim();
-            if let Some(name) = rest.split(|c: char| c == ' ' || c == ';').next() {
-                if !name.is_empty() {
-                    indexes.insert(name.to_string());
-                }
+            if let Some(name) = rest.split([' ', ';']).next()
+                && !name.is_empty()
+            {
+                indexes.insert(name.to_string());
             }
         }
     }

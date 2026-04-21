@@ -477,11 +477,10 @@ mod workflow_tests {
         println!("✅ Step 2: Papers uploaded to S3");
 
         // Step 3: Simulate processing (in real workflow, this would call LLM)
-        let generated_summary = format!(
-            "The hippocampus is a critical brain region for memory formation and consolidation. \
+        let generated_summary = "The hippocampus is a critical brain region for memory formation and consolidation. \
              Research demonstrates its role in neuroplasticity and learning processes, \
              particularly during sleep when memory consolidation occurs through neural replay."
-        );
+            .to_string();
 
         println!("✅ Step 3: Summary generated (simulated)");
 
@@ -627,20 +626,23 @@ mod http_llm_usage_tests {
             .expect("router oneshot failed")
     }
 
-    /// Raw insert helper for `llm_call_usage`. We don't use diesel types
-    /// because the `Queryable` models live inside the `infra` crate and
-    /// aren't re-exported; raw SQL keeps this test file self-contained.
-    fn insert_usage(
-        conn: &mut PgConnection,
-        endpoint: &str,
-        model: &str,
+    /// Parameters for the raw insert helper; bundled to keep the argument list
+    /// short and avoid clippy's too_many_arguments lint.
+    struct InsertUsageArgs<'a> {
+        endpoint: &'a str,
+        model: &'a str,
         prompt: i32,
         completion: i32,
         total: i32,
         cost: Option<f64>,
-        correlation_id: Option<&str>,
-        caller_tag: Option<&str>,
-    ) -> uuid::Uuid {
+        correlation_id: Option<&'a str>,
+        caller_tag: Option<&'a str>,
+    }
+
+    /// Raw insert helper for `llm_call_usage`. We don't use diesel types
+    /// because the `Queryable` models live inside the `infra` crate and
+    /// aren't re-exported; raw SQL keeps this test file self-contained.
+    fn insert_usage(conn: &mut PgConnection, args: InsertUsageArgs<'_>) -> uuid::Uuid {
         let id = uuid::Uuid::new_v4();
         diesel::sql_query(
             "INSERT INTO llm_call_usage \
@@ -649,16 +651,17 @@ mod http_llm_usage_tests {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind::<diesel::sql_types::Uuid, _>(id)
-        .bind::<diesel::sql_types::Text, _>(endpoint)
-        .bind::<diesel::sql_types::Text, _>(model)
-        .bind::<diesel::sql_types::Int4, _>(prompt)
-        .bind::<diesel::sql_types::Int4, _>(completion)
-        .bind::<diesel::sql_types::Int4, _>(total)
+        .bind::<diesel::sql_types::Text, _>(args.endpoint)
+        .bind::<diesel::sql_types::Text, _>(args.model)
+        .bind::<diesel::sql_types::Int4, _>(args.prompt)
+        .bind::<diesel::sql_types::Int4, _>(args.completion)
+        .bind::<diesel::sql_types::Int4, _>(args.total)
         .bind::<diesel::sql_types::Nullable<diesel::sql_types::Numeric>, _>(
-            cost.and_then(|c| bigdecimal::BigDecimal::try_from(c).ok()),
+            args.cost
+                .and_then(|c| bigdecimal::BigDecimal::try_from(c).ok()),
         )
-        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(correlation_id)
-        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(caller_tag)
+        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(args.correlation_id)
+        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(args.caller_tag)
         .execute(conn)
         .expect("insert llm_call_usage row");
         id
@@ -716,29 +719,34 @@ mod http_llm_usage_tests {
         let model_a = format!("test/{}-chat", Uuid::new_v4());
         let model_b = format!("test/{}-embed", Uuid::new_v4());
 
-        let mut inserted = Vec::new();
-        inserted.push(insert_usage(
-            &mut conn,
-            "chat_completion",
-            &model_a,
-            100,
-            50,
-            150,
-            Some(0.001),
-            Some("ci:smoke"),
-            Some(&tag_a),
-        ));
-        inserted.push(insert_usage(
-            &mut conn,
-            "embedding",
-            &model_b,
-            200,
-            0,
-            200,
-            Some(0.0004),
-            Some("ci:smoke"),
-            Some(&tag_b),
-        ));
+        let inserted = vec![
+            insert_usage(
+                &mut conn,
+                InsertUsageArgs {
+                    endpoint: "chat_completion",
+                    model: &model_a,
+                    prompt: 100,
+                    completion: 50,
+                    total: 150,
+                    cost: Some(0.001),
+                    correlation_id: Some("ci:smoke"),
+                    caller_tag: Some(&tag_a),
+                },
+            ),
+            insert_usage(
+                &mut conn,
+                InsertUsageArgs {
+                    endpoint: "embedding",
+                    model: &model_b,
+                    prompt: 200,
+                    completion: 0,
+                    total: 200,
+                    cost: Some(0.0004),
+                    correlation_id: Some("ci:smoke"),
+                    caller_tag: Some(&tag_b),
+                },
+            ),
+        ];
 
         let router = build_router();
         let resp = get_uri(
@@ -825,25 +833,29 @@ mod http_llm_usage_tests {
         let mut inserted = Vec::new();
         inserted.push(insert_usage(
             &mut conn,
-            "chat_completion",
-            &model,
-            10,
-            5,
-            15,
-            Some(0.0),
-            Some(&correlation_a),
-            Some("ci:escape-a"),
+            InsertUsageArgs {
+                endpoint: "chat_completion",
+                model: &model,
+                prompt: 10,
+                completion: 5,
+                total: 15,
+                cost: Some(0.0),
+                correlation_id: Some(&correlation_a),
+                caller_tag: Some("ci:escape-a"),
+            },
         ));
         inserted.push(insert_usage(
             &mut conn,
-            "chat_completion",
-            &model,
-            10,
-            5,
-            15,
-            Some(0.0),
-            Some(&correlation_b),
-            Some("ci:escape-b"),
+            InsertUsageArgs {
+                endpoint: "chat_completion",
+                model: &model,
+                prompt: 10,
+                completion: 5,
+                total: 15,
+                cost: Some(0.0),
+                correlation_id: Some(&correlation_b),
+                caller_tag: Some("ci:escape-b"),
+            },
         ));
 
         let router = build_router();
@@ -876,25 +888,29 @@ mod http_llm_usage_tests {
         let us_row_b = format!("runX{run_id}Xb"); // would match `run_*_*` wildcard
         inserted.push(insert_usage(
             &mut conn,
-            "chat_completion",
-            &model,
-            7,
-            3,
-            10,
-            Some(0.0),
-            Some(&us_row_a),
-            Some("ci:underscore-a"),
+            InsertUsageArgs {
+                endpoint: "chat_completion",
+                model: &model,
+                prompt: 7,
+                completion: 3,
+                total: 10,
+                cost: Some(0.0),
+                correlation_id: Some(&us_row_a),
+                caller_tag: Some("ci:underscore-a"),
+            },
         ));
         inserted.push(insert_usage(
             &mut conn,
-            "chat_completion",
-            &model,
-            7,
-            3,
-            10,
-            Some(0.0),
-            Some(&us_row_b),
-            Some("ci:underscore-b"),
+            InsertUsageArgs {
+                endpoint: "chat_completion",
+                model: &model,
+                prompt: 7,
+                completion: 3,
+                total: 10,
+                cost: Some(0.0),
+                correlation_id: Some(&us_row_b),
+                caller_tag: Some("ci:underscore-b"),
+            },
         ));
 
         let uri2 =

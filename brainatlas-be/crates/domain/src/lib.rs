@@ -278,7 +278,7 @@ mod tests {
         };
 
         let proto: rpc_types::RegionMapping = region.into();
-        let color = proto.color.clone().unwrap();
+        let color = proto.color.unwrap();
         assert_eq!(
             proto.id.unwrap().value,
             "123e4567-e89b-12d3-a456-426614174000"

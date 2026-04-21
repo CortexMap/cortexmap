@@ -962,7 +962,7 @@ mod http_handler_tests {
 
         // server_version is populated by INFO parsing; non-empty on real Redis.
         assert!(
-            body["server_version"].as_str().unwrap_or("").len() > 0,
+            !body["server_version"].as_str().unwrap_or("").is_empty(),
             "real redis should report a version string"
         );
         println!("✅ /dev/api/redis-stats happy path returns connected: true");

@@ -5,11 +5,11 @@
 //!
 //!  - `citation_presence`  — fraction of factual claims that carry ≥ 1 citation.
 //!  - `citation_validity`  — fraction of cited UUIDs that resolve to a real
-//!                           `brain_region_embeddings` row.
+//!    `brain_region_embeddings` row.
 //!  - `citation_scope`     — fraction of cited UUIDs that belong to **this**
-//!                           summary's retrieval set.
+//!    summary's retrieval set.
 //!  - `citation_support`   — (optional, LLM) fraction of cited chunks that the
-//!                           judge agrees actually support the claim.
+//!    judge agrees actually support the claim.
 //!
 //! Three of the four are pure `&str -> f32` mappings colocated here with the
 //! deterministic structural metrics. The fourth is driven by

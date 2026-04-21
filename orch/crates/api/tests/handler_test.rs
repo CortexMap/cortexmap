@@ -51,6 +51,9 @@ impl std::fmt::Display for FakeErr {
 
 impl std::error::Error for FakeErr {}
 
+// Alias to keep the `batches_by_status` field readable (clippy type_complexity).
+type BatchesByStatusSlot = Mutex<Option<Vec<(BatchStatus, Vec<ProcessingBatch>)>>>;
+
 /// In-memory `Services` fake. Each method returns the corresponding "canned"
 /// `Result` from the relevant `Mutex<...>` slot. Unused methods return an
 /// `Err(FakeErr("not staged"))` so an unexpected call surfaces as a 500 in the
@@ -83,7 +86,7 @@ struct FakeServices {
     total_regions: Mutex<Option<Result<i64, FakeErr>>>,
     regions_without_batches: Mutex<Option<Result<i64, FakeErr>>>,
     actively_fetching_regions: Mutex<Option<Result<i64, FakeErr>>>,
-    batches_by_status: Mutex<Option<Vec<(BatchStatus, Vec<ProcessingBatch>)>>>,
+    batches_by_status: BatchesByStatusSlot,
     pending_fetch_task_count: Mutex<Option<Result<i64, FakeErr>>>,
     regions_without_queries_count: Mutex<Option<Result<i64, FakeErr>>>,
     regions_with_queries_count: Mutex<Option<Result<i64, FakeErr>>>,

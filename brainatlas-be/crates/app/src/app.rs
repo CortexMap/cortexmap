@@ -52,6 +52,7 @@ where
             .ok_or_else(|| AppError::NotFound)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn process_region(
         &self,
         uuid: Uuid,
@@ -1022,7 +1023,7 @@ mod tests {
         let mut svc = FakeServices::new();
         svc.search_error = Some("boom");
         let app = BrainAtlasApp::new(Arc::new(svc));
-        let err = app.search(Uuid::new_v4()).await.err().expect("should err");
+        let err = app.search(Uuid::new_v4()).await.expect_err("should err");
         match err {
             AppError::ServiceError(e) => assert_eq!(e.to_string(), "fake service error: boom"),
             other => panic!("expected ServiceError, got {:?}", other),

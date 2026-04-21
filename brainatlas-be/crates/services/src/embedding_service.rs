@@ -79,13 +79,15 @@ mod tests {
     #[error("mock error: {0}")]
     struct MockErr(&'static str);
 
+    type EmbeddingResult = Result<(Vec<f32>, String), &'static str>;
+
     struct MockInfra {
         env: HashMap<String, String>,
         pricing: Option<LlmPricing>,
         records: Mutex<Vec<NewLlmCallUsage>>,
         /// Canned `generate_embedding` result. Every call consumes from the
         /// queue; on exhaustion returns a default vector.
-        embedding_queue: Mutex<Vec<Result<(Vec<f32>, String), &'static str>>>,
+        embedding_queue: Mutex<Vec<EmbeddingResult>>,
         /// Captured `(api_key, embedding_model, text)` tuples.
         calls: Mutex<Vec<(String, String, String)>>,
     }

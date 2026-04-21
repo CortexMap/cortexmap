@@ -277,7 +277,7 @@ mod tests {
         let p = pricing(); // 0.15 / 0.60 per million
         // u32::MAX prompt + completion tokens
         let big = u32::MAX;
-        let usage = Usage::new(big, big, big as u32);
+        let usage = Usage::new(big, big, big);
         let cost = p.compute_cost_usd(usage, LlmEndpointKind::ChatCompletion);
         let expected = (big as f64) * 0.15 / 1_000_000.0 + (big as f64) * 0.60 / 1_000_000.0;
         assert!(cost.is_finite(), "cost overflowed to non-finite: {cost}");

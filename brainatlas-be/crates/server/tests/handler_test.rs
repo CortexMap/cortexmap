@@ -38,6 +38,13 @@ use uuid::Uuid;
 struct FakeErr(String);
 
 /// Canned responses/recorded calls for the fake `Services` impl.
+// Type aliases keep the recorded-call vector types readable (clippy type_complexity).
+type EmbedCall = (String, Option<String>, Option<String>);
+type ExtractClaimsCall = (String, String, Option<String>, Option<String>);
+type JudgeGroundednessCall = (String, Vec<String>, Option<String>, Option<String>);
+type JudgeRubricCall = (String, String, Option<String>, Option<String>);
+type JudgeCitationCall = (String, String, String, Option<String>, Option<String>);
+
 #[derive(Default)]
 struct FakeState {
     /// Last `UsageAggregateFilter` received by `usage_aggregate`.
@@ -45,17 +52,17 @@ struct FakeState {
     /// Canned aggregate response returned from `usage_aggregate`.
     usage_response: Mutex<UsageAggregate>,
     /// Recorded embed calls: `(text, model_override, correlation_id)`.
-    embed_calls: Mutex<Vec<(String, Option<String>, Option<String>)>>,
+    embed_calls: Mutex<Vec<EmbedCall>>,
     /// Recorded extract_claims calls: `(summary_text, region_name, model, correlation_id)`.
-    extract_claims_calls: Mutex<Vec<(String, String, Option<String>, Option<String>)>>,
+    extract_claims_calls: Mutex<Vec<ExtractClaimsCall>>,
     /// Recorded generate_queries calls: `(region_name, count, correlation_id)`.
     generate_queries_calls: Mutex<Vec<(String, u32, Option<String>)>>,
     /// Recorded judge_groundedness calls.
-    judge_groundedness_calls: Mutex<Vec<(String, Vec<String>, Option<String>, Option<String>)>>,
+    judge_groundedness_calls: Mutex<Vec<JudgeGroundednessCall>>,
     /// Recorded judge_rubric calls.
-    judge_rubric_calls: Mutex<Vec<(String, String, Option<String>, Option<String>)>>,
+    judge_rubric_calls: Mutex<Vec<JudgeRubricCall>>,
     /// Recorded judge_citation calls.
-    judge_citation_calls: Mutex<Vec<(String, String, String, Option<String>, Option<String>)>>,
+    judge_citation_calls: Mutex<Vec<JudgeCitationCall>>,
     /// Regions returned by `list()`.
     regions: Mutex<Vec<RegionMapping>>,
     /// If true, `list()` returns an error (used for 500 paths).

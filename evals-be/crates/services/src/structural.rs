@@ -49,7 +49,7 @@ pub fn length_in_range(summary: &str) -> f32 {
         return 1.0;
     }
     if len < LENGTH_LOW {
-        if len <= LENGTH_FLOOR {
+        if len == LENGTH_FLOOR {
             return 0.0;
         }
         return (len as f32 - LENGTH_FLOOR as f32) / (LENGTH_LOW as f32 - LENGTH_FLOOR as f32);

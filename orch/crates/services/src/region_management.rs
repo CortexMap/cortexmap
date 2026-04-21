@@ -749,12 +749,9 @@ where
         group.1.push(entry);
     }
 
-    let Some((eval_version, (_, entries))) = by_version
+    let (eval_version, (_, entries)) = by_version
         .into_iter()
-        .max_by(|a, b| a.1.0.cmp(&b.1.0).then_with(|| a.0.cmp(&b.0)))
-    else {
-        return None;
-    };
+        .max_by(|a, b| a.1.0.cmp(&b.1.0).then_with(|| a.0.cmp(&b.0)))?;
 
     let mut scores = HashMap::with_capacity(entries.len());
     let mut judge_models = HashMap::new();
@@ -1108,7 +1105,7 @@ mod tests {
     #[tokio::test]
     async fn eval_scores_stream_respects_private_concurrency_constant() {
         // Ensure the constant is a reasonable positive number.
-        assert!(EVAL_SCORES_FETCH_CONCURRENCY >= 1);
+        const { assert!(EVAL_SCORES_FETCH_CONCURRENCY >= 1) };
 
         let infra = HelperInfra::new();
         // 40 summary IDs; each call sleeps 20ms to create observable overlap.
@@ -1665,8 +1662,7 @@ mod tests {
             &svc, region_id,
         )
         .await
-        .err()
-        .expect("err");
+        .expect_err("err");
         match err {
             ServiceError::NotFound => {}
             other => panic!("expected NotFound, got {:?}", other),

@@ -697,9 +697,11 @@ async fn aggregate_summary_returns_empty_aggregate() {
 #[tokio::test]
 async fn aggregate_summary_honors_eval_version_query() {
     let db = Arc::new(InMemoryDb::default());
-    let mut agg = EvalAggregate::default();
-    agg.total_summaries = 7;
-    agg.total_scored = 3;
+    let mut agg = EvalAggregate {
+        total_summaries: 7,
+        total_scored: 3,
+        ..Default::default()
+    };
     agg.per_metric.insert(
         "rubric_relevance".to_string(),
         MetricStatsRaw {

@@ -348,6 +348,7 @@ where
     start_embed_step(ctx, claims, 0, Vec::new())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn advance_embed<DB, E>(
     db: &DB,
     database_url: &str,
@@ -659,7 +660,7 @@ fn start_embed_step<E: Error + Send + Sync + 'static>(
 fn next_rubric_or_done(
     ctx: &RunContext<'_>,
     claims: Option<Vec<Claim>>,
-    accumulated: &mut Vec<MetricResult>,
+    accumulated: &mut [MetricResult],
 ) -> (RunState, NextAction) {
     let already_cached_rubric = accumulated
         .iter()
@@ -684,7 +685,7 @@ fn next_rubric_or_done(
         return (
             RunState::Done,
             NextAction::Done {
-                metrics: accumulated.clone(),
+                metrics: accumulated.to_owned(),
             },
         );
     }
@@ -1043,11 +1044,11 @@ fn find_next_support_step(
     start_cite: usize,
     in_scope: &HashSet<Uuid>,
 ) -> Option<(usize, usize)> {
-    for ci in start_claim..claims.len() {
-        let cites = &claims[ci].cited_chunks;
+    for (ci, claim) in claims.iter().enumerate().skip(start_claim) {
+        let cites = &claim.cited_chunks;
         let start = if ci == start_claim { start_cite } else { 0 };
-        for ki in start..cites.len() {
-            if in_scope.contains(&cites[ki]) {
+        for (ki, cite) in cites.iter().enumerate().skip(start) {
+            if in_scope.contains(cite) {
                 return Some((ci, ki));
             }
         }
@@ -1095,9 +1096,7 @@ fn build_citation_support_action(
 
 fn enclosing_sentence_for_uuid(summary: &str, uuid: Uuid) -> Option<String> {
     let needle = format!("[chunk:{}]", uuid);
-    let Some(pos) = summary.to_lowercase().find(&needle.to_lowercase()) else {
-        return None;
-    };
+    let pos = summary.to_lowercase().find(&needle.to_lowercase())?;
     // Find sentence boundaries around `pos`.
     let bytes = summary.as_bytes();
     let mut start = pos;
