@@ -29,8 +29,9 @@ fn integration_enabled() -> bool {
 }
 
 fn test_database_url() -> String {
-    std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://test_user:test_password@localhost:5433/test_db".to_string())
+    std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+        "postgresql://test_user:test_password@localhost:5433/test_db".to_string()
+    })
 }
 
 fn pg_conn() -> PgConnection {
@@ -66,11 +67,7 @@ async fn latest_for_model(
     <BrainAtlasInfra as LlmPricingRepo>::latest_for_model(repo, db, model).await
 }
 
-async fn record(
-    repo: &BrainAtlasInfra,
-    db: &str,
-    row: NewLlmCallUsage,
-) -> Result<(), InfraError> {
+async fn record(repo: &BrainAtlasInfra, db: &str, row: NewLlmCallUsage) -> Result<(), InfraError> {
     <BrainAtlasInfra as LlmUsageRepo>::record(repo, db, row).await
 }
 
@@ -155,9 +152,24 @@ async fn latest_for_model_orders_by_effective_from_desc() {
 
     // Three rows, distinct effective_from timestamps. The one in 2030 must win
     // regardless of insertion order.
-    insert_pricing_row(&model, "0.1", "0.2", Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap());
-    insert_pricing_row(&model, "0.9", "1.8", Utc.with_ymd_and_hms(2030, 6, 15, 12, 0, 0).unwrap());
-    insert_pricing_row(&model, "0.5", "1.0", Utc.with_ymd_and_hms(2027, 3, 10, 8, 0, 0).unwrap());
+    insert_pricing_row(
+        &model,
+        "0.1",
+        "0.2",
+        Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+    );
+    insert_pricing_row(
+        &model,
+        "0.9",
+        "1.8",
+        Utc.with_ymd_and_hms(2030, 6, 15, 12, 0, 0).unwrap(),
+    );
+    insert_pricing_row(
+        &model,
+        "0.5",
+        "1.0",
+        Utc.with_ymd_and_hms(2027, 3, 10, 8, 0, 0).unwrap(),
+    );
 
     let repo = BrainAtlasInfra::new();
     let pricing = latest_for_model(&repo, &test_database_url(), &model)
@@ -186,7 +198,11 @@ async fn latest_for_model_returns_none_for_unknown_model() {
     let out = latest_for_model(&repo, &test_database_url(), &model)
         .await
         .expect("ok");
-    assert!(out.is_none(), "expected None for unknown model, got {:?}", out);
+    assert!(
+        out.is_none(),
+        "expected None for unknown model, got {:?}",
+        out
+    );
 }
 
 #[tokio::test]
@@ -214,7 +230,9 @@ async fn record_inserts_row_with_all_fields() {
     };
 
     let repo = BrainAtlasInfra::new();
-    record(&repo, &test_database_url(), row).await.expect("record ok");
+    record(&repo, &test_database_url(), row)
+        .await
+        .expect("record ok");
 
     // Round-trip: read the row straight back via raw SQL to avoid coupling the
     // test to the aggregate path (which we test separately).
@@ -271,7 +289,11 @@ async fn record_inserts_row_with_all_fields() {
 
     // BigDecimal cost: convert back through f64 and compare with tolerance.
     // The column is numeric(14,8), so we can't expect bit-exact fidelity.
-    let cost_f = got.cost_usd.expect("cost present").to_f64().expect("to_f64");
+    let cost_f = got
+        .cost_usd
+        .expect("cost present")
+        .to_f64()
+        .expect("to_f64");
     assert!(
         (cost_f - 0.004567_f64).abs() < 1e-8,
         "cost round-trip mismatch: {}",
@@ -306,7 +328,9 @@ async fn record_handles_bigdecimal_precision_edges() {
     let mut big_row = minimal_usage("chat", "openai/gpt-4o-mini", &tag);
     big_row.cost_usd = Some(123456.78901234_f64);
     big_row.correlation_id = Some(format!("edge-{}", Uuid::new_v4()));
-    record(&repo, &db, big_row).await.expect("large-cost record");
+    record(&repo, &db, big_row)
+        .await
+        .expect("large-cost record");
 
     // Sanity: aggregate by caller_tag and confirm 4 rows were inserted.
     let filter = UsageAggregateFilter {
@@ -314,7 +338,11 @@ async fn record_handles_bigdecimal_precision_edges() {
         ..Default::default()
     };
     let agg = aggregate(&repo, &db, filter).await.expect("aggregate ok");
-    assert_eq!(agg.total_calls, 4, "expected 4 rows, got {}", agg.total_calls);
+    assert_eq!(
+        agg.total_calls, 4,
+        "expected 4 rows, got {}",
+        agg.total_calls
+    );
 
     cleanup_usage_by_caller_tag(&tag);
 }
@@ -330,7 +358,9 @@ async fn record_null_cost_when_pricing_missing() {
     row.correlation_id = Some(corr.clone());
 
     let repo = BrainAtlasInfra::new();
-    record(&repo, &test_database_url(), row).await.expect("record ok");
+    record(&repo, &test_database_url(), row)
+        .await
+        .expect("record ok");
 
     // Verify the cost_usd column is truly NULL in the DB.
     #[derive(QueryableByName, Debug)]
@@ -601,7 +631,10 @@ async fn aggregate_filters_by_since_and_until() {
     )
     .await
     .expect("agg");
-    assert_eq!(agg.total_calls, 2, "until=2026 (inclusive) should match old+mid");
+    assert_eq!(
+        agg.total_calls, 2,
+        "until=2026 (inclusive) should match old+mid"
+    );
 
     cleanup_usage_by_caller_tag(&tag);
 }

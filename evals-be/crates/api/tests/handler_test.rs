@@ -9,14 +9,14 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use evals_api::{Evals, build_router};
+use app::{EvalRuntimeConfig, EvalsApp};
 use async_trait::async_trait;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use chrono::NaiveDateTime;
 use domain::{EvalRun, EvalRunStatus, EvalScore, NewEvalScore};
-use app::{EvalRuntimeConfig, EvalsApp};
+use evals_api::{Evals, build_router};
 use http_body_util::BodyExt;
 use rpc_types::{LlmEndpoint, NextAction};
 use services::{
@@ -723,7 +723,14 @@ async fn aggregate_summary_honors_eval_version_query() {
     assert_eq!(json["eval_version"], "v9");
     assert_eq!(json["total_summaries"], 7);
     assert_eq!(json["total_scored"], 3);
-    assert!((json["per_metric"]["rubric_relevance"]["avg"].as_f64().unwrap() - 0.8).abs() < 1e-6);
+    assert!(
+        (json["per_metric"]["rubric_relevance"]["avg"]
+            .as_f64()
+            .unwrap()
+            - 0.8)
+            .abs()
+            < 1e-6
+    );
 }
 
 #[tokio::test]
@@ -777,7 +784,10 @@ async fn unscored_endpoint_returns_ids() {
     let id_a = Uuid::new_v4();
     let id_b = Uuid::new_v4();
     let db = Arc::new(InMemoryDb::default());
-    db.unscored_ids.lock().unwrap().extend_from_slice(&[id_a, id_b]);
+    db.unscored_ids
+        .lock()
+        .unwrap()
+        .extend_from_slice(&[id_a, id_b]);
     let router = build_test_router(db);
 
     let resp = router
@@ -792,4 +802,3 @@ async fn unscored_endpoint_returns_ids() {
     let ids = json["summary_ids"].as_array().unwrap();
     assert_eq!(ids.len(), 2);
 }
-

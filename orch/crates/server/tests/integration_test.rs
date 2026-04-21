@@ -649,7 +649,11 @@ mod http_handler_tests {
         })
     }
 
-    async fn post_json(router: &Router, path: &str, body: serde_json::Value) -> axum::response::Response {
+    async fn post_json(
+        router: &Router,
+        path: &str,
+        body: serde_json::Value,
+    ) -> axum::response::Response {
         let req = Request::builder()
             .method(Method::POST)
             .uri(path)
@@ -836,7 +840,9 @@ mod http_handler_tests {
         // prefixed "ensure_workers:".
         if ok == Some(false) {
             assert!(
-                errors.iter().any(|e| e.as_str().unwrap_or("").starts_with("ensure_workers:")),
+                errors
+                    .iter()
+                    .any(|e| e.as_str().unwrap_or("").starts_with("ensure_workers:")),
                 "failed ensure_workers must record an error with the phase prefix"
             );
         }
@@ -932,7 +938,8 @@ mod http_handler_tests {
         let body = read_body_json(resp).await;
 
         assert_eq!(
-            body["connected"], serde_json::Value::Bool(true),
+            body["connected"],
+            serde_json::Value::Bool(true),
             "happy-path Redis must be reported as connected; body={body:?}"
         );
         assert!(
@@ -1108,8 +1115,9 @@ mod http_handler_tests {
             total_queries >= 2,
             "global total_queries={total_queries} should include our 2 inserts"
         );
-        let regions_with_queries =
-            body["regions_with_queries"].as_i64().expect("regions_with_queries");
+        let regions_with_queries = body["regions_with_queries"]
+            .as_i64()
+            .expect("regions_with_queries");
         assert!(
             regions_with_queries >= 1,
             "regions_with_queries={regions_with_queries} should include our region"
@@ -1229,4 +1237,3 @@ mod http_handler_tests {
     #[allow(dead_code)]
     fn _services_bound<S: Services>(_s: &S) {}
 }
-

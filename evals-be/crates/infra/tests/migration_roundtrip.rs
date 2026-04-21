@@ -24,22 +24,20 @@
 
 use std::collections::HashSet;
 
-const CREATE_EVAL_SCORES_UP: &str = include_str!(
-    "../../../migrations/2026-04-19-000001-create_eval_scores/up.sql"
-);
-const CREATE_EVAL_SCORES_DOWN: &str = include_str!(
-    "../../../migrations/2026-04-19-000001-create_eval_scores/down.sql"
-);
-const ADD_EVAL_RUN_STATE_UP: &str = include_str!(
-    "../../../migrations/2026-04-19-000002-add_eval_run_state/up.sql"
-);
-const ADD_EVAL_RUN_STATE_DOWN: &str = include_str!(
-    "../../../migrations/2026-04-19-000002-add_eval_run_state/down.sql"
-);
+const CREATE_EVAL_SCORES_UP: &str =
+    include_str!("../../../migrations/2026-04-19-000001-create_eval_scores/up.sql");
+const CREATE_EVAL_SCORES_DOWN: &str =
+    include_str!("../../../migrations/2026-04-19-000001-create_eval_scores/down.sql");
+const ADD_EVAL_RUN_STATE_UP: &str =
+    include_str!("../../../migrations/2026-04-19-000002-add_eval_run_state/up.sql");
+const ADD_EVAL_RUN_STATE_DOWN: &str =
+    include_str!("../../../migrations/2026-04-19-000002-add_eval_run_state/down.sql");
 
 /// Case-insensitive "does `haystack` contain `needle`?"
 fn contains_ci(haystack: &str, needle: &str) -> bool {
-    haystack.to_ascii_lowercase().contains(&needle.to_ascii_lowercase())
+    haystack
+        .to_ascii_lowercase()
+        .contains(&needle.to_ascii_lowercase())
 }
 
 /// Extract object names (tables and indexes) declared by `CREATE` in `sql`.
@@ -69,9 +67,7 @@ fn extract_created_objects(sql: &str) -> (HashSet<String>, HashSet<String>) {
         }
 
         // CREATE [UNIQUE] INDEX [IF NOT EXISTS] <name> ON ...
-        if lower.starts_with("create index ")
-            || lower.starts_with("create unique index ")
-        {
+        if lower.starts_with("create index ") || lower.starts_with("create unique index ") {
             let rest = lower
                 .trim_start_matches("create unique index ")
                 .trim_start_matches("create index ")

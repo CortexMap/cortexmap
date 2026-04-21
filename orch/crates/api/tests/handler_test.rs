@@ -26,7 +26,7 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use domain::{
     AllocateWorkersRequest, BatchStatus, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask,
-    PollResult, ProcessResult, ProcessingBatch, Region, RedisPrefixCount, RedisStats, RegionQuery,
+    PollResult, ProcessResult, ProcessingBatch, RedisPrefixCount, RedisStats, Region, RegionQuery,
     RegionSummary, StopWorkersRequest, SummaryFreshness, SystemStats, WorkerAllocationResponse,
     WorkerStatus, WorkerStopResponse,
 };
@@ -106,10 +106,7 @@ impl CompletionOrchestrator for FakeServices {
 impl RegionManagement for FakeServices {
     type Error = FakeErr;
 
-    async fn get_summaries(
-        &self,
-        _region_id: Uuid,
-    ) -> Result<Vec<RegionSummary>, Self::Error> {
+    async fn get_summaries(&self, _region_id: Uuid) -> Result<Vec<RegionSummary>, Self::Error> {
         match self.list_summaries.lock().unwrap().take() {
             Some(r) => r,
             None => not_staged("get_summaries"),
@@ -439,7 +436,12 @@ async fn read_body_json(resp: axum::http::Response<axum::body::Body>) -> serde_j
 }
 
 async fn read_body_bytes(resp: axum::http::Response<axum::body::Body>) -> Vec<u8> {
-    resp.into_body().collect().await.unwrap().to_bytes().to_vec()
+    resp.into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec()
 }
 
 fn get(uri: &str) -> Request<Body> {
@@ -537,10 +539,7 @@ async fn unknown_route_returns_404() {
     let svc = Arc::new(FakeServices::new());
     let app = router(svc);
 
-    let resp = app
-        .oneshot(get("/orch/api/does-not-exist"))
-        .await
-        .unwrap();
+    let resp = app.oneshot(get("/orch/api/does-not-exist")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -582,7 +581,10 @@ async fn pipeline_trigger_empty_body_is_noop_returning_defaults() {
     let app = router(svc.clone());
 
     let resp = app
-        .oneshot(post_json("/orch/api/pipeline/trigger", serde_json::json!({})))
+        .oneshot(post_json(
+            "/orch/api/pipeline/trigger",
+            serde_json::json!({}),
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -692,7 +694,10 @@ async fn dev_system_stats_endpoint_serializes_all_expected_fields() {
 
     let app = router(svc);
 
-    let resp = app.oneshot(get("/orch/dev/api/system-stats")).await.unwrap();
+    let resp = app
+        .oneshot(get("/orch/dev/api/system-stats"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     let body = read_body_json(resp).await;

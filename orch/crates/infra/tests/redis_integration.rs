@@ -214,10 +214,20 @@ async fn cache_stats_when_connected() {
     let key = unique_prefix("stats_seed");
     infra.cache_set(&key, "present", 60).await.expect("seed");
 
-    let stats = infra.cache_stats().await.expect("cache_stats must not error");
+    let stats = infra
+        .cache_stats()
+        .await
+        .expect("cache_stats must not error");
 
-    assert!(stats.connected, "stats.connected must be true when Redis is reachable");
-    assert!(stats.error.is_none(), "stats.error must be None when connected, got {:?}", stats.error);
+    assert!(
+        stats.connected,
+        "stats.connected must be true when Redis is reachable"
+    );
+    assert!(
+        stats.error.is_none(),
+        "stats.error must be None when connected, got {:?}",
+        stats.error
+    );
     assert!(
         stats.total_keys >= 1,
         "total_keys ({}) should be >= 1 after seeding",

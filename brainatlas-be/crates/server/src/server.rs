@@ -87,10 +87,7 @@ where
                 "/api/llm/judge-groundedness",
                 post(llm_judge_groundedness_handler::<S>),
             )
-            .route(
-                "/api/llm/judge-rubric",
-                post(llm_judge_rubric_handler::<S>),
-            )
+            .route("/api/llm/judge-rubric", post(llm_judge_rubric_handler::<S>))
             .route(
                 "/api/llm/judge-citation",
                 post(llm_judge_citation_handler::<S>),
@@ -251,9 +248,7 @@ where
 
 /// Convert an `AppError` into a `ServerError` for the eval handlers (which
 /// bypass the `BrainRegionApi` trait and so don't get the `ApiError` wrapper).
-fn from_app_error<E: std::error::Error + Send + Sync + 'static>(
-    e: AppError<E>,
-) -> ServerError<E> {
+fn from_app_error<E: std::error::Error + Send + Sync + 'static>(e: AppError<E>) -> ServerError<E> {
     ServerError(Error::AppError(e))
 }
 
@@ -376,24 +371,27 @@ where
     S: Services + 'static,
     <S as Services>::Error: std::error::Error + Send + Sync + 'static,
 {
-    let parse_ts =
-        |s: Option<String>| -> Result<Option<chrono::DateTime<chrono::Utc>>, ServerError<<S as Services>::Error>> {
-            match s {
-                None => Ok(None),
-                Some(v) => chrono::DateTime::parse_from_rfc3339(&v)
-                    .map(|d| Some(d.with_timezone(&chrono::Utc)))
-                    .map_err(|_| ServerError(Error::MissingOrInvalidId)),
-            }
-        };
-    let parse_uuid = |s: Option<String>| -> Result<Option<uuid::Uuid>, ServerError<<S as Services>::Error>> {
+    let parse_ts = |s: Option<String>| -> Result<
+        Option<chrono::DateTime<chrono::Utc>>,
+        ServerError<<S as Services>::Error>,
+    > {
         match s {
             None => Ok(None),
-            Some(v) => v
-                .parse::<uuid::Uuid>()
-                .map(Some)
+            Some(v) => chrono::DateTime::parse_from_rfc3339(&v)
+                .map(|d| Some(d.with_timezone(&chrono::Utc)))
                 .map_err(|_| ServerError(Error::MissingOrInvalidId)),
         }
     };
+    let parse_uuid =
+        |s: Option<String>| -> Result<Option<uuid::Uuid>, ServerError<<S as Services>::Error>> {
+            match s {
+                None => Ok(None),
+                Some(v) => v
+                    .parse::<uuid::Uuid>()
+                    .map(Some)
+                    .map_err(|_| ServerError(Error::MissingOrInvalidId)),
+            }
+        };
     let filter = UsageAggregateFilter {
         since: parse_ts(q.since)?,
         until: parse_ts(q.until)?,

@@ -54,9 +54,7 @@ fn extract_created_objects(sql: &str) -> (HashSet<String>, HashSet<String>) {
             }
         }
 
-        if lower.starts_with("create index ")
-            || lower.starts_with("create unique index ")
-        {
+        if lower.starts_with("create index ") || lower.starts_with("create unique index ") {
             let rest = lower
                 .trim_start_matches("create unique index ")
                 .trim_start_matches("create index ")
@@ -201,11 +199,7 @@ fn add_llm_pricing_down_drops_expected_objects() {
 
 #[test]
 fn add_llm_pricing_up_and_down_are_inverse() {
-    assert_up_down_inverse(
-        "add_llm_pricing",
-        ADD_LLM_PRICING_UP,
-        ADD_LLM_PRICING_DOWN,
-    );
+    assert_up_down_inverse("add_llm_pricing", ADD_LLM_PRICING_UP, ADD_LLM_PRICING_DOWN);
 }
 
 // ============================================================================

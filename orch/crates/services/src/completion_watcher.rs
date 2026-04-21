@@ -284,10 +284,7 @@ where
     ///
     /// Both recoveries invalidate the batch/pipeline caches so the dashboard
     /// reflects the transition on the next poll.
-    async fn recover_stale_batches(
-        &self,
-        database_url: &str,
-    ) -> Result<(), ServiceError<E>> {
+    async fn recover_stale_batches(&self, database_url: &str) -> Result<(), ServiceError<E>> {
         // --- 1. Zombie collecting batches (empty fetch_task_ids) ---
         let collecting = self
             .infra

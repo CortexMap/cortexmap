@@ -196,10 +196,8 @@ async fn get_summary_freshness_counts_counts_is_active_false_with_summary() {
     // Region A: only has an `is_active=false, summary IS NOT NULL` row.
     // This row is excluded by `is_active = TRUE`, so the region falls into
     // the `no_summary` bucket.
-    let (region_a_pk, region_a_id) = insert_region(
-        &mut conn,
-        &format!("pg_test_fresh_A_{}", Uuid::new_v4()),
-    );
+    let (region_a_pk, region_a_id) =
+        insert_region(&mut conn, &format!("pg_test_fresh_A_{}", Uuid::new_v4()));
     insert_summary(
         &mut conn,
         region_a_id,
@@ -211,10 +209,8 @@ async fn get_summary_freshness_counts_counts_is_active_false_with_summary() {
 
     // Region B: has the pathological is_active=true AND summary IS NULL row.
     // Must be in `no_summary` (NOT `fresh`) — the regression guard.
-    let (region_b_pk, region_b_id) = insert_region(
-        &mut conn,
-        &format!("pg_test_fresh_B_{}", Uuid::new_v4()),
-    );
+    let (region_b_pk, region_b_id) =
+        insert_region(&mut conn, &format!("pg_test_fresh_B_{}", Uuid::new_v4()));
     insert_summary(
         &mut conn,
         region_b_id,
@@ -226,10 +222,8 @@ async fn get_summary_freshness_counts_counts_is_active_false_with_summary() {
 
     // Region C: healthy baseline — is_active=true AND summary non-empty,
     // recent. Must be `fresh`.
-    let (region_c_pk, region_c_id) = insert_region(
-        &mut conn,
-        &format!("pg_test_fresh_C_{}", Uuid::new_v4()),
-    );
+    let (region_c_pk, region_c_id) =
+        insert_region(&mut conn, &format!("pg_test_fresh_C_{}", Uuid::new_v4()));
     insert_summary(
         &mut conn,
         region_c_id,

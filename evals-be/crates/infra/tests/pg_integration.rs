@@ -74,13 +74,11 @@ fn seed_region_and_summary(
     let summary_id = Uuid::new_v4();
     let batch_id = Uuid::new_v4();
 
-    diesel::sql_query(
-        "INSERT INTO region_mapping (region_id, name) VALUES ($1, $2)",
-    )
-    .bind::<diesel::sql_types::Integer, _>(region_id)
-    .bind::<diesel::sql_types::Text, _>(name)
-    .execute(conn)
-    .expect("seed region_mapping");
+    diesel::sql_query("INSERT INTO region_mapping (region_id, name) VALUES ($1, $2)")
+        .bind::<diesel::sql_types::Integer, _>(region_id)
+        .bind::<diesel::sql_types::Text, _>(name)
+        .execute(conn)
+        .expect("seed region_mapping");
 
     diesel::sql_query(
         "INSERT INTO region_summary (id, region_id, name, summary, batch_id, is_active)
@@ -310,8 +308,7 @@ async fn get_summary_with_chunks_returns_chunks() {
     let url = get_test_db_url();
     let pool = raw_pool();
     let conn = &mut pool.get().unwrap();
-    let (summary_id, region_id) =
-        seed_region_and_summary(conn, Some("body"), "chunks_test_region");
+    let (summary_id, region_id) = seed_region_and_summary(conn, Some("body"), "chunks_test_region");
 
     // Raw SQL to bypass the pgvector diesel type; `[0,0,...]`-style literal
     // is parsed by pgvector at cast time. 1536 dimensions matches the
@@ -540,8 +537,7 @@ async fn list_worst_offenders_orders_by_score_asc() {
     // eval_scores enforces that, but it's cleaner).
     let mut seeded: Vec<(Uuid, i32)> = Vec::new();
     for i in 0..3 {
-        let (sid, rid) =
-            seed_region_and_summary(conn, Some("body"), &format!("worst_test_{i}"));
+        let (sid, rid) = seed_region_and_summary(conn, Some("body"), &format!("worst_test_{i}"));
         seeded.push((sid, rid));
     }
 
@@ -623,11 +619,7 @@ async fn aggregate_filters_by_eval_version() {
     let version_b = unique_tag("vb");
 
     // 2 rows under version_a (score 0.4, 0.8), 1 row under version_b (0.2).
-    for (score, ver) in [
-        (0.4_f32, &version_a),
-        (0.8, &version_a),
-        (0.2, &version_b),
-    ] {
+    for (score, ver) in [(0.4_f32, &version_a), (0.8, &version_a), (0.2, &version_b)] {
         pg.insert_score(
             &url,
             NewEvalScore {
@@ -724,7 +716,10 @@ async fn eval_runs_lifecycle() {
         .expect("upsert_run running");
     assert_eq!(running.id, queued.id, "same (summary, version) → same row");
     assert_eq!(running.status, EvalRunStatus::Running);
-    assert!(running.started_at.is_some(), "Running should set started_at");
+    assert!(
+        running.started_at.is_some(),
+        "Running should set started_at"
+    );
     assert!(running.completed_at.is_none());
 
     // Complete
@@ -752,12 +747,11 @@ async fn eval_runs_lifecycle() {
         #[diesel(sql_type = diesel::sql_types::BigInt)]
         c: i64,
     }
-    let counts: Vec<Count> = diesel::sql_query(
-        "SELECT COUNT(*)::bigint AS c FROM eval_runs WHERE eval_version = $1",
-    )
-    .bind::<diesel::sql_types::Text, _>(&eval_version)
-    .load(conn)
-    .expect("count eval_runs");
+    let counts: Vec<Count> =
+        diesel::sql_query("SELECT COUNT(*)::bigint AS c FROM eval_runs WHERE eval_version = $1")
+            .bind::<diesel::sql_types::Text, _>(&eval_version)
+            .load(conn)
+            .expect("count eval_runs");
     assert_eq!(counts[0].c, 1, "exactly one row under this eval_version");
 
     cleanup(conn, summary_id, region_id);

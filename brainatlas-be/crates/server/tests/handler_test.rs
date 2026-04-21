@@ -47,18 +47,15 @@ struct FakeState {
     /// Recorded embed calls: `(text, model_override, correlation_id)`.
     embed_calls: Mutex<Vec<(String, Option<String>, Option<String>)>>,
     /// Recorded extract_claims calls: `(summary_text, region_name, model, correlation_id)`.
-    extract_claims_calls:
-        Mutex<Vec<(String, String, Option<String>, Option<String>)>>,
+    extract_claims_calls: Mutex<Vec<(String, String, Option<String>, Option<String>)>>,
     /// Recorded generate_queries calls: `(region_name, count, correlation_id)`.
     generate_queries_calls: Mutex<Vec<(String, u32, Option<String>)>>,
     /// Recorded judge_groundedness calls.
-    judge_groundedness_calls:
-        Mutex<Vec<(String, Vec<String>, Option<String>, Option<String>)>>,
+    judge_groundedness_calls: Mutex<Vec<(String, Vec<String>, Option<String>, Option<String>)>>,
     /// Recorded judge_rubric calls.
     judge_rubric_calls: Mutex<Vec<(String, String, Option<String>, Option<String>)>>,
     /// Recorded judge_citation calls.
-    judge_citation_calls:
-        Mutex<Vec<(String, String, String, Option<String>, Option<String>)>>,
+    judge_citation_calls: Mutex<Vec<(String, String, String, Option<String>, Option<String>)>>,
     /// Regions returned by `list()`.
     regions: Mutex<Vec<RegionMapping>>,
     /// If true, `list()` returns an error (used for 500 paths).
@@ -275,10 +272,7 @@ impl VectorDatabase for FakeServices {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
-    async fn get_chunk_source(
-        &self,
-        _chunk_id: Uuid,
-    ) -> Result<Option<ChunkSource>, Self::Error> {
+    async fn get_chunk_source(&self, _chunk_id: Uuid) -> Result<Option<ChunkSource>, Self::Error> {
         Ok(None)
     }
 }
@@ -394,7 +388,10 @@ async fn usage_endpoint_propagates_every_filter() {
         "2026-04-20T23:59:59+00:00"
     );
     assert_eq!(captured.model.as_deref(), Some("openai/gpt-4o-mini"));
-    assert_eq!(captured.correlation_id.as_deref(), Some("eval:run-1:step-2"));
+    assert_eq!(
+        captured.correlation_id.as_deref(),
+        Some("eval:run-1:step-2")
+    );
     assert_eq!(
         captured.correlation_id_prefix.as_deref(),
         Some("eval:run-1:")
@@ -557,7 +554,10 @@ async fn judge_groundedness_endpoint_records_correlation_id() {
     let calls = state.judge_groundedness_calls.lock().unwrap().clone();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "The hippocampus supports memory.");
-    assert_eq!(calls[0].1, vec!["chunk one".to_string(), "chunk two".to_string()]);
+    assert_eq!(
+        calls[0].1,
+        vec!["chunk one".to_string(), "chunk two".to_string()]
+    );
     assert!(calls[0].2.is_none()); // chat_model omitted
     assert_eq!(calls[0].3.as_deref(), Some("eval:run-2:step-5"));
 }
@@ -620,10 +620,7 @@ async fn judge_citation_endpoint_records_three_fields() {
     let calls = state.judge_citation_calls.lock().unwrap().clone();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "Hippocampus supports memory.");
-    assert_eq!(
-        calls[0].1,
-        "The hippocampus supports memory [chunk:abc]."
-    );
+    assert_eq!(calls[0].1, "The hippocampus supports memory [chunk:abc].");
     assert_eq!(calls[0].2, "Hippocampal lesions impair declarative memory.");
     assert_eq!(calls[0].3.as_deref(), Some("openai/gpt-4o-mini"));
     assert_eq!(calls[0].4.as_deref(), Some("eval:run-3:step-9"));
