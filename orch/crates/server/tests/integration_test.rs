@@ -845,59 +845,74 @@ mod http_handler_tests {
         );
     }
 
-    /// Discover-papers + generate-queries combo. Either can fail depending on
-    /// upstream reachability; the endpoint must still return 200 with the
-    /// errors surfaced inline. This also covers the "multiple phases in one
-    /// request" code path.
+    /// Per-phase opt-in: sending `{"ensure_workers": true}` alone must leave
+    /// the other result slots as `None` (not `false`/0/empty-tuple) in the
+    /// response body. This is the contract guarantee for the dashboard UI
+    /// which renders "not requested" vs. "requested and failed" differently.
+    /// Uses a fast-failing fetcher addr so the whole test stays bounded.
     #[tokio::test]
-    async fn pipeline_trigger_combo_discover_and_generate() {
+    async fn pipeline_trigger_per_phase_opt_in_leaves_others_none() {
         if !should_run() {
             eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
             return;
         }
+
+        // Same short-circuit as the sibling test: force fetcher to fail fast.
+        let original_fetcher = env::var("FETCHER_HTTP_ADDR").ok();
+        // SAFETY: edition 2024; see redis_stats_degraded_when_unreachable.
+        unsafe {
+            env::set_var("FETCHER_HTTP_ADDR", "http://127.0.0.1:1");
+        }
+
         let router = build_router();
-        let resp = post_json(
-            &router,
-            "/orch/api/pipeline/trigger",
-            serde_json::json!({
-                "generate_queries": true,
-                "discover_papers": true,
-            }),
+        let resp = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            post_json(
+                &router,
+                "/orch/api/pipeline/trigger",
+                serde_json::json!({"ensure_workers": true}),
+            ),
         )
         .await;
+
+        unsafe {
+            match original_fetcher {
+                Some(v) => env::set_var("FETCHER_HTTP_ADDR", v),
+                None => env::remove_var("FETCHER_HTTP_ADDR"),
+            }
+        }
+
+        let resp = resp.expect("pipeline_trigger opt-in blocked for >30s");
         assert_eq!(resp.status(), StatusCode::OK);
         let body = read_body_json(resp).await;
 
-        // Both phases were requested — each yields either a result tuple or
-        // an error line; either way the paired slot is populated in some way.
-        // Specifically: success fills the `*_result` field; failure fills
-        // nothing AND adds one entry to `errors`. So the invariant is:
-        //   result OR errors-prefixed-with-phase-name.
-        let errors: Vec<String> = body["errors"]
-            .as_array()
-            .expect("errors array")
-            .iter()
-            .map(|v| v.as_str().unwrap_or("").to_string())
-            .collect();
-
-        let gen_result_present = !body["generate_queries_result"].is_null();
-        let gen_err_present = errors.iter().any(|e| e.starts_with("generate_queries:"));
+        // Per-phase opt-in contract: slots stay null for phases we did NOT
+        // request. This is how the dashboard distinguishes "phase skipped"
+        // from "phase ran and returned 0". If the serde serialisation of
+        // `Option<(usize, usize)>` ever changes to `null → []` or `None →
+        // false`, this assertion flags it.
         assert!(
-            gen_result_present || gen_err_present,
-            "generate_queries phase must produce a result OR an error; got neither. body={body:?}"
+            body["reset_queries_deleted"].is_null(),
+            "reset_queries was not requested; slot must be null, got {}",
+            body["reset_queries_deleted"]
         );
-
-        let disc_result_present = !body["discover_papers_result"].is_null();
-        let disc_err_present = errors.iter().any(|e| e.starts_with("discover_papers:"));
         assert!(
-            disc_result_present || disc_err_present,
-            "discover_papers phase must produce a result OR an error; got neither. body={body:?}"
+            body["generate_queries_result"].is_null(),
+            "generate_queries was not requested; slot must be null, got {}",
+            body["generate_queries_result"]
         );
-
-        // Phases NOT requested must remain None.
-        assert!(body["reset_queries_deleted"].is_null());
-        assert!(body["ensure_workers_ok"].is_null());
-        println!("✅ POST /pipeline/trigger combo phases respond cleanly");
+        assert!(
+            body["discover_papers_result"].is_null(),
+            "discover_papers was not requested; slot must be null, got {}",
+            body["discover_papers_result"]
+        );
+        // ensure_workers_ok IS populated because the phase ran.
+        assert!(
+            body["ensure_workers_ok"].is_boolean(),
+            "ensure_workers was requested; slot must be a bool, got {}",
+            body["ensure_workers_ok"]
+        );
+        println!("✅ POST /pipeline/trigger per-phase opt-in contract holds");
     }
 
     // -- GET /orch/dev/api/redis-stats ---------------------------------------
