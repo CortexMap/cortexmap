@@ -203,11 +203,7 @@ pub trait LlmPricingRepo: Send + Sync {
 pub trait LlmUsageRepo: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    async fn record(
-        &self,
-        database_url: &str,
-        row: NewLlmCallUsage,
-    ) -> Result<(), Self::Error>;
+    async fn record(&self, database_url: &str, row: NewLlmCallUsage) -> Result<(), Self::Error>;
 
     async fn aggregate(
         &self,

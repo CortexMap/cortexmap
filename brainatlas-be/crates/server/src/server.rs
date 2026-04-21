@@ -5,15 +5,14 @@ use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use domain::UsageAggregateFilter;
 use domain::rpc_types::evals::{
     EmbedRequest, EmbedResponse, ExtractClaimsRequest, JudgeCitationRequest,
-    JudgeGroundednessRequest,
-    JudgeRubricRequest, UsageAggregateQuery,
+    JudgeGroundednessRequest, JudgeRubricRequest, UsageAggregateQuery,
 };
 use domain::rpc_types::{
     GenerateQueriesRequest, ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest,
 };
-use domain::{UsageAggregateFilter};
 use infra::{BrainAtlasInfra, InfraError};
 use services::{BrainAtlasServices, ServiceError};
 use std::sync::Arc;
@@ -309,14 +308,15 @@ async fn llm_usage_handler(
     State(server): State<BrainAtlasServer>,
     Query(q): Query<UsageAggregateQuery>,
 ) -> Result<impl IntoResponse, ServerError> {
-    let parse_ts = |s: Option<String>| -> Result<Option<chrono::DateTime<chrono::Utc>>, ServerError> {
-        match s {
-            None => Ok(None),
-            Some(v) => chrono::DateTime::parse_from_rfc3339(&v)
-                .map(|d| Some(d.with_timezone(&chrono::Utc)))
-                .map_err(|_| ServerError(Error::MissingOrInvalidId)),
-        }
-    };
+    let parse_ts =
+        |s: Option<String>| -> Result<Option<chrono::DateTime<chrono::Utc>>, ServerError> {
+            match s {
+                None => Ok(None),
+                Some(v) => chrono::DateTime::parse_from_rfc3339(&v)
+                    .map(|d| Some(d.with_timezone(&chrono::Utc)))
+                    .map_err(|_| ServerError(Error::MissingOrInvalidId)),
+            }
+        };
     let parse_uuid = |s: Option<String>| -> Result<Option<uuid::Uuid>, ServerError> {
         match s {
             None => Ok(None),

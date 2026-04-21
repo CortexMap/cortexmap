@@ -158,20 +158,21 @@ where
                     && let Ok(brainatlas_base) =
                         resolve_brainatlas_base_url(infra.as_ref(), &database_url).await
                 {
-                    let batch_ids: Vec<Uuid> =
-                        result.iter().map(|s| s.batch_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
-                    let enriched_cost: Vec<(Uuid, Option<String>)> =
-                        stream::iter(batch_ids)
-                            .map(|bid| {
-                                let base = brainatlas_base.clone();
-                                let infra = Arc::clone(infra);
-                                async move {
-                                    (bid, fetch_batch_cost_usd(&*infra, &base, bid).await)
-                                }
-                            })
-                            .buffer_unordered(EVAL_SCORES_FETCH_CONCURRENCY)
-                            .collect()
-                            .await;
+                    let batch_ids: Vec<Uuid> = result
+                        .iter()
+                        .map(|s| s.batch_id)
+                        .collect::<std::collections::HashSet<_>>()
+                        .into_iter()
+                        .collect();
+                    let enriched_cost: Vec<(Uuid, Option<String>)> = stream::iter(batch_ids)
+                        .map(|bid| {
+                            let base = brainatlas_base.clone();
+                            let infra = Arc::clone(infra);
+                            async move { (bid, fetch_batch_cost_usd(&*infra, &base, bid).await) }
+                        })
+                        .buffer_unordered(EVAL_SCORES_FETCH_CONCURRENCY)
+                        .collect()
+                        .await;
 
                     let cost_by_batch: std::collections::HashMap<Uuid, Option<String>> =
                         enriched_cost.into_iter().collect();

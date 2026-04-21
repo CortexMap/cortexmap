@@ -62,18 +62,17 @@ where
         // Fast path: shared read lock.
         {
             let cache = self.pricing_cache.read().await;
-            if let Some(entry) = cache.get(model) {
-                if entry.fetched_at.elapsed().as_secs() < PRICING_CACHE_TTL_SECS {
+            if let Some(entry) = cache.get(model)
+                && entry.fetched_at.elapsed().as_secs() < PRICING_CACHE_TTL_SECS {
                     return entry.pricing.clone();
                 }
-            }
         }
         // Slow path: fetch from DB, populate cache.
         let database_url = self
             .infra
             .get("DATABASE_URL")
             .ok()
-            .unwrap_or_else(String::new);
+            .unwrap_or_default();
         if database_url.is_empty() {
             warn!(
                 model,
@@ -113,8 +112,9 @@ where
         latency_ms: u64,
     ) {
         let pricing = self.cached_pricing(&outcome.model).await;
-        let cost_usd: Option<f64> =
-            pricing.as_ref().map(|p| p.compute_cost_usd(outcome.usage, outcome.endpoint));
+        let cost_usd: Option<f64> = pricing
+            .as_ref()
+            .map(|p| p.compute_cost_usd(outcome.usage, outcome.endpoint));
         if pricing.is_none() {
             warn!(
                 model = %outcome.model,
@@ -262,11 +262,7 @@ mod tests {
     #[async_trait::async_trait]
     impl LlmUsageRepo for MockInfra {
         type Error = MockErr;
-        async fn record(
-            &self,
-            _db: &str,
-            row: NewLlmCallUsage,
-        ) -> Result<(), Self::Error> {
+        async fn record(&self, _db: &str, row: NewLlmCallUsage) -> Result<(), Self::Error> {
             if self.fail_record {
                 return Err(MockErr);
             }
@@ -349,9 +345,8 @@ mod tests {
         let outc = outcome("openai/gpt-4o-mini", 10, 5);
         let ctx = UsageContext::default().with_caller_tag("test");
         let started = Instant::now();
-        let r: Result<String, ServiceError<MockErr>> = accountant
-            .finish::<String>(Ok(outc), ctx, started)
-            .await;
+        let r: Result<String, ServiceError<MockErr>> =
+            accountant.finish::<String>(Ok(outc), ctx, started).await;
         // Caller sees Ok, even though the insert failed.
         assert_eq!(r.ok(), Some("ok".to_string()));
     }

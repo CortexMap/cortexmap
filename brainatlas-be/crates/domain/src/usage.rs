@@ -118,7 +118,10 @@ mod tests {
     fn endpoint_kind_tags_are_stable() {
         assert_eq!(LlmEndpointKind::Embedding.as_tag(), "embedding");
         assert_eq!(LlmEndpointKind::ChatCompletion.as_tag(), "chat");
-        assert_eq!(LlmEndpointKind::ChatCompletionWithTools.as_tag(), "chat_tools");
+        assert_eq!(
+            LlmEndpointKind::ChatCompletionWithTools.as_tag(),
+            "chat_tools"
+        );
     }
 
     #[test]

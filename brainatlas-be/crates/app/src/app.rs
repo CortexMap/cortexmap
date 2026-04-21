@@ -68,8 +68,7 @@ where
         // supply one. `UsageContext` carries the correlation/region/batch
         // linkage into every LLM/embedding call made while processing this
         // region.
-        let correlation_id =
-            correlation_id.unwrap_or_else(|| format!("batch:{batch_id}"));
+        let correlation_id = correlation_id.unwrap_or_else(|| format!("batch:{batch_id}"));
         let base_ctx = UsageContext::default()
             .with_correlation(Some(correlation_id.clone()))
             .with_region(Some(region.region_id))
@@ -140,11 +139,8 @@ where
         let embedding_futures: Vec<_> = all_chunks
             .iter()
             .map(|chunk| {
-                self.services.generate_embedding(
-                    chunk,
-                    embedding_model_ref,
-                    base_ctx.clone(),
-                )
+                self.services
+                    .generate_embedding(chunk, embedding_model_ref, base_ctx.clone())
             })
             .collect();
 

@@ -141,7 +141,9 @@ where
         embedding_model: Option<&str>,
         correlation_id: Option<String>,
     ) -> Result<Vec<f32>, AppError<E>> {
-        self.app().embed(text, embedding_model, correlation_id).await
+        self.app()
+            .embed(text, embedding_model, correlation_id)
+            .await
     }
 
     pub async fn extract_claims(

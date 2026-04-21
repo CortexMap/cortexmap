@@ -51,17 +51,9 @@ impl Default for BrainAtlasLlmUsage {
 fn row_to_pricing(row: LlmPricingRow) -> LlmPricing {
     LlmPricing {
         model: row.model,
-        input_price_per_million: row
-            .input_price_per_million
-            .to_f64()
-            .unwrap_or(0.0),
-        output_price_per_million: row
-            .output_price_per_million
-            .to_f64()
-            .unwrap_or(0.0),
-        embedding_price_per_million: row
-            .embedding_price_per_million
-            .and_then(|d| d.to_f64()),
+        input_price_per_million: row.input_price_per_million.to_f64().unwrap_or(0.0),
+        output_price_per_million: row.output_price_per_million.to_f64().unwrap_or(0.0),
+        embedding_price_per_million: row.embedding_price_per_million.and_then(|d| d.to_f64()),
         currency: row.currency,
         effective_from: row.effective_from,
     }
@@ -113,11 +105,7 @@ impl LlmPricingRepo for BrainAtlasLlmUsage {
 impl LlmUsageRepo for BrainAtlasLlmUsage {
     type Error = InfraError;
 
-    async fn record(
-        &self,
-        database_url: &str,
-        row: NewLlmCallUsage,
-    ) -> Result<(), Self::Error> {
+    async fn record(&self, database_url: &str, row: NewLlmCallUsage) -> Result<(), Self::Error> {
         let conn = self.pool(database_url).await?.get().await?;
         let insert = new_usage_to_row(row);
         conn.interact(move |c| {
@@ -158,7 +146,10 @@ impl LlmUsageRepo for BrainAtlasLlmUsage {
                 if let Some(prefix) = filter.correlation_id_prefix {
                     // Escape % and _ so they're treated as literals, then
                     // append `%` for prefix match.
-                    let escaped = prefix.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+                    let escaped = prefix
+                        .replace('\\', "\\\\")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_");
                     let like = format!("{}%", escaped);
                     query = query.filter(usage_dsl::correlation_id.like(like));
                 }
@@ -190,7 +181,11 @@ impl LlmUsageRepo for BrainAtlasLlmUsage {
         let mut by_tag: HashMap<String, (f64, i64, i64)> = HashMap::new();
 
         for r in rows {
-            let cost = r.cost_usd.as_ref().and_then(BigDecimal::to_f64).unwrap_or(0.0);
+            let cost = r
+                .cost_usd
+                .as_ref()
+                .and_then(BigDecimal::to_f64)
+                .unwrap_or(0.0);
             total_cost += cost;
             total_tokens += r.total_tokens as i64;
             total_prompt += r.prompt_tokens as i64;

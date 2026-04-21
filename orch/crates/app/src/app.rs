@@ -236,9 +236,7 @@ where
             tracing::info!("Cost guardrail loop started");
 
             loop {
-                let interval_secs = cost_services
-                    .cost_guardrail_poll_interval_secs()
-                    .await;
+                let interval_secs = cost_services.cost_guardrail_poll_interval_secs().await;
 
                 if cost_services.cost_guardrail_enabled().await {
                     // Run once; errors are swallowed inside so this never
@@ -449,10 +447,7 @@ where
 
     /// Aggregate LLM cost for one eval run. Proxies to brainatlas-be's
     /// `/api/llm/usage?correlation_id_prefix=eval:{run_id}:`.
-    pub async fn get_eval_run_cost(
-        &self,
-        run_id: uuid::Uuid,
-    ) -> Result<domain::EvalRunCost, E> {
+    pub async fn get_eval_run_cost(&self, run_id: uuid::Uuid) -> Result<domain::EvalRunCost, E> {
         self.services.eval_orchestrator_get_run_cost(run_id).await
     }
 

@@ -211,11 +211,7 @@ impl LlmPricingRepo for BrainAtlasInfra {
 impl LlmUsageRepo for BrainAtlasInfra {
     type Error = InfraError;
 
-    async fn record(
-        &self,
-        database_url: &str,
-        row: NewLlmCallUsage,
-    ) -> Result<(), Self::Error> {
+    async fn record(&self, database_url: &str, row: NewLlmCallUsage) -> Result<(), Self::Error> {
         self.llm_usage.record(database_url, row).await
     }
 

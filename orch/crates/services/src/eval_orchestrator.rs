@@ -244,10 +244,7 @@ where
     /// `correlation_id = "eval:{run_id}:{step_id}"` (see `run_cycle` below),
     /// so aggregating by prefix `eval:{run_id}:` yields the total cost for
     /// that run across all of its steps.
-    pub async fn get_run_cost(
-        &self,
-        run_id: Uuid,
-    ) -> Result<domain::EvalRunCost, ServiceError<E>> {
+    pub async fn get_run_cost(&self, run_id: Uuid) -> Result<domain::EvalRunCost, ServiceError<E>> {
         let base = self.brainatlas_base_url().await?;
         let url = format!(
             "{}/brainatlas-be/api/llm/usage?correlation_id_prefix=eval:{}:",

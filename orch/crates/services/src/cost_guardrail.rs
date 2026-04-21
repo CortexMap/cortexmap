@@ -112,9 +112,7 @@ where
             .and_then(|v| v.parse().ok());
 
         if daily_budget.is_none() && warn_threshold.is_none() {
-            tracing::debug!(
-                "cost-guardrail: no thresholds configured; skipping check"
-            );
+            tracing::debug!("cost-guardrail: no thresholds configured; skipping check");
             return None;
         }
 
