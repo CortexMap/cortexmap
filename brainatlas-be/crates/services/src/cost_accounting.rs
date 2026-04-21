@@ -63,16 +63,13 @@ where
         {
             let cache = self.pricing_cache.read().await;
             if let Some(entry) = cache.get(model)
-                && entry.fetched_at.elapsed().as_secs() < PRICING_CACHE_TTL_SECS {
-                    return entry.pricing.clone();
-                }
+                && entry.fetched_at.elapsed().as_secs() < PRICING_CACHE_TTL_SECS
+            {
+                return entry.pricing.clone();
+            }
         }
         // Slow path: fetch from DB, populate cache.
-        let database_url = self
-            .infra
-            .get("DATABASE_URL")
-            .ok()
-            .unwrap_or_default();
+        let database_url = self.infra.get("DATABASE_URL").ok().unwrap_or_default();
         if database_url.is_empty() {
             warn!(
                 model,
