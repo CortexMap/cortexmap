@@ -271,10 +271,7 @@ where
         // a single final text response.
         let system_prompt =
             KNOWLEDGE_SUMMARIZE_SYSTEM_TEMPLATE.replace("{{REGION_NAME}}", &region.name);
-        let user_prompt = format!(
-            "Please provide the structured summary for {}.",
-            region.name
-        );
+        let user_prompt = format!("Please provide the structured summary for {}.", region.name);
         let messages: Vec<serde_json::Value> = vec![
             serde_json::json!({ "role": "system", "content": system_prompt }),
             serde_json::json!({ "role": "user", "content": user_prompt }),
@@ -631,8 +628,7 @@ mod tests {
     use domain::{
         BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
         LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RubricScores, SimilarChunk,
-        ToolCall, UsageAggregate, UsageAggregateFilter,
-        rpc_types::PaperMetadata,
+        ToolCall, UsageAggregate, UsageAggregateFilter, rpc_types::PaperMetadata,
     };
     use std::sync::Mutex;
 
@@ -713,8 +709,7 @@ mod tests {
         }
 
         fn with_download(mut self, key: &str, content: &str) -> Self {
-            self.downloads
-                .insert(key.to_string(), content.to_string());
+            self.downloads.insert(key.to_string(), content.to_string());
             self
         }
 
@@ -1424,12 +1419,7 @@ mod tests {
     async fn generate_queries_delegates_and_builds_ctx() {
         let app = BrainAtlasApp::new(Arc::new(FakeServices::new()));
         let got = app
-            .generate_queries(
-                "hippocampus",
-                3,
-                Some("corr".to_string()),
-                Some(42),
-            )
+            .generate_queries("hippocampus", 3, Some("corr".to_string()), Some(42))
             .await
             .unwrap();
         assert_eq!(got.len(), 3);

@@ -577,11 +577,7 @@ where
                     }
                     Ok(None) => {
                         knowledge_summaries_attempted += 1;
-                        match self
-                            .infra
-                            .create_batch(&database_url, *region_id, 0)
-                            .await
-                        {
+                        match self.infra.create_batch(&database_url, *region_id, 0).await {
                             Ok(batch_id) => {
                                 // Mark the batch Processing so it's visible
                                 // to the dashboards and zombie-watcher.
@@ -612,10 +608,8 @@ where
                                     .await
                                 {
                                     Ok(()) => {
-                                        if let Err(e) = self
-                                            .infra
-                                            .complete_batch(&database_url, batch_id)
-                                            .await
+                                        if let Err(e) =
+                                            self.infra.complete_batch(&database_url, batch_id).await
                                         {
                                             tracing::warn!(
                                                 batch_id = %batch_id,

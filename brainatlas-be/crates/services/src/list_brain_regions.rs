@@ -85,21 +85,14 @@ mod tests {
     impl EnvInfra for MockInfra {
         type Error = MockErr;
         fn get(&self, key: &str) -> Result<String, Self::Error> {
-            self.env
-                .get(key)
-                .cloned()
-                .ok_or(MockErr("missing env var"))
+            self.env.get(key).cloned().ok_or(MockErr("missing env var"))
         }
     }
 
     #[async_trait::async_trait]
     impl Postgres for MockInfra {
         type Error = MockErr;
-        async fn execute_query(
-            &self,
-            db: &str,
-            q: Query,
-        ) -> Result<QueryResult, Self::Error> {
+        async fn execute_query(&self, db: &str, q: Query) -> Result<QueryResult, Self::Error> {
             self.calls.lock().unwrap().push(db.to_string());
             if let Some(m) = self.fail_with {
                 return Err(MockErr(m));

@@ -1230,7 +1230,10 @@ mod tests {
             self
         }
         fn with_config(self, k: ConfigKey, v: &str) -> Self {
-            self.config.lock().unwrap().insert(k.to_string(), v.to_string());
+            self.config
+                .lock()
+                .unwrap()
+                .insert(k.to_string(), v.to_string());
             self
         }
         fn with_http_response(self, url_contains: &str, body: serde_json::Value) -> Self {
@@ -1263,11 +1266,7 @@ mod tests {
     impl OrchDatabase for FullInfra {
         type Error = MockErr;
 
-        async fn get_config(
-            &self,
-            _: &str,
-            key: ConfigKey,
-        ) -> Result<Option<String>, Self::Error> {
+        async fn get_config(&self, _: &str, key: ConfigKey) -> Result<Option<String>, Self::Error> {
             // Return the configured value (or None) so individual tests
             // can script config-driven branches.
             Ok(self.config.lock().unwrap().get(&key.to_string()).cloned())
@@ -1322,9 +1321,7 @@ mod tests {
                 }
             }
             match best {
-                Some(v) => {
-                    serde_json::from_value(v).map_err(|e| MockErr(format!("decode: {}", e)))
-                }
+                Some(v) => serde_json::from_value(v).map_err(|e| MockErr(format!("decode: {}", e))),
                 None => Err(MockErr(format!("no responder: {}", url))),
             }
         }
@@ -1348,9 +1345,7 @@ mod tests {
                 }
             }
             match best {
-                Some(v) => {
-                    serde_json::from_value(v).map_err(|e| MockErr(format!("decode: {}", e)))
-                }
+                Some(v) => serde_json::from_value(v).map_err(|e| MockErr(format!("decode: {}", e))),
                 None => Err(MockErr(format!("no POST responder: {}", url))),
             }
         }
@@ -1808,7 +1803,10 @@ mod tests {
         assert_eq!(trans[0].0, batch_id);
         assert_eq!(trans[0].1, BatchStatus::Invalidated);
         let dels = infra.cache_dels.lock().unwrap().clone();
-        assert!(dels.iter().any(|k| k == &cache_keys::batch_status(batch_id)));
+        assert!(
+            dels.iter()
+                .any(|k| k == &cache_keys::batch_status(batch_id))
+        );
         assert!(dels.iter().any(|k| k == &cache_keys::pipeline_stats()));
         let pats = infra.cache_del_patterns.lock().unwrap().clone();
         assert!(pats.contains(&cache_keys::batches_status_pattern()));
@@ -1820,10 +1818,7 @@ mod tests {
         let infra = Arc::new(FullInfra::new());
         let svc = OrchRegionManagement::new(infra.clone());
         let ids = svc
-            .store_queries(
-                Uuid::new_v4(),
-                vec!["a".into(), "b".into(), "c".into()],
-            )
+            .store_queries(Uuid::new_v4(), vec!["a".into(), "b".into(), "c".into()])
             .await
             .expect("ok");
         assert_eq!(ids.len(), 3);
@@ -1840,10 +1835,7 @@ mod tests {
         );
         let infra = Arc::new(infra.with_env("BRAINATLAS_HTTP_ADDR", "http://brain:8082"));
         let svc = OrchRegionManagement::new(infra);
-        let qs = svc
-            .generate_queries("hippocampus", 2)
-            .await
-            .expect("ok");
+        let qs = svc.generate_queries("hippocampus", 2).await.expect("ok");
         assert_eq!(qs, vec!["q1".to_string(), "q2".to_string()]);
     }
 
@@ -1952,11 +1944,8 @@ mod tests {
     // TEST: get_latest_active_summary_age returns the configured value.
     #[tokio::test]
     async fn region_mgmt_get_latest_active_summary_age_returns_value() {
-        let ts = chrono::NaiveDateTime::parse_from_str(
-            "2026-04-20 10:00:00",
-            "%Y-%m-%d %H:%M:%S",
-        )
-        .unwrap();
+        let ts = chrono::NaiveDateTime::parse_from_str("2026-04-20 10:00:00", "%Y-%m-%d %H:%M:%S")
+            .unwrap();
         let infra = FullInfra::new();
         *infra.latest_active_summary_age.lock().unwrap() = Some(ts);
         let svc = OrchRegionManagement::new(Arc::new(infra));
@@ -2074,8 +2063,14 @@ mod tests {
         assert_eq!(deleted.len(), 1);
         assert_eq!(deleted[0], region_id);
         let dels = infra.cache_dels.lock().unwrap().clone();
-        assert!(dels.iter().any(|k| k == &cache_keys::region_summaries(region_id)));
-        assert!(dels.iter().any(|k| k == &cache_keys::region_status(region_id)));
+        assert!(
+            dels.iter()
+                .any(|k| k == &cache_keys::region_summaries(region_id))
+        );
+        assert!(
+            dels.iter()
+                .any(|k| k == &cache_keys::region_status(region_id))
+        );
         assert!(dels.iter().any(|k| k == &cache_keys::pipeline_stats()));
     }
 

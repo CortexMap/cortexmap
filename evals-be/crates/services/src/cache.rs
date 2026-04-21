@@ -739,15 +739,9 @@ mod tests {
         // Seed a v1 row.
         db.seed(make_row(HASH, METRIC, "v1", 0.3));
 
-        let result = score_with_cache(
-            &db,
-            DB_URL,
-            Uuid::new_v4(),
-            HASH,
-            METRIC,
-            "v2",
-            || async { Ok::<_, ServiceError<MockError>>(ComputedScore::structural(0.7)) },
-        )
+        let result = score_with_cache(&db, DB_URL, Uuid::new_v4(), HASH, METRIC, "v2", || async {
+            Ok::<_, ServiceError<MockError>>(ComputedScore::structural(0.7))
+        })
         .await
         .expect("v2 must compute fresh");
 
@@ -799,24 +793,16 @@ mod tests {
         let db = StubDb::default();
         let details = serde_json::json!({"breakdown": [1, 2, 3], "note": "ok"});
 
-        let result = score_with_cache(
-            &db,
-            DB_URL,
-            Uuid::new_v4(),
-            HASH,
-            METRIC,
-            VERSION,
-            || {
-                let d = details.clone();
-                async move {
-                    Ok::<_, ServiceError<MockError>>(ComputedScore {
-                        score: 0.55,
-                        judge_model: Some("custom-judge-v3".to_string()),
-                        details: Some(d),
-                    })
-                }
-            },
-        )
+        let result = score_with_cache(&db, DB_URL, Uuid::new_v4(), HASH, METRIC, VERSION, || {
+            let d = details.clone();
+            async move {
+                Ok::<_, ServiceError<MockError>>(ComputedScore {
+                    score: 0.55,
+                    judge_model: Some("custom-judge-v3".to_string()),
+                    details: Some(d),
+                })
+            }
+        })
         .await
         .expect("miss must persist details");
 

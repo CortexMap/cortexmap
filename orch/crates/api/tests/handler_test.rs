@@ -1563,7 +1563,12 @@ async fn allocate_workers_endpoint_forwards_body_and_returns_ids() {
     assert_eq!(body["success"], true);
     assert_eq!(body["worker_ids"].as_array().unwrap().len(), 2);
 
-    let observed = svc.last_allocate_req.lock().unwrap().as_ref().map(|r| r.worker_count);
+    let observed = svc
+        .last_allocate_req
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|r| r.worker_count);
     assert_eq!(observed, Some(2));
 }
 
@@ -1589,7 +1594,12 @@ async fn stop_workers_endpoint_forwards_ids_and_returns_count() {
     assert_eq!(body["success"], true);
     assert_eq!(body["workers_stopped"], 1);
 
-    let observed = svc.last_stop_req.lock().unwrap().as_ref().map(|r| r.worker_ids.clone());
+    let observed = svc
+        .last_stop_req
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|r| r.worker_ids.clone());
     assert_eq!(observed, Some(vec!["w-1".to_string()]));
 }
 
@@ -1720,4 +1730,3 @@ async fn generate_summary_returns_existing_batch_when_active() {
     assert_eq!(body["task_count"], 3);
     assert_eq!(body["query_count"], 0);
 }
-

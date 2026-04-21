@@ -1207,11 +1207,7 @@ mod tests {
             self.s3_keys.lock().unwrap().insert(k, keys);
             self
         }
-        fn with_paper_metadata(
-            self,
-            task_ids: Vec<i64>,
-            md: Vec<PaperMetadataRecord>,
-        ) -> Self {
+        fn with_paper_metadata(self, task_ids: Vec<i64>, md: Vec<PaperMetadataRecord>) -> Self {
             let mut k = task_ids;
             k.sort();
             self.paper_metadata.lock().unwrap().insert(k, md);
@@ -1253,14 +1249,9 @@ mod tests {
     // TEST 7: get_config trait method delegates to infra.
     #[tokio::test]
     async fn get_config_returns_value_from_infra() {
-        let infra = Arc::new(
-            MockInfra::new().with_config(ConfigKey::ChatModel, "gpt-test"),
-        );
+        let infra = Arc::new(MockInfra::new().with_config(ConfigKey::ChatModel, "gpt-test"));
         let cw = CompletionWatcher::new(infra.clone());
-        let v = cw
-            .get_config(ConfigKey::ChatModel)
-            .await
-            .expect("ok");
+        let v = cw.get_config(ConfigKey::ChatModel).await.expect("ok");
         assert_eq!(v.as_deref(), Some("gpt-test"));
     }
 
@@ -1455,20 +1446,14 @@ mod tests {
                 .with_batch(b)
                 .with_s3_keys(vec![1], vec!["paper.txt".into()])
                 .with_paper_metadata(vec![1], metadata)
-                .with_http_response(
-                    "http://brain:8082/brainatlas-be/api/process",
-                    resp,
-                ),
+                .with_http_response("http://brain:8082/brainatlas-be/api/process", resp),
         );
         let cw = CompletionWatcher::new(infra.clone());
         let r = cw.process(vec![]).await.expect("ok");
         assert_eq!(r.successful, 1);
         assert_eq!(r.failed, 0);
         assert!(matches!(r.task_results[0].status, TaskStatus::Success));
-        assert_eq!(
-            r.task_results[0].detail.as_deref(),
-            Some("processed ok")
-        );
+        assert_eq!(r.task_results[0].detail.as_deref(), Some("processed ok"));
         // complete_batch was called.
         let completes = infra.recorder.completes.lock().unwrap();
         assert!(completes.contains(&batch_id));
@@ -1490,10 +1475,7 @@ mod tests {
                 .with_config(ConfigKey::BrainatlasBaseUrl, "http://cfg:9999")
                 .with_batch(b)
                 .with_s3_keys(vec![1], vec!["x.txt".into()])
-                .with_http_response(
-                    "http://cfg:9999/brainatlas-be/api/process",
-                    resp,
-                ),
+                .with_http_response("http://cfg:9999/brainatlas-be/api/process", resp),
         );
         let cw = CompletionWatcher::new(infra);
         let r = cw.process(vec![]).await.expect("ok");
@@ -1531,10 +1513,7 @@ mod tests {
                 .with_env("EMBEDDING_MODEL", "env-embed")
                 .with_batch(b)
                 .with_s3_keys(vec![1], vec!["x.txt".into()])
-                .with_http_response(
-                    "http://brain:8082/brainatlas-be/api/process",
-                    resp,
-                ),
+                .with_http_response("http://brain:8082/brainatlas-be/api/process", resp),
         );
         let cw = CompletionWatcher::new(infra.clone());
         let r = cw.process(vec![]).await.expect("ok");
@@ -1555,10 +1534,7 @@ mod tests {
                 .with_config(ConfigKey::MaxParallelProcessCalls, "4")
                 .with_batch(b1)
                 .with_s3_keys(vec![1], vec!["x.txt".into()])
-                .with_http_response(
-                    "http://brain:8082/brainatlas-be/api/process",
-                    resp,
-                ),
+                .with_http_response("http://brain:8082/brainatlas-be/api/process", resp),
         );
         let cw = CompletionWatcher::new(infra);
         let r = cw.process(vec![]).await.expect("ok");

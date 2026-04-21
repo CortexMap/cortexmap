@@ -89,11 +89,7 @@ mod tests {
     #[async_trait::async_trait]
     impl Postgres for MockInfra {
         type Error = MockErr;
-        async fn execute_query(
-            &self,
-            _db: &str,
-            q: Query,
-        ) -> Result<QueryResult, Self::Error> {
+        async fn execute_query(&self, _db: &str, q: Query) -> Result<QueryResult, Self::Error> {
             if let Some(m) = self.fail_with {
                 return Err(MockErr(m));
             }

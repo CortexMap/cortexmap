@@ -732,11 +732,7 @@ mod tests {
         ) -> Result<Vec<RetrievedChunk>, MockErr> {
             unimplemented!()
         }
-        async fn load_chunks_by_ids(
-            &self,
-            _: &str,
-            _: &[Uuid],
-        ) -> Result<Vec<ChunkRow>, MockErr> {
+        async fn load_chunks_by_ids(&self, _: &str, _: &[Uuid]) -> Result<Vec<ChunkRow>, MockErr> {
             unimplemented!()
         }
         async fn insert_run_state(
@@ -1023,10 +1019,7 @@ mod tests {
         assert_eq!(resp.limit, 5);
         assert_eq!(resp.entries.len(), 1);
         assert_eq!(resp.entries[0].summary_id, sid1);
-        assert_eq!(
-            resp.entries[0].region_name.as_deref(),
-            Some("Hippocampus")
-        );
+        assert_eq!(resp.entries[0].region_name.as_deref(), Some("Hippocampus"));
     }
 
     /// `list_unscored_summary_ids` surfaces the raw Uuid list and echoes
@@ -1094,7 +1087,10 @@ mod tests {
     /// same PR — this test locks the contract.
     #[test]
     fn endpoint_to_str_covers_every_variant() {
-        assert_eq!(endpoint_to_str(&LlmEndpoint::ExtractClaims), "extract_claims");
+        assert_eq!(
+            endpoint_to_str(&LlmEndpoint::ExtractClaims),
+            "extract_claims"
+        );
         assert_eq!(endpoint_to_str(&LlmEndpoint::Embed), "embed");
         assert_eq!(
             endpoint_to_str(&LlmEndpoint::JudgeGroundedness),
