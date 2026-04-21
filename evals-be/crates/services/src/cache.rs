@@ -7,8 +7,8 @@
 //! Centralising this here means a future metric impl cannot accidentally
 //! bypass the cache: it simply doesn't have direct DB write access.
 
-use crate::infra::EvalsDatabase;
 use crate::ServiceError;
+use crate::infra::EvalsDatabase;
 use domain::{EvalScore, NewEvalScore};
 use std::error::Error;
 use std::future::Future;
@@ -110,12 +110,15 @@ mod tests {
     //! verify that the code re-selects after an `ON CONFLICT DO NOTHING`
     //! shortcut.
     use super::*;
-    use crate::infra::{ChunkRow, EvalAggregate, EvalsDatabase, LoadedRunState, RetrievedChunk, SummaryRow, WorstOffenderRow};
+    use crate::infra::{
+        ChunkRow, EvalAggregate, EvalsDatabase, LoadedRunState, RetrievedChunk, SummaryRow,
+        WorstOffenderRow,
+    };
     use async_trait::async_trait;
     use chrono::NaiveDateTime;
     use domain::{EvalRun, EvalRunStatus};
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Debug, thiserror::Error)]
     #[error("mock infra error: {0}")]
@@ -392,21 +395,13 @@ mod tests {
         let db = StubDb::default();
         let summary_id = Uuid::new_v4();
 
-        let result = score_with_cache(
-            &db,
-            DB_URL,
-            summary_id,
-            HASH,
-            METRIC,
-            VERSION,
-            || async {
-                Ok::<_, ServiceError<MockError>>(ComputedScore {
-                    score: 0.42,
-                    judge_model: Some("mock-judge".to_string()),
-                    details: Some(serde_json::json!({"note": "computed"})),
-                })
-            },
-        )
+        let result = score_with_cache(&db, DB_URL, summary_id, HASH, METRIC, VERSION, || async {
+            Ok::<_, ServiceError<MockError>>(ComputedScore {
+                score: 0.42,
+                judge_model: Some("mock-judge".to_string()),
+                details: Some(serde_json::json!({"note": "computed"})),
+            })
+        })
         .await
         .expect("miss path must succeed");
 
@@ -477,19 +472,110 @@ mod tests {
                     .expect("test must seed the racing row"))
             }
 
-            async fn get_summary(&self, _: &str, _: Uuid) -> Result<Option<SummaryRow>, Self::Error> { unimplemented!() }
-            async fn get_scores_for_summary(&self, _: &str, _: Uuid) -> Result<Vec<EvalScore>, Self::Error> { unimplemented!() }
-            async fn get_eval_aggregate(&self, _: &str, _: &str) -> Result<EvalAggregate, Self::Error> { unimplemented!() }
-            async fn get_worst_offenders(&self, _: &str, _: &str, _: &str, _: i64) -> Result<Vec<WorstOffenderRow>, Self::Error> { unimplemented!() }
-            async fn upsert_run(&self, _: &str, _: Uuid, _: &str, _: EvalRunStatus, _: Option<String>) -> Result<EvalRun, Self::Error> { unimplemented!() }
-            async fn list_unscored_summary_ids(&self, _: &str, _: &str, _: i64) -> Result<Vec<Uuid>, Self::Error> { unimplemented!() }
-            async fn retrieve_chunks_for_summary(&self, _: &str, _: Uuid, _: &[f32], _: i64, _: f32) -> Result<Vec<RetrievedChunk>, Self::Error> { unimplemented!() }
-            async fn load_chunks_by_ids(&self, _: &str, _: &[Uuid]) -> Result<Vec<ChunkRow>, Self::Error> { unimplemented!() }
-            async fn insert_run_state(&self, _: &str, _: Uuid, _: &str, _: &serde_json::Value, _: Option<Uuid>, _: Option<&str>) -> Result<Uuid, Self::Error> { unimplemented!() }
-            async fn load_run_state(&self, _: &str, _: Uuid) -> Result<Option<LoadedRunState>, Self::Error> { unimplemented!() }
-            async fn save_run_state(&self, _: &str, _: Uuid, _: &serde_json::Value, _: Option<Uuid>, _: Option<&str>) -> Result<(), Self::Error> { unimplemented!() }
-            async fn delete_run_state(&self, _: &str, _: Uuid) -> Result<(), Self::Error> { unimplemented!() }
-            async fn delete_run_states_for_summary(&self, _: &str, _: Uuid, _: &str) -> Result<(), Self::Error> { unimplemented!() }
+            async fn get_summary(
+                &self,
+                _: &str,
+                _: Uuid,
+            ) -> Result<Option<SummaryRow>, Self::Error> {
+                unimplemented!()
+            }
+            async fn get_scores_for_summary(
+                &self,
+                _: &str,
+                _: Uuid,
+            ) -> Result<Vec<EvalScore>, Self::Error> {
+                unimplemented!()
+            }
+            async fn get_eval_aggregate(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<EvalAggregate, Self::Error> {
+                unimplemented!()
+            }
+            async fn get_worst_offenders(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: i64,
+            ) -> Result<Vec<WorstOffenderRow>, Self::Error> {
+                unimplemented!()
+            }
+            async fn upsert_run(
+                &self,
+                _: &str,
+                _: Uuid,
+                _: &str,
+                _: EvalRunStatus,
+                _: Option<String>,
+            ) -> Result<EvalRun, Self::Error> {
+                unimplemented!()
+            }
+            async fn list_unscored_summary_ids(
+                &self,
+                _: &str,
+                _: &str,
+                _: i64,
+            ) -> Result<Vec<Uuid>, Self::Error> {
+                unimplemented!()
+            }
+            async fn retrieve_chunks_for_summary(
+                &self,
+                _: &str,
+                _: Uuid,
+                _: &[f32],
+                _: i64,
+                _: f32,
+            ) -> Result<Vec<RetrievedChunk>, Self::Error> {
+                unimplemented!()
+            }
+            async fn load_chunks_by_ids(
+                &self,
+                _: &str,
+                _: &[Uuid],
+            ) -> Result<Vec<ChunkRow>, Self::Error> {
+                unimplemented!()
+            }
+            async fn insert_run_state(
+                &self,
+                _: &str,
+                _: Uuid,
+                _: &str,
+                _: &serde_json::Value,
+                _: Option<Uuid>,
+                _: Option<&str>,
+            ) -> Result<Uuid, Self::Error> {
+                unimplemented!()
+            }
+            async fn load_run_state(
+                &self,
+                _: &str,
+                _: Uuid,
+            ) -> Result<Option<LoadedRunState>, Self::Error> {
+                unimplemented!()
+            }
+            async fn save_run_state(
+                &self,
+                _: &str,
+                _: Uuid,
+                _: &serde_json::Value,
+                _: Option<Uuid>,
+                _: Option<&str>,
+            ) -> Result<(), Self::Error> {
+                unimplemented!()
+            }
+            async fn delete_run_state(&self, _: &str, _: Uuid) -> Result<(), Self::Error> {
+                unimplemented!()
+            }
+            async fn delete_run_states_for_summary(
+                &self,
+                _: &str,
+                _: Uuid,
+                _: &str,
+            ) -> Result<(), Self::Error> {
+                unimplemented!()
+            }
         }
 
         let db = RacingDb::default();

@@ -765,9 +765,7 @@ mod tests {
     /// result. The counter lets a test make the same region fail on the
     /// first attempt and succeed on the retry.
     type PostResponder = Box<
-        dyn Fn(usize, &str, &serde_json::Value) -> Result<serde_json::Value, MockErr>
-            + Send
-            + Sync,
+        dyn Fn(usize, &str, &serde_json::Value) -> Result<serde_json::Value, MockErr> + Send + Sync,
     >;
 
     // ---- Mock infra ----
@@ -804,7 +802,10 @@ mod tests {
             self
         }
         fn with_config(self, k: ConfigKey, v: &str) -> Self {
-            self.config.lock().unwrap().insert(k.to_string(), v.to_string());
+            self.config
+                .lock()
+                .unwrap()
+                .insert(k.to_string(), v.to_string());
             self
         }
         fn with_regions(self, regions: Vec<RegionInfo>) -> Self {
@@ -919,9 +920,7 @@ mod tests {
             drop(calls);
 
             let guard = self.post_responder.lock().unwrap();
-            let responder = guard
-                .as_ref()
-                .expect("test did not stage a post responder");
+            let responder = guard.as_ref().expect("test did not stage a post responder");
             let value = responder(idx, url, &body_json)?;
             serde_json::from_value(value).map_err(|e| MockErr(format!("deserialize: {}", e)))
         }
@@ -1366,9 +1365,7 @@ mod tests {
     #[tokio::test]
     async fn generate_queries_errors_when_brainatlas_url_missing() {
         // Env var unset AND config unset -> ConfigNotFound surfaces.
-        let infra = Arc::new(
-            base_infra().with_regions(vec![region("R1")]),
-        );
+        let infra = Arc::new(base_infra().with_regions(vec![region("R1")]));
         let runner = OrchPipelineRunner::new(infra);
         match runner.generate_queries_for_new_regions().await {
             Err(ServiceError::ConfigNotFound { key }) => {
@@ -1586,9 +1583,8 @@ mod tests {
 
     #[tokio::test]
     async fn generate_queries_for_new_regions_count_matches_region_list() {
-        let infra = Arc::new(
-            base_infra().with_regions(vec![region("A"), region("B"), region("C")]),
-        );
+        let infra =
+            Arc::new(base_infra().with_regions(vec![region("A"), region("B"), region("C")]));
         let runner = OrchPipelineRunner::new(infra);
         let n = runner
             .generate_queries_for_new_regions_count()
@@ -1597,4 +1593,3 @@ mod tests {
         assert_eq!(n, 3);
     }
 }
-

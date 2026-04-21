@@ -213,7 +213,12 @@ mod tests {
     #[test]
     fn config_key_display_uses_snake_case() {
         for (key, expected) in config_key_cases() {
-            assert_eq!(key.to_string(), expected, "unexpected Display for {:?}", key);
+            assert_eq!(
+                key.to_string(),
+                expected,
+                "unexpected Display for {:?}",
+                key
+            );
         }
     }
 
@@ -300,9 +305,15 @@ mod tests {
 
     #[test]
     fn task_status_serializes_lowercase() {
-        assert_eq!(serde_json::to_value(TaskStatus::Success).unwrap(), "success");
+        assert_eq!(
+            serde_json::to_value(TaskStatus::Success).unwrap(),
+            "success"
+        );
         assert_eq!(serde_json::to_value(TaskStatus::Failed).unwrap(), "failed");
-        assert_eq!(serde_json::to_value(TaskStatus::Skipped).unwrap(), "skipped");
+        assert_eq!(
+            serde_json::to_value(TaskStatus::Skipped).unwrap(),
+            "skipped"
+        );
     }
 
     #[test]

@@ -7,9 +7,7 @@
 use crate::error::AppError;
 use domain::EvalMetric;
 use rpc_types::MetricResult;
-use services::{
-    structural, CachedScore, ComputedScore, EvalsDatabase, ServiceError, SummaryRow,
-};
+use services::{CachedScore, ComputedScore, EvalsDatabase, ServiceError, SummaryRow, structural};
 use std::error::Error;
 use uuid::Uuid;
 

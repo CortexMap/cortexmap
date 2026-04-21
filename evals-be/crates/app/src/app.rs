@@ -8,7 +8,7 @@ use crate::error::AppError;
 use crate::run_eval::{
     probe_citation_cache, probe_groundedness_cache, probe_rubric_cache, run_structural_metrics,
 };
-use domain::{compute_hash, EvalRunStatus};
+use domain::{EvalRunStatus, compute_hash};
 use rpc_types::{
     EvalSummaryResponse, InitScoreRequest, InitScoreResponse, LlmEndpoint, MetricResult,
     MetricStats, NextAction, ScoreEntry, ScoresForSummaryResponse, StepRequest, StepResponse,
@@ -94,21 +94,15 @@ impl EvalRuntimeConfig {
             value: "non-float".to_string(),
         })?;
 
-        let citation_support_enabled: bool = get_or_default(
-            env,
-            "EVAL_CITATION_SUPPORT_ENABLED",
-            "false",
-        )
-        .parse()
-        .unwrap_or(false);
+        let citation_support_enabled: bool =
+            get_or_default(env, "EVAL_CITATION_SUPPORT_ENABLED", "false")
+                .parse()
+                .unwrap_or(false);
 
-        let citation_support_max_calls: usize = get_or_default(
-            env,
-            "EVAL_CITATION_SUPPORT_MAX_CALLS",
-            "30",
-        )
-        .parse()
-        .unwrap_or(30);
+        let citation_support_max_calls: usize =
+            get_or_default(env, "EVAL_CITATION_SUPPORT_MAX_CALLS", "30")
+                .parse()
+                .unwrap_or(30);
 
         Ok(Self {
             database_url,
@@ -242,7 +236,8 @@ where
             citation_support_max_calls: self.config.citation_support_max_calls,
         };
 
-        let (state, next) = state_machine::initial_action(&ctx, g_cached, r_cached, metrics.clone());
+        let (state, next) =
+            state_machine::initial_action(&ctx, g_cached, r_cached, metrics.clone());
 
         // If we're already Done (full cache hit or no claims), finalize and
         // don't persist any run_state row.
@@ -301,9 +296,7 @@ where
             .load_run_state(&self.config.database_url, req.run_id)
             .await
             .map_err(ServiceError::InfraError)?
-            .ok_or_else(|| {
-                AppError::InvalidArg(format!("unknown run_id {}", req.run_id))
-            })?;
+            .ok_or_else(|| AppError::InvalidArg(format!("unknown run_id {}", req.run_id)))?;
         let (summary_id, eval_version, state_json, pending_step_id) = loaded;
 
         match pending_step_id {
@@ -398,7 +391,9 @@ where
                     })
                     .collect();
 
-                NextAction::Done { metrics: metrics_now }
+                NextAction::Done {
+                    metrics: metrics_now,
+                }
             }
             NextAction::CallLlm {
                 step_id,
@@ -407,8 +402,7 @@ where
                 body,
             } => {
                 let endpoint_str = Some(endpoint_to_str(&endpoint).to_string());
-                let state_json = serde_json::to_value(&new_state)
-                    .expect("RunState serializable");
+                let state_json = serde_json::to_value(&new_state).expect("RunState serializable");
                 self.db
                     .save_run_state(
                         &self.config.database_url,
@@ -559,9 +553,9 @@ fn endpoint_to_str(endpoint: &LlmEndpoint) -> &'static str {
 
 fn pending_fields(next: &NextAction) -> (Option<Uuid>, Option<String>) {
     match next {
-        NextAction::CallLlm { step_id, endpoint, .. } => {
-            (Some(*step_id), Some(endpoint_to_str(endpoint).to_string()))
-        }
+        NextAction::CallLlm {
+            step_id, endpoint, ..
+        } => (Some(*step_id), Some(endpoint_to_str(endpoint).to_string())),
         NextAction::Done { .. } => (None, None),
     }
 }

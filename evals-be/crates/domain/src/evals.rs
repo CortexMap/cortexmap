@@ -35,7 +35,9 @@ pub struct NewEvalScore {
 }
 
 /// Lifecycle status of a per-summary eval run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, IntoStaticStr, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Display, EnumString, IntoStaticStr, Serialize, Deserialize,
+)]
 #[strum(serialize_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum EvalRunStatus {
@@ -138,9 +140,15 @@ mod tests {
 
     #[test]
     fn metric_strings_are_snake_case() {
-        assert_eq!(EvalMetric::SectionCompleteness.as_str(), "section_completeness");
+        assert_eq!(
+            EvalMetric::SectionCompleteness.as_str(),
+            "section_completeness"
+        );
         assert_eq!(EvalMetric::ClaimGroundedness.as_str(), "claim_groundedness");
-        assert_eq!(EvalMetric::RubricClinicalUtility.as_str(), "rubric_clinical_utility");
+        assert_eq!(
+            EvalMetric::RubricClinicalUtility.as_str(),
+            "rubric_clinical_utility"
+        );
         assert_eq!(EvalMetric::CitationPresence.as_str(), "citation_presence");
         assert_eq!(EvalMetric::CitationValidity.as_str(), "citation_validity");
         assert_eq!(EvalMetric::CitationScope.as_str(), "citation_scope");
@@ -266,8 +274,8 @@ mod tests {
         assert_eq!(back.rationale, original.rationale);
 
         // Missing rationale should default to empty string.
-        let sparse: RubricCriterion = serde_json::from_str(r#"{"score": 3}"#)
-            .expect("rationale is #[serde(default)]");
+        let sparse: RubricCriterion =
+            serde_json::from_str(r#"{"score": 3}"#).expect("rationale is #[serde(default)]");
         assert_eq!(sparse.score, 3);
         assert!(sparse.rationale.is_empty());
     }
@@ -277,11 +285,26 @@ mod tests {
     #[test]
     fn rubric_scores_round_trip_full_payload() {
         let scores = RubricScores {
-            relevance: RubricCriterion { score: 5, rationale: "r".to_string() },
-            coherence: RubricCriterion { score: 4, rationale: "c".to_string() },
-            specificity: RubricCriterion { score: 3, rationale: "s".to_string() },
-            clinical_utility: RubricCriterion { score: 2, rationale: "u".to_string() },
-            terminology: RubricCriterion { score: 1, rationale: "t".to_string() },
+            relevance: RubricCriterion {
+                score: 5,
+                rationale: "r".to_string(),
+            },
+            coherence: RubricCriterion {
+                score: 4,
+                rationale: "c".to_string(),
+            },
+            specificity: RubricCriterion {
+                score: 3,
+                rationale: "s".to_string(),
+            },
+            clinical_utility: RubricCriterion {
+                score: 2,
+                rationale: "u".to_string(),
+            },
+            terminology: RubricCriterion {
+                score: 1,
+                rationale: "t".to_string(),
+            },
         };
         let json = serde_json::to_string(&scores).unwrap();
         // Wire keys must be snake_case to match the brainatlas contract.
@@ -316,7 +339,9 @@ mod tests {
         assert_eq!(back.metric, "claim_groundedness");
         assert_eq!(back.judge_model.as_deref(), Some("openai/gpt-4o-mini"));
         assert_eq!(
-            back.details.as_ref().and_then(|v| v.get("n_claims").and_then(|n| n.as_u64())),
+            back.details
+                .as_ref()
+                .and_then(|v| v.get("n_claims").and_then(|n| n.as_u64())),
             Some(5)
         );
 

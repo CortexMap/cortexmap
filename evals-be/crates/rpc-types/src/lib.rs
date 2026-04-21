@@ -287,7 +287,12 @@ mod tests {
 
         let back: NextAction = serde_json::from_value(v).unwrap();
         match back {
-            NextAction::CallLlm { step_id: sid, endpoint, path, body } => {
+            NextAction::CallLlm {
+                step_id: sid,
+                endpoint,
+                path,
+                body,
+            } => {
                 assert_eq!(sid, step_id);
                 assert_eq!(endpoint, LlmEndpoint::ExtractClaims);
                 assert_eq!(path, "/brainatlas-be/api/llm/extract-claims");
@@ -362,14 +367,23 @@ mod tests {
 
     #[test]
     fn llm_endpoint_path_helper_is_stable() {
-        assert_eq!(LlmEndpoint::ExtractClaims.path(), "/brainatlas-be/api/llm/extract-claims");
+        assert_eq!(
+            LlmEndpoint::ExtractClaims.path(),
+            "/brainatlas-be/api/llm/extract-claims"
+        );
         assert_eq!(LlmEndpoint::Embed.path(), "/brainatlas-be/api/llm/embed");
         assert_eq!(
             LlmEndpoint::JudgeGroundedness.path(),
             "/brainatlas-be/api/llm/judge-groundedness"
         );
-        assert_eq!(LlmEndpoint::JudgeRubric.path(), "/brainatlas-be/api/llm/judge-rubric");
-        assert_eq!(LlmEndpoint::JudgeCitation.path(), "/brainatlas-be/api/llm/judge-citation");
+        assert_eq!(
+            LlmEndpoint::JudgeRubric.path(),
+            "/brainatlas-be/api/llm/judge-rubric"
+        );
+        assert_eq!(
+            LlmEndpoint::JudgeCitation.path(),
+            "/brainatlas-be/api/llm/judge-citation"
+        );
     }
 
     // ---- LlmResponsePayload: every variant must roundtrip ----
@@ -396,11 +410,26 @@ mod tests {
 
     fn sample_rubric() -> RubricScores {
         RubricScores {
-            relevance: RubricCriterion { score: 5, rationale: "".to_string() },
-            coherence: RubricCriterion { score: 4, rationale: "".to_string() },
-            specificity: RubricCriterion { score: 3, rationale: "".to_string() },
-            clinical_utility: RubricCriterion { score: 5, rationale: "".to_string() },
-            terminology: RubricCriterion { score: 4, rationale: "".to_string() },
+            relevance: RubricCriterion {
+                score: 5,
+                rationale: "".to_string(),
+            },
+            coherence: RubricCriterion {
+                score: 4,
+                rationale: "".to_string(),
+            },
+            specificity: RubricCriterion {
+                score: 3,
+                rationale: "".to_string(),
+            },
+            clinical_utility: RubricCriterion {
+                score: 5,
+                rationale: "".to_string(),
+            },
+            terminology: RubricCriterion {
+                score: 4,
+                rationale: "".to_string(),
+            },
         }
     }
 
@@ -421,7 +450,9 @@ mod tests {
 
     #[test]
     fn llm_response_payload_embed_roundtrip() {
-        let p = LlmResponsePayload::Embed(EmbedResponse { embedding: vec![0.0, 1.0, 2.0] });
+        let p = LlmResponsePayload::Embed(EmbedResponse {
+            embedding: vec![0.0, 1.0, 2.0],
+        });
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["kind"], "embed");
         let back: LlmResponsePayload = serde_json::from_value(v).unwrap();
@@ -556,7 +587,12 @@ mod tests {
 
     #[test]
     fn metric_stats_roundtrip() {
-        let s = MetricStats { avg: 0.8, min: 0.1, max: 1.0, count: 42 };
+        let s = MetricStats {
+            avg: 0.8,
+            min: 0.1,
+            max: 1.0,
+            count: 42,
+        };
         let v = serde_json::to_value(&s).unwrap();
         let back: MetricStats = serde_json::from_value(v).unwrap();
         assert!((back.avg - 0.8).abs() < 1e-6);
@@ -568,7 +604,12 @@ mod tests {
         let mut per_metric = HashMap::new();
         per_metric.insert(
             "rubric_relevance".to_string(),
-            MetricStats { avg: 0.8, min: 0.2, max: 1.0, count: 10 },
+            MetricStats {
+                avg: 0.8,
+                min: 0.2,
+                max: 1.0,
+                count: 10,
+            },
         );
         let r = EvalSummaryResponse {
             eval_version: "v1".to_string(),

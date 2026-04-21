@@ -79,7 +79,9 @@ impl EvalsDatabase for EvalsInfra {
         database_url: &str,
         summary_id: uuid::Uuid,
     ) -> Result<Vec<domain::EvalScore>, Self::Error> {
-        self.pg.get_scores_for_summary(database_url, summary_id).await
+        self.pg
+            .get_scores_for_summary(database_url, summary_id)
+            .await
     }
 
     async fn get_eval_aggregate(
@@ -111,7 +113,13 @@ impl EvalsDatabase for EvalsInfra {
         error_message: Option<String>,
     ) -> Result<domain::EvalRun, Self::Error> {
         self.pg
-            .upsert_run(database_url, summary_id, eval_version, status, error_message)
+            .upsert_run(
+                database_url,
+                summary_id,
+                eval_version,
+                status,
+                error_message,
+            )
             .await
     }
 
@@ -185,7 +193,13 @@ impl EvalsDatabase for EvalsInfra {
         pending_endpoint: Option<&str>,
     ) -> Result<(), Self::Error> {
         self.pg
-            .save_run_state(database_url, run_id, state, pending_step_id, pending_endpoint)
+            .save_run_state(
+                database_url,
+                run_id,
+                state,
+                pending_step_id,
+                pending_endpoint,
+            )
             .await
     }
 

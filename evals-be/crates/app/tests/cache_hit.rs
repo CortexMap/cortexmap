@@ -11,8 +11,8 @@
 //! There is no HTTP and no real DB: an in-memory `EvalsDatabase` plus
 //! hand-crafted `LlmResponsePayload` values simulate brainatlas.
 
-use std::sync::Mutex;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
@@ -23,7 +23,7 @@ use domain::{
 use evals_app::{EvalRuntimeConfig, EvalsApp};
 use rpc_types::{InitScoreRequest, LlmEndpoint, LlmResponsePayload, NextAction, StepRequest};
 use services::{
-    EnvInfra, EvalAggregate, EvalsDatabase, ChunkRow, RetrievedChunk, SummaryRow, WorstOffenderRow,
+    ChunkRow, EnvInfra, EvalAggregate, EvalsDatabase, RetrievedChunk, SummaryRow, WorstOffenderRow,
 };
 use uuid::Uuid;
 
@@ -264,11 +264,7 @@ impl EvalsDatabase for InMemoryDb {
         Ok(())
     }
 
-    async fn delete_run_state(
-        &self,
-        _database_url: &str,
-        run_id: Uuid,
-    ) -> Result<(), Self::Error> {
+    async fn delete_run_state(&self, _database_url: &str, run_id: Uuid) -> Result<(), Self::Error> {
         let mut states = self.run_states.lock().unwrap();
         states.retain(|r| r.run_id != run_id);
         Ok(())

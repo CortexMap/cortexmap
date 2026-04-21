@@ -188,10 +188,7 @@ pub fn parse_citations(summary: &str) -> Vec<ParsedCitation> {
 ///     the doubt (avoids false positives on paraphrased claims).
 ///
 /// Returns `(score, issues)`. Score is `1.0` when there are zero claims.
-pub fn citation_presence_score(
-    summary: &str,
-    claims: &[Claim],
-) -> (f32, Vec<CitationIssue>) {
+pub fn citation_presence_score(summary: &str, claims: &[Claim]) -> (f32, Vec<CitationIssue>) {
     if claims.is_empty() {
         return (1.0, Vec::new());
     }
@@ -277,7 +274,7 @@ fn claim_is_cited_by_jaccard(summary: &str, claim_text: &str) -> bool {
         return false;
     }
     let re = citation_regex();
-    for sentence in summary.split(|c: char| c == '.' || c == '!' || c == '?' || c == '\n') {
+    for sentence in summary.split(['.', '!', '?', '\n']) {
         if !re.is_match(sentence) {
             continue;
         }
@@ -305,11 +302,7 @@ fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
     }
     let inter = a.intersection(b).count() as f32;
     let uni = a.union(b).count() as f32;
-    if uni == 0.0 {
-        0.0
-    } else {
-        inter / uni
-    }
+    if uni == 0.0 { 0.0 } else { inter / uni }
 }
 
 /// Validity: fraction of cited UUIDs that resolve to a real row in
@@ -497,12 +490,17 @@ mod tests {
 
     #[test]
     fn parse_enclosing_sentence_trims() {
-        let s = format!("Intro. The hippocampus supports memory [chunk:{}]. Next.", UUID_A);
+        let s = format!(
+            "Intro. The hippocampus supports memory [chunk:{}]. Next.",
+            UUID_A
+        );
         let out = parse_citations(&s);
         assert_eq!(out.len(), 1);
-        assert!(out[0]
-            .enclosing_sentence
-            .starts_with("The hippocampus supports memory"));
+        assert!(
+            out[0]
+                .enclosing_sentence
+                .starts_with("The hippocampus supports memory")
+        );
     }
 
     // ---- citation_presence_score ----
@@ -619,11 +617,7 @@ mod tests {
     fn validity_one_orphan_out_of_ten_scores_nine_tenths() {
         let cited: Vec<Uuid> = (0..10)
             .map(|i| {
-                Uuid::parse_str(&format!(
-                    "00000000-0000-0000-0000-0000000000{:02x}",
-                    i
-                ))
-                .unwrap()
+                Uuid::parse_str(&format!("00000000-0000-0000-0000-0000000000{:02x}", i)).unwrap()
             })
             .collect();
         let mut existing: HashMap<Uuid, u32> = HashMap::new();
@@ -639,8 +633,7 @@ mod tests {
 
     #[test]
     fn validity_empty_cited_scores_zero() {
-        let (score, issues) =
-            citation_validity_score(&[], &HashMap::new(), &HashMap::new());
+        let (score, issues) = citation_validity_score(&[], &HashMap::new(), &HashMap::new());
         assert_eq!(score, 0.0);
         assert!(issues.is_empty());
     }
@@ -692,7 +685,10 @@ mod tests {
     #[test]
     fn support_all_supported_is_one() {
         use SupportVerdict::*;
-        assert_eq!(citation_support_score(&[Supported, Supported, Supported]), 1.0);
+        assert_eq!(
+            citation_support_score(&[Supported, Supported, Supported]),
+            1.0
+        );
     }
 
     #[test]

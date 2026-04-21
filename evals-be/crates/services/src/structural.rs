@@ -45,7 +45,7 @@ pub fn section_completeness(summary: &str) -> f32 {
 /// also scores 0.0.
 pub fn length_in_range(summary: &str) -> f32 {
     let len = summary.len();
-    if len >= LENGTH_LOW && len <= LENGTH_HIGH {
+    if (LENGTH_LOW..=LENGTH_HIGH).contains(&len) {
         return 1.0;
     }
     if len < LENGTH_LOW {
@@ -162,7 +162,10 @@ mod tests {
 
     #[test]
     fn acronym_mention_present() {
-        assert_eq!(acronym_mention("The HPC supports memory.", Some("HPC")), 1.0);
+        assert_eq!(
+            acronym_mention("The HPC supports memory.", Some("HPC")),
+            1.0
+        );
     }
 
     #[test]

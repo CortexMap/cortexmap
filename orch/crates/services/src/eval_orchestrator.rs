@@ -529,9 +529,7 @@ mod tests {
     // emulate a sequence of responses for successive calls to the same path.
     // The router matches by path suffix: the longest-matching registered key
     // against the request URL wins.
-    type Responder = Box<
-        dyn Fn() -> Result<serde_json::Value, MockErr> + Send + Sync,
-    >;
+    type Responder = Box<dyn Fn() -> Result<serde_json::Value, MockErr> + Send + Sync>;
 
     #[derive(Default)]
     struct Router {
@@ -551,16 +549,14 @@ mod tests {
         }
         fn route_ok(&self, pattern: &str, value: serde_json::Value) {
             let v = value.clone();
-            self.route_seq(
-                pattern,
-                vec![Box::new(move || Ok(v.clone())) as Responder],
-            );
+            self.route_seq(pattern, vec![Box::new(move || Ok(v.clone())) as Responder]);
         }
         fn route_seq(&self, pattern: &str, responders: Vec<Responder>) {
-            self.routes
-                .lock()
-                .unwrap()
-                .push((pattern.to_string(), responders, AtomicUsize::new(0)));
+            self.routes.lock().unwrap().push((
+                pattern.to_string(),
+                responders,
+                AtomicUsize::new(0),
+            ));
         }
         fn set_delay_ms(&self, ms: usize) {
             self.per_call_delay_ms.store(ms, Ordering::SeqCst);
@@ -589,10 +585,7 @@ mod tests {
             let idx = match best {
                 Some(i) => i,
                 None => {
-                    return Err(MockErr(format!(
-                        "no responder matches url: {}",
-                        url
-                    )));
+                    return Err(MockErr(format!("no responder matches url: {}", url)));
                 }
             };
             let (_, responders, cursor) = &routes[idx];
@@ -700,25 +693,18 @@ mod tests {
     impl HttpClient for MockInfra {
         type Error = MockErr;
 
-        async fn get<T: DeserializeOwned + Send>(
-            &self,
-            url: &str,
-        ) -> Result<T, Self::Error> {
+        async fn get<T: DeserializeOwned + Send>(&self, url: &str) -> Result<T, Self::Error> {
             self.router.in_flight.fetch_add(1, Ordering::SeqCst);
             let cur = self.router.in_flight.load(Ordering::SeqCst);
-            self.router
-                .max_in_flight
-                .fetch_max(cur, Ordering::SeqCst);
+            self.router.max_in_flight.fetch_max(cur, Ordering::SeqCst);
             let delay = self.router.per_call_delay_ms.load(Ordering::SeqCst);
             if delay > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(delay as u64))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
             }
             let v = self.router.respond("GET", url, None);
             self.router.in_flight.fetch_sub(1, Ordering::SeqCst);
             let v = v?;
-            serde_json::from_value(v)
-                .map_err(|e| MockErr(format!("deserialize: {}", e)))
+            serde_json::from_value(v).map_err(|e| MockErr(format!("deserialize: {}", e)))
         }
 
         async fn post<Req: serde::Serialize + Send + Sync, Res: DeserializeOwned + Send + Sync>(
@@ -728,20 +714,16 @@ mod tests {
         ) -> Result<Res, Self::Error> {
             self.router.in_flight.fetch_add(1, Ordering::SeqCst);
             let cur = self.router.in_flight.load(Ordering::SeqCst);
-            self.router
-                .max_in_flight
-                .fetch_max(cur, Ordering::SeqCst);
+            self.router.max_in_flight.fetch_max(cur, Ordering::SeqCst);
             let delay = self.router.per_call_delay_ms.load(Ordering::SeqCst);
             if delay > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(delay as u64))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
             }
             let body_val = serde_json::to_value(body).ok();
             let v = self.router.respond("POST", url, body_val);
             self.router.in_flight.fetch_sub(1, Ordering::SeqCst);
             let v = v?;
-            serde_json::from_value(v)
-                .map_err(|e| MockErr(format!("deserialize: {}", e)))
+            serde_json::from_value(v).map_err(|e| MockErr(format!("deserialize: {}", e)))
         }
 
         async fn check_health(
@@ -770,11 +752,7 @@ mod tests {
         })
     }
 
-    fn call_llm(
-        step_id: Uuid,
-        endpoint: &str,
-        path: &str,
-    ) -> serde_json::Value {
+    fn call_llm(step_id: Uuid, endpoint: &str, path: &str) -> serde_json::Value {
         serde_json::json!({
             "kind": "call_llm",
             "step_id": step_id,
@@ -812,10 +790,9 @@ mod tests {
         let summary_id = Uuid::new_v4();
 
         let infra = Arc::new(base_infra());
-        infra.router.route_ok(
-            "/evals-be/api/evals/unscored",
-            unscored(vec![summary_id]),
-        );
+        infra
+            .router
+            .route_ok("/evals-be/api/evals/unscored", unscored(vec![summary_id]));
         infra.router.route_ok(
             "/evals-be/api/evals/score/init",
             init_resp(
@@ -827,10 +804,9 @@ mod tests {
             "/brainatlas-be/api/llm/claims",
             serde_json::json!({ "claims": ["a"] }),
         );
-        infra.router.route_ok(
-            "/evals-be/api/evals/score/step",
-            step_resp(run_id, done()),
-        );
+        infra
+            .router
+            .route_ok("/evals-be/api/evals/score/step", step_resp(run_id, done()));
 
         let orch = EvalOrchestrator::new(infra.clone());
         let (ok, failed) = orch.run_cycle().await.expect("run_cycle ok");
@@ -844,7 +820,10 @@ mod tests {
             .find(|(m, url, _)| m == "POST" && url.contains("/brainatlas-be/api/llm/claims"))
             .expect("llm call recorded");
         let body = llm_post.2.as_ref().expect("post body");
-        let corr = body.get("correlation_id").and_then(|v| v.as_str()).expect("corr id");
+        let corr = body
+            .get("correlation_id")
+            .and_then(|v| v.as_str())
+            .expect("corr id");
         assert_eq!(corr, format!("eval:{}:{}", run_id, step_id));
     }
 
@@ -857,9 +836,21 @@ mod tests {
         let cases: Vec<(&str, &str, &str)> = vec![
             ("extract_claims", "/brainatlas-be/api/llm/claims", "claims"),
             ("embed", "/brainatlas-be/api/llm/embed", "embed"),
-            ("judge_groundedness", "/brainatlas-be/api/llm/judge-ground", "groundedness"),
-            ("judge_rubric", "/brainatlas-be/api/llm/judge-rubric", "rubric"),
-            ("judge_citation", "/brainatlas-be/api/llm/judge-cite", "citation_support"),
+            (
+                "judge_groundedness",
+                "/brainatlas-be/api/llm/judge-ground",
+                "groundedness",
+            ),
+            (
+                "judge_rubric",
+                "/brainatlas-be/api/llm/judge-rubric",
+                "rubric",
+            ),
+            (
+                "judge_citation",
+                "/brainatlas-be/api/llm/judge-cite",
+                "citation_support",
+            ),
         ];
 
         for (endpoint, path, payload_kind) in cases {
@@ -868,21 +859,17 @@ mod tests {
             let summary_id = Uuid::new_v4();
 
             let infra = Arc::new(base_infra());
-            infra.router.route_ok(
-                "/evals-be/api/evals/unscored",
-                unscored(vec![summary_id]),
-            );
+            infra
+                .router
+                .route_ok("/evals-be/api/evals/unscored", unscored(vec![summary_id]));
             infra.router.route_ok(
                 "/evals-be/api/evals/score/init",
                 init_resp(run_id, call_llm(step_id, endpoint, path)),
             );
+            infra.router.route_ok(path, serde_json::json!({"ok": true}));
             infra
                 .router
-                .route_ok(path, serde_json::json!({"ok": true}));
-            infra.router.route_ok(
-                "/evals-be/api/evals/score/step",
-                step_resp(run_id, done()),
-            );
+                .route_ok("/evals-be/api/evals/score/step", step_resp(run_id, done()));
 
             let orch = EvalOrchestrator::new(infra.clone());
             let (ok, failed) = orch.run_cycle().await.expect("run_cycle ok");
@@ -891,10 +878,14 @@ mod tests {
 
             // Confirm the LLM URL was actually called on the brainatlas base.
             let calls = infra.router.calls.lock().unwrap();
-            let posted = calls.iter().any(|(m, url, _)| {
-                m == "POST" && url == &format!("http://brain:8082{}", path)
-            });
-            assert!(posted, "expected POST to brainatlas base+path for {}", endpoint);
+            let posted = calls
+                .iter()
+                .any(|(m, url, _)| m == "POST" && url == &format!("http://brain:8082{}", path));
+            assert!(
+                posted,
+                "expected POST to brainatlas base+path for {}",
+                endpoint
+            );
 
             // Confirm the step request wrapped the response under the right variant tag.
             let step_post = calls
@@ -907,7 +898,11 @@ mod tests {
                 .and_then(|r| r.get("kind"))
                 .and_then(|k| k.as_str())
                 .expect("llm_response kind");
-            assert_eq!(kind, payload_kind, "wrapping kind mismatch for {}", endpoint);
+            assert_eq!(
+                kind, payload_kind,
+                "wrapping kind mismatch for {}",
+                endpoint
+            );
         }
     }
 
@@ -929,10 +924,9 @@ mod tests {
         let summary_id = Uuid::new_v4();
 
         let infra = Arc::new(base_infra());
-        infra.router.route_ok(
-            "/evals-be/api/evals/unscored",
-            unscored(vec![summary_id]),
-        );
+        infra
+            .router
+            .route_ok("/evals-be/api/evals/unscored", unscored(vec![summary_id]));
         infra.router.route_ok(
             "/evals-be/api/evals/score/init",
             init_resp(
@@ -947,10 +941,9 @@ mod tests {
                 Box::new(|| Ok(serde_json::json!({"claims": []}))) as Responder,
             ],
         );
-        infra.router.route_ok(
-            "/evals-be/api/evals/score/step",
-            step_resp(run_id, done()),
-        );
+        infra
+            .router
+            .route_ok("/evals-be/api/evals/score/step", step_resp(run_id, done()));
 
         let orch = EvalOrchestrator::new(infra.clone());
         let (ok, failed) = orch.run_cycle().await.expect("run_cycle ok");
@@ -967,10 +960,9 @@ mod tests {
         let summary_id = Uuid::new_v4();
 
         let infra = Arc::new(base_infra());
-        infra.router.route_ok(
-            "/evals-be/api/evals/unscored",
-            unscored(vec![summary_id]),
-        );
+        infra
+            .router
+            .route_ok("/evals-be/api/evals/unscored", unscored(vec![summary_id]));
         infra.router.route_ok(
             "/evals-be/api/evals/score/init",
             init_resp(
@@ -999,9 +991,7 @@ mod tests {
     async fn run_cycle_respects_concurrency_cap() {
         // 5 summaries, configured concurrency of 2. Each brainatlas call sleeps
         // for 30ms so the overlap is observable through `router.max_in_flight`.
-        let infra = Arc::new(
-            base_infra().with_config(ConfigKey::EvalOrchestratorConcurrency, "2"),
-        );
+        let infra = Arc::new(base_infra().with_config(ConfigKey::EvalOrchestratorConcurrency, "2"));
         infra.router.set_delay_ms(30);
 
         let ids: Vec<Uuid> = (0..5).map(|_| Uuid::new_v4()).collect();

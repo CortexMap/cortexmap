@@ -424,7 +424,10 @@ mod tests {
 
     #[test]
     fn priority_serializes_by_variant_name() {
-        assert_eq!(serde_json::to_value(Priority::Background).unwrap(), "Background");
+        assert_eq!(
+            serde_json::to_value(Priority::Background).unwrap(),
+            "Background"
+        );
         assert_eq!(serde_json::to_value(Priority::Normal).unwrap(), "Normal");
         assert_eq!(
             serde_json::to_value(Priority::UserRequested).unwrap(),
@@ -501,7 +504,10 @@ mod tests {
 
     // ---- RegionSummary + SummaryEvalScores ----
 
-    fn sample_region_summary(eval_scores: Option<SummaryEvalScores>, cost: Option<String>) -> RegionSummary {
+    fn sample_region_summary(
+        eval_scores: Option<SummaryEvalScores>,
+        cost: Option<String>,
+    ) -> RegionSummary {
         RegionSummary {
             summary_id: Uuid::new_v4(),
             summary: "A brief overview.".to_string(),
@@ -541,7 +547,10 @@ mod tests {
         let back_scores = back.eval_scores.unwrap();
         assert_eq!(back_scores.eval_version, "v2");
         assert_eq!(back_scores.scores.get("claim_groundedness"), Some(&0.75));
-        assert_eq!(back_scores.judge_models.get("claim_groundedness").unwrap(), "gpt-4o-mini");
+        assert_eq!(
+            back_scores.judge_models.get("claim_groundedness").unwrap(),
+            "gpt-4o-mini"
+        );
     }
 
     #[test]
@@ -716,7 +725,11 @@ mod tests {
 
     #[test]
     fn region_color_roundtrip() {
-        let c = RegionColor { red: 10, green: 200, blue: 30 };
+        let c = RegionColor {
+            red: 10,
+            green: 200,
+            blue: 30,
+        };
         let v = serde_json::to_value(&c).unwrap();
         let back: RegionColor = serde_json::from_value(v).unwrap();
         assert_eq!(back.red, 10);
@@ -731,7 +744,11 @@ mod tests {
             region_id: 42,
             name: "Hippocampus".to_string(),
             acronym: Some("HPF".to_string()),
-            color: Some(RegionColor { red: 1, green: 2, blue: 3 }),
+            color: Some(RegionColor {
+                red: 1,
+                green: 2,
+                blue: 3,
+            }),
             structure_order: Some(5),
             parent_region_id: Some(1),
             parent_acronym: Some("CTX".to_string()),
@@ -785,7 +802,9 @@ mod tests {
 
     #[test]
     fn search_request_roundtrip() {
-        let r = SearchRequest { query: "memory".to_string() };
+        let r = SearchRequest {
+            query: "memory".to_string(),
+        };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["query"], "memory");
         let back: SearchRequest = serde_json::from_value(v).unwrap();
@@ -871,7 +890,10 @@ mod tests {
 
     #[test]
     fn status_count_roundtrip() {
-        let sc = StatusCount { status: "pending".to_string(), count: 99 };
+        let sc = StatusCount {
+            status: "pending".to_string(),
+            count: 99,
+        };
         let v = serde_json::to_value(&sc).unwrap();
         let back: StatusCount = serde_json::from_value(v).unwrap();
         assert_eq!(back.status, "pending");
@@ -880,7 +902,10 @@ mod tests {
 
     #[test]
     fn query_dist_entry_roundtrip() {
-        let q = QueryDistEntry { query_count: 3, num_regions: 769 };
+        let q = QueryDistEntry {
+            query_count: 3,
+            num_regions: 769,
+        };
         let v = serde_json::to_value(&q).unwrap();
         let back: QueryDistEntry = serde_json::from_value(v).unwrap();
         assert_eq!(back.query_count, 3);
@@ -897,7 +922,10 @@ mod tests {
             batches_by_status: vec![],
             total_queries: 2000,
             regions_with_queries: 1200,
-            query_distribution: vec![QueryDistEntry { query_count: 3, num_regions: 700 }],
+            query_distribution: vec![QueryDistEntry {
+                query_count: 3,
+                num_regions: 700,
+            }],
             total_papers: 10_000,
             total_summaries: 1_200,
             timestamp: ts(),

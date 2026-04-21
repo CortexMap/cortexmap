@@ -159,7 +159,9 @@ mod tests {
 
     #[test]
     fn embed_response_roundtrip() {
-        let r = EmbedResponse { embedding: vec![0.1, 0.2, 0.3, 0.4] };
+        let r = EmbedResponse {
+            embedding: vec![0.1, 0.2, 0.3, 0.4],
+        };
         let v = serde_json::to_value(&r).unwrap();
         assert!(v["embedding"].is_array());
         let back: EmbedResponse = serde_json::from_value(v).unwrap();

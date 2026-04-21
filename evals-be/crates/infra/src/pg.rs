@@ -108,10 +108,9 @@ struct EvalRunRow {
 impl TryFrom<EvalRunRow> for EvalRun {
     type Error = InfraError;
     fn try_from(r: EvalRunRow) -> Result<Self, InfraError> {
-        let status: EvalRunStatus = r
-            .status
-            .parse()
-            .map_err(|_| InfraError::InvalidResponse(format!("bad eval_runs.status: {}", r.status)))?;
+        let status: EvalRunStatus = r.status.parse().map_err(|_| {
+            InfraError::InvalidResponse(format!("bad eval_runs.status: {}", r.status))
+        })?;
         Ok(Self {
             id: r.id,
             summary_id: r.summary_id,
@@ -202,7 +201,12 @@ impl EvalsPostgresql {
         // ON CONFLICT DO NOTHING returned no row → the cache row was inserted
         // by a concurrent writer. Re-select to resolve.
         let existing = self
-            .lookup_score_by_hash(database_url, &new.summary_hash, &new.metric, &new.eval_version)
+            .lookup_score_by_hash(
+                database_url,
+                &new.summary_hash,
+                &new.metric,
+                &new.eval_version,
+            )
             .await?
             .ok_or(InfraError::NotFound)?;
         Ok(existing)
@@ -342,23 +346,24 @@ impl EvalsPostgresql {
         let v = eval_version.to_string();
 
         let rows = conn
-            .interact(move |c| -> Result<Vec<WorstOffenderRow>, diesel::result::Error> {
-                #[derive(QueryableByName)]
-                struct Row {
-                    #[diesel(sql_type = diesel::sql_types::Uuid)]
-                    summary_id: Uuid,
-                    #[diesel(sql_type = Nullable<Varchar>)]
-                    region_name: Option<String>,
-                    #[diesel(sql_type = Text)]
-                    metric: String,
-                    #[diesel(sql_type = Float4)]
-                    score: f32,
-                    #[diesel(sql_type = Text)]
-                    eval_version: String,
-                }
+            .interact(
+                move |c| -> Result<Vec<WorstOffenderRow>, diesel::result::Error> {
+                    #[derive(QueryableByName)]
+                    struct Row {
+                        #[diesel(sql_type = diesel::sql_types::Uuid)]
+                        summary_id: Uuid,
+                        #[diesel(sql_type = Nullable<Varchar>)]
+                        region_name: Option<String>,
+                        #[diesel(sql_type = Text)]
+                        metric: String,
+                        #[diesel(sql_type = Float4)]
+                        score: f32,
+                        #[diesel(sql_type = Text)]
+                        eval_version: String,
+                    }
 
-                let rows: Vec<Row> = diesel::sql_query(
-                    "SELECT es.summary_id,
+                    let rows: Vec<Row> = diesel::sql_query(
+                        "SELECT es.summary_id,
                             rs.name AS region_name,
                             es.metric::text,
                             es.score,
@@ -368,23 +373,24 @@ impl EvalsPostgresql {
                      WHERE es.metric = $1 AND es.eval_version = $2
                      ORDER BY es.score ASC
                      LIMIT $3",
-                )
-                .bind::<Text, _>(&m)
-                .bind::<Text, _>(&v)
-                .bind::<BigInt, _>(limit)
-                .load(c)?;
+                    )
+                    .bind::<Text, _>(&m)
+                    .bind::<Text, _>(&v)
+                    .bind::<BigInt, _>(limit)
+                    .load(c)?;
 
-                Ok(rows
-                    .into_iter()
-                    .map(|r| WorstOffenderRow {
-                        summary_id: r.summary_id,
-                        region_name: r.region_name,
-                        metric: r.metric,
-                        score: r.score,
-                        eval_version: r.eval_version,
-                    })
-                    .collect())
-            })
+                    Ok(rows
+                        .into_iter()
+                        .map(|r| WorstOffenderRow {
+                            summary_id: r.summary_id,
+                            region_name: r.region_name,
+                            metric: r.metric,
+                            score: r.score,
+                            eval_version: r.eval_version,
+                        })
+                        .collect())
+                },
+            )
             .await??;
         Ok(rows)
     }
@@ -502,19 +508,20 @@ impl EvalsPostgresql {
         let min_sim = min_similarity as f64;
 
         let rows = conn
-            .interact(move |c| -> Result<Vec<RetrievedChunk>, diesel::result::Error> {
-                #[derive(QueryableByName)]
-                struct ChunkRow {
-                    #[diesel(sql_type = Int4)]
-                    chunk_index: i32,
-                    #[diesel(sql_type = Text)]
-                    chunk_text: String,
-                    #[diesel(sql_type = Float8)]
-                    similarity: f64,
-                }
+            .interact(
+                move |c| -> Result<Vec<RetrievedChunk>, diesel::result::Error> {
+                    #[derive(QueryableByName)]
+                    struct ChunkRow {
+                        #[diesel(sql_type = Int4)]
+                        chunk_index: i32,
+                        #[diesel(sql_type = Text)]
+                        chunk_text: String,
+                        #[diesel(sql_type = Float8)]
+                        similarity: f64,
+                    }
 
-                let rows: Vec<ChunkRow> = diesel::sql_query(
-                    "SELECT chunk_index,
+                    let rows: Vec<ChunkRow> = diesel::sql_query(
+                        "SELECT chunk_index,
                             chunk_text,
                             (1.0 - (embedding <=> $1::vector))::float8 AS similarity
                      FROM brain_region_embeddings
@@ -522,22 +529,23 @@ impl EvalsPostgresql {
                        AND (1.0 - (embedding <=> $1::vector)) >= $3
                      ORDER BY embedding <=> $1::vector
                      LIMIT $4",
-                )
-                .bind::<Text, _>(&embedding_str)
-                .bind::<diesel::sql_types::Uuid, _>(summary_id)
-                .bind::<Float8, _>(min_sim)
-                .bind::<BigInt, _>(top_k)
-                .load(c)?;
+                    )
+                    .bind::<Text, _>(&embedding_str)
+                    .bind::<diesel::sql_types::Uuid, _>(summary_id)
+                    .bind::<Float8, _>(min_sim)
+                    .bind::<BigInt, _>(top_k)
+                    .load(c)?;
 
-                Ok(rows
-                    .into_iter()
-                    .map(|r| RetrievedChunk {
-                        chunk_index: r.chunk_index,
-                        chunk_text: r.chunk_text,
-                        similarity: r.similarity as f32,
-                    })
-                    .collect())
-            })
+                    Ok(rows
+                        .into_iter()
+                        .map(|r| RetrievedChunk {
+                            chunk_index: r.chunk_index,
+                            chunk_text: r.chunk_text,
+                            similarity: r.similarity as f32,
+                        })
+                        .collect())
+                },
+            )
             .await??;
         Ok(rows)
     }
@@ -643,29 +651,31 @@ impl EvalsPostgresql {
         let conn = self.pool(database_url).await?.get().await?;
 
         let row = conn
-            .interact(move |c| -> Result<Option<LoadedRunState>, diesel::result::Error> {
-                #[derive(QueryableByName)]
-                struct R {
-                    #[diesel(sql_type = diesel::sql_types::Uuid)]
-                    summary_id: Uuid,
-                    #[diesel(sql_type = Text)]
-                    eval_version: String,
-                    #[diesel(sql_type = Jsonb)]
-                    state: serde_json::Value,
-                    #[diesel(sql_type = Nullable<diesel::sql_types::Uuid>)]
-                    pending_step_id: Option<Uuid>,
-                }
-                let rows: Vec<R> = diesel::sql_query(
-                    "SELECT summary_id, eval_version, state, pending_step_id
+            .interact(
+                move |c| -> Result<Option<LoadedRunState>, diesel::result::Error> {
+                    #[derive(QueryableByName)]
+                    struct R {
+                        #[diesel(sql_type = diesel::sql_types::Uuid)]
+                        summary_id: Uuid,
+                        #[diesel(sql_type = Text)]
+                        eval_version: String,
+                        #[diesel(sql_type = Jsonb)]
+                        state: serde_json::Value,
+                        #[diesel(sql_type = Nullable<diesel::sql_types::Uuid>)]
+                        pending_step_id: Option<Uuid>,
+                    }
+                    let rows: Vec<R> = diesel::sql_query(
+                        "SELECT summary_id, eval_version, state, pending_step_id
                      FROM eval_run_state WHERE run_id = $1",
-                )
-                .bind::<diesel::sql_types::Uuid, _>(run_id)
-                .load(c)?;
-                Ok(rows
-                    .into_iter()
-                    .next()
-                    .map(|r| (r.summary_id, r.eval_version, r.state, r.pending_step_id)))
-            })
+                    )
+                    .bind::<diesel::sql_types::Uuid, _>(run_id)
+                    .load(c)?;
+                    Ok(rows
+                        .into_iter()
+                        .next()
+                        .map(|r| (r.summary_id, r.eval_version, r.state, r.pending_step_id)))
+                },
+            )
             .await??;
 
         Ok(row)

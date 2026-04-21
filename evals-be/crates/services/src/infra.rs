@@ -187,11 +187,7 @@ pub trait EvalsDatabase: Send + Sync {
 
     /// Delete a run-state row (called on Done, or on /init re-entry for the
     /// same `summary_id` to clean up an abandoned run).
-    async fn delete_run_state(
-        &self,
-        database_url: &str,
-        run_id: Uuid,
-    ) -> Result<(), Self::Error>;
+    async fn delete_run_state(&self, database_url: &str, run_id: Uuid) -> Result<(), Self::Error>;
 
     /// Remove every stale `eval_run_state` row for the given
     /// `(summary_id, eval_version)` pair. Called on `/init` re-entry so

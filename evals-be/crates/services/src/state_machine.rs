@@ -17,12 +17,10 @@
 //! After every state transition that writes persistent metric rows we go
 //! through `score_with_cache` so the `eval_scores` cache stays hot.
 
-use crate::cache::{score_with_cache, ComputedScore};
-use crate::citations::{
-    self, parse_citations, CitationIssue, CitationIssueKind, ParsedCitation,
-};
-use crate::infra::{ChunkRow, EvalsDatabase, RetrievedChunk, SummaryRow};
 use crate::ServiceError;
+use crate::cache::{ComputedScore, score_with_cache};
+use crate::citations::{self, CitationIssue, CitationIssueKind, ParsedCitation, parse_citations};
+use crate::infra::{ChunkRow, EvalsDatabase, RetrievedChunk, SummaryRow};
 use brainatlas_rpc_types::evals as brpc;
 use domain::{
     Claim, EvalMetric, GroundednessLabel, GroundednessVerdict, RubricCriterion, RubricScores,
@@ -166,7 +164,12 @@ pub fn initial_action(
         // Citations are only computed alongside a fresh groundedness pass
         // (they ride on the same Claim objects). If both upstream families
         // are already cached, nothing left to do.
-        return (RunState::Done, NextAction::Done { metrics: cached_metrics });
+        return (
+            RunState::Done,
+            NextAction::Done {
+                metrics: cached_metrics,
+            },
+        );
     }
     if !groundedness_cached {
         let step_id = Uuid::new_v4();
@@ -227,12 +230,43 @@ where
     E: Error + Send + Sync + 'static,
 {
     match state {
-        RunState::AwaitingClaims => advance_claims(db, database_url, ctx, response, accumulated).await,
-        RunState::AwaitingClaimEmbed { claims, idx, reports } => {
-            advance_embed(db, database_url, ctx, response, claims, idx, reports, accumulated).await
+        RunState::AwaitingClaims => {
+            advance_claims(db, database_url, ctx, response, accumulated).await
         }
-        RunState::AwaitingClaimJudge { claims, idx, reports, retrieved: _ } => {
-            advance_judge(db, database_url, ctx, response, claims, idx, reports, accumulated).await
+        RunState::AwaitingClaimEmbed {
+            claims,
+            idx,
+            reports,
+        } => {
+            advance_embed(
+                db,
+                database_url,
+                ctx,
+                response,
+                claims,
+                idx,
+                reports,
+                accumulated,
+            )
+            .await
+        }
+        RunState::AwaitingClaimJudge {
+            claims,
+            idx,
+            reports,
+            retrieved: _,
+        } => {
+            advance_judge(
+                db,
+                database_url,
+                ctx,
+                response,
+                claims,
+                idx,
+                reports,
+                accumulated,
+            )
+            .await
         }
         RunState::AwaitingRubric { claims } => {
             advance_rubric(db, database_url, ctx, response, claims, accumulated).await
@@ -295,7 +329,7 @@ where
             return Err(ServiceError::InvalidRequest(format!(
                 "expected Claims response, got {:?}",
                 std::mem::discriminant(&other)
-            )))
+            )));
         }
     };
 
@@ -305,16 +339,8 @@ where
             "claims": [],
             "note": "no claims extracted",
         });
-        persist_groundedness_metrics(
-            db,
-            database_url,
-            ctx,
-            1.0,
-            0.0,
-            Some(details),
-            accumulated,
-        )
-        .await?;
+        persist_groundedness_metrics(db, database_url, ctx, 1.0, 0.0, Some(details), accumulated)
+            .await?;
         return Ok(next_rubric_or_done(ctx, Some(Vec::new()), accumulated));
     }
 
@@ -342,7 +368,7 @@ where
             return Err(ServiceError::InvalidRequest(format!(
                 "expected Embed response, got {:?}",
                 std::mem::discriminant(&other)
-            )))
+            )));
         }
     };
 
@@ -381,7 +407,13 @@ where
             retrieved: retrieved_snippets,
         });
         return advance_to_next_claim_or_finalize(
-            db, database_url, ctx, claims, idx + 1, reports, accumulated,
+            db,
+            database_url,
+            ctx,
+            claims,
+            idx + 1,
+            reports,
+            accumulated,
         )
         .await;
     }
@@ -435,7 +467,7 @@ where
             return Err(ServiceError::InvalidRequest(format!(
                 "expected Groundedness response, got {:?}",
                 std::mem::discriminant(&other)
-            )))
+            )));
         }
     };
 
@@ -469,10 +501,8 @@ where
         retrieved: vec![], // already recorded during embed phase in prior report entries if needed
     });
 
-    advance_to_next_claim_or_finalize(
-        db, database_url, ctx, claims, idx + 1, reports, accumulated,
-    )
-    .await
+    advance_to_next_claim_or_finalize(db, database_url, ctx, claims, idx + 1, reports, accumulated)
+        .await
 }
 
 /// Either kick off the next claim's embed, or finalize groundedness and jump
@@ -497,9 +527,16 @@ where
     // All claims judged — aggregate and persist.
     let total = reports.len() as f32;
     let supported = reports.iter().filter(|r| r.verdict == "supported").count() as f32;
-    let unsupported = reports.iter().filter(|r| r.verdict == "unsupported").count() as f32;
+    let unsupported = reports
+        .iter()
+        .filter(|r| r.verdict == "unsupported")
+        .count() as f32;
     let groundedness = if total > 0.0 { supported / total } else { 1.0 };
-    let hallucination = if total > 0.0 { unsupported / total } else { 0.0 };
+    let hallucination = if total > 0.0 {
+        unsupported / total
+    } else {
+        0.0
+    };
 
     let details = serde_json::json!({
         "claims": reports,
@@ -542,7 +579,7 @@ where
             return Err(ServiceError::InvalidRequest(format!(
                 "expected Rubric response, got {:?}",
                 std::mem::discriminant(&other)
-            )))
+            )));
         }
     };
 
@@ -602,7 +639,11 @@ fn start_embed_step<E: Error + Send + Sync + 'static>(
     })
     .expect("EmbedRequest serializable");
     let step_id = Uuid::new_v4();
-    let new_state = RunState::AwaitingClaimEmbed { claims, idx, reports };
+    let new_state = RunState::AwaitingClaimEmbed {
+        claims,
+        idx,
+        reports,
+    };
     Ok((
         new_state,
         NextAction::CallLlm {
@@ -640,7 +681,12 @@ fn next_rubric_or_done(
         //
         // TODO: once cost tracking is in place, revisit this trade-off.
         let _ = claims;
-        return (RunState::Done, NextAction::Done { metrics: accumulated.clone() });
+        return (
+            RunState::Done,
+            NextAction::Done {
+                metrics: accumulated.clone(),
+            },
+        );
     }
     let step_id = Uuid::new_v4();
     let body = serde_json::to_value(brpc::JudgeRubricRequest {
@@ -764,7 +810,12 @@ where
     // skip citations entirely for this run — they'll land on the next run
     // that re-extracts claims.
     let Some(claims) = claims else {
-        return Ok((RunState::Done, NextAction::Done { metrics: accumulated.clone() }));
+        return Ok((
+            RunState::Done,
+            NextAction::Done {
+                metrics: accumulated.clone(),
+            },
+        ));
     };
 
     // Parse every [chunk:UUID] marker in the summary text.
@@ -813,10 +864,7 @@ where
                 claim_id: 0,
                 claim_text: "<unattributed>".to_string(),
                 offending_chunk_id: Some(p.uuid),
-                rationale: format!(
-                    "UUID {} exists but belongs to a different summary",
-                    p.uuid
-                ),
+                rationale: format!("UUID {} exists but belongs to a different summary", p.uuid),
             });
         }
     }
@@ -924,7 +972,12 @@ where
             )
             .await?;
         }
-        return Ok((RunState::Done, NextAction::Done { metrics: accumulated.clone() }));
+        return Ok((
+            RunState::Done,
+            NextAction::Done {
+                metrics: accumulated.clone(),
+            },
+        ));
     }
 
     // Otherwise, start the support-judge loop. Find the first
@@ -948,7 +1001,12 @@ where
                 accumulated,
             )
             .await?;
-            Ok((RunState::Done, NextAction::Done { metrics: accumulated.clone() }))
+            Ok((
+                RunState::Done,
+                NextAction::Done {
+                    metrics: accumulated.clone(),
+                },
+            ))
         }
         Some((claim_idx, cite_idx)) => {
             let issues: Vec<CitationIssue> = presence_issues
@@ -956,13 +1014,8 @@ where
                 .chain(validity_issues)
                 .chain(scope_issues)
                 .collect();
-            let action = build_citation_support_action(
-                ctx,
-                &claims,
-                claim_idx,
-                cite_idx,
-                &cited_chunks,
-            );
+            let action =
+                build_citation_support_action(ctx, &claims, claim_idx, cite_idx, &cited_chunks);
             let state = RunState::AwaitingCitationSupport {
                 claims,
                 claim_idx,
@@ -1097,7 +1150,7 @@ where
             return Err(ServiceError::InvalidRequest(format!(
                 "expected CitationSupport response, got {:?}",
                 std::mem::discriminant(&other)
-            )))
+            )));
         }
     };
 
@@ -1139,8 +1192,7 @@ where
     let over_budget = support_calls_issued as usize >= ctx.citation_support_max_calls;
     match next {
         Some((nci, nki)) if !over_budget => {
-            let action =
-                build_citation_support_action(ctx, &claims, nci, nki, &cited_chunks);
+            let action = build_citation_support_action(ctx, &claims, nci, nki, &cited_chunks);
             let state = RunState::AwaitingCitationSupport {
                 claims,
                 claim_idx: nci,
@@ -1162,10 +1214,8 @@ where
             if next.is_some() && over_budget {
                 truncated = true;
             }
-            let judged = support_supported
-                + support_partial
-                + support_unsupported
-                + support_contradicted;
+            let judged =
+                support_supported + support_partial + support_unsupported + support_contradicted;
             let score = if judged == 0 {
                 1.0
             } else {
@@ -1190,7 +1240,12 @@ where
                 accumulated,
             )
             .await?;
-            Ok((RunState::Done, NextAction::Done { metrics: accumulated.clone() }))
+            Ok((
+                RunState::Done,
+                NextAction::Done {
+                    metrics: accumulated.clone(),
+                },
+            ))
         }
     }
 }
@@ -1326,7 +1381,9 @@ mod tests {
                 reports: vec![],
             },
             RunState::AwaitingRubric { claims: None },
-            RunState::AwaitingRubric { claims: Some(vec![]) },
+            RunState::AwaitingRubric {
+                claims: Some(vec![]),
+            },
             RunState::AwaitingCitationSupport {
                 claims: vec![],
                 claim_idx: 0,
@@ -1376,9 +1433,7 @@ mod tests {
         // is false and there are no cited chunks: bare `Done` transition (no
         // `CallLlm`). We verify by constructing the expected NextAction and
         // round-tripping it.
-        let action: NextAction = NextAction::Done {
-            metrics: vec![],
-        };
+        let action: NextAction = NextAction::Done { metrics: vec![] };
         let raw = serde_json::to_string(&action).unwrap();
         assert!(raw.contains("\"kind\":\"done\""));
         assert!(!raw.contains("call_llm"));
@@ -1580,7 +1635,11 @@ mod advance_tests {
         ) -> Result<Vec<ChunkRow>, Self::Error> {
             let rows = self.chunk_rows.lock().unwrap();
             let wanted: HashSet<Uuid> = chunk_ids.iter().copied().collect();
-            Ok(rows.iter().filter(|r| wanted.contains(&r.id)).cloned().collect())
+            Ok(rows
+                .iter()
+                .filter(|r| wanted.contains(&r.id))
+                .cloned()
+                .collect())
         }
 
         async fn insert_run_state(
@@ -1689,9 +1748,15 @@ mod advance_tests {
         // Two groundedness metrics persisted even with no claims.
         assert!(acc.iter().any(|m| m.metric == "claim_groundedness"));
         assert!(acc.iter().any(|m| m.metric == "hallucination_rate"));
-        let g = acc.iter().find(|m| m.metric == "claim_groundedness").unwrap();
+        let g = acc
+            .iter()
+            .find(|m| m.metric == "claim_groundedness")
+            .unwrap();
         assert!((g.score - 1.0).abs() < 1e-6);
-        let h = acc.iter().find(|m| m.metric == "hallucination_rate").unwrap();
+        let h = acc
+            .iter()
+            .find(|m| m.metric == "hallucination_rate")
+            .unwrap();
         assert!((h.score - 0.0).abs() < 1e-6);
 
         // Empty-claims path hands off to rubric (groundedness has claims=Some(empty)).
@@ -1747,10 +1812,17 @@ mod advance_tests {
             .expect("advance");
 
         // No metrics persisted yet — we still need to go through the embed loop.
-        assert!(acc.is_empty(), "expected no accumulated metrics at embed step");
+        assert!(
+            acc.is_empty(),
+            "expected no accumulated metrics at embed step"
+        );
 
         match state {
-            RunState::AwaitingClaimEmbed { claims, idx, reports } => {
+            RunState::AwaitingClaimEmbed {
+                claims,
+                idx,
+                reports,
+            } => {
                 assert_eq!(claims.len(), 2);
                 assert_eq!(idx, 0);
                 assert!(reports.is_empty());
@@ -1780,10 +1852,18 @@ mod advance_tests {
         let response = LlmResponsePayload::Embed(EmbedResponse {
             embedding: vec![0.1; 4],
         });
-        let (state, next) =
-            advance_embed(&db, "memory://", &ctx, response, claims, 0, Vec::new(), &mut acc)
-                .await
-                .expect("advance_embed");
+        let (state, next) = advance_embed(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            claims,
+            0,
+            Vec::new(),
+            &mut acc,
+        )
+        .await
+        .expect("advance_embed");
 
         // Only one claim → finalize: groundedness 0.0 (0 supported / 1),
         // hallucination 1.0 (1 unsupported / 1).
@@ -1799,8 +1879,17 @@ mod advance_tests {
         assert!((h.score - 1.0).abs() < 1e-6);
 
         // With claims Some(..), we go to rubric.
-        assert!(matches!(state, RunState::AwaitingRubric { claims: Some(_) }));
-        assert!(matches!(next, NextAction::CallLlm { endpoint: LlmEndpoint::JudgeRubric, .. }));
+        assert!(matches!(
+            state,
+            RunState::AwaitingRubric { claims: Some(_) }
+        ));
+        assert!(matches!(
+            next,
+            NextAction::CallLlm {
+                endpoint: LlmEndpoint::JudgeRubric,
+                ..
+            }
+        ));
     }
 
     /// Non-empty retrieval → CallLlm(JudgeGroundedness) + AwaitingClaimJudge.
@@ -1819,10 +1908,18 @@ mod advance_tests {
         let response = LlmResponsePayload::Embed(EmbedResponse {
             embedding: vec![0.1; 4],
         });
-        let (state, next) =
-            advance_embed(&db, "memory://", &ctx, response, claims, 0, Vec::new(), &mut acc)
-                .await
-                .expect("advance_embed");
+        let (state, next) = advance_embed(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            claims,
+            0,
+            Vec::new(),
+            &mut acc,
+        )
+        .await
+        .expect("advance_embed");
 
         assert!(acc.is_empty(), "no metrics persisted at judge step");
         match state {
@@ -1923,7 +2020,10 @@ mod advance_tests {
         .await
         .expect("judge");
 
-        let g = acc.iter().find(|m| m.metric == "claim_groundedness").unwrap();
+        let g = acc
+            .iter()
+            .find(|m| m.metric == "claim_groundedness")
+            .unwrap();
         assert!((g.score - 1.0).abs() < 1e-6);
         assert!(matches!(state, RunState::AwaitingRubric { .. }));
     }
@@ -1954,9 +2054,15 @@ mod advance_tests {
         .await
         .expect("judge");
 
-        let g = acc.iter().find(|m| m.metric == "claim_groundedness").unwrap();
+        let g = acc
+            .iter()
+            .find(|m| m.metric == "claim_groundedness")
+            .unwrap();
         assert!((g.score - 0.0).abs() < 1e-6);
-        let h = acc.iter().find(|m| m.metric == "hallucination_rate").unwrap();
+        let h = acc
+            .iter()
+            .find(|m| m.metric == "hallucination_rate")
+            .unwrap();
         assert!((h.score - 1.0).abs() < 1e-6);
     }
 
@@ -2010,14 +2116,28 @@ mod advance_tests {
             supporting_chunks: vec![],
             rationale: "none".into(),
         });
-        let (_state, _next) =
-            advance_judge(&db, "memory://", &ctx, response, claims, 3, prior_reports, &mut acc)
-                .await
-                .expect("judge");
+        let (_state, _next) = advance_judge(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            claims,
+            3,
+            prior_reports,
+            &mut acc,
+        )
+        .await
+        .expect("judge");
 
-        let g = acc.iter().find(|m| m.metric == "claim_groundedness").unwrap();
+        let g = acc
+            .iter()
+            .find(|m| m.metric == "claim_groundedness")
+            .unwrap();
         assert!((g.score - 0.25).abs() < 1e-6);
-        let h = acc.iter().find(|m| m.metric == "hallucination_rate").unwrap();
+        let h = acc
+            .iter()
+            .find(|m| m.metric == "hallucination_rate")
+            .unwrap();
         assert!((h.score - 0.25).abs() < 1e-6);
     }
 
@@ -2048,9 +2168,15 @@ mod advance_tests {
         .expect("judge");
 
         // Contradicted neither counts as supported nor unsupported.
-        let g = acc.iter().find(|m| m.metric == "claim_groundedness").unwrap();
+        let g = acc
+            .iter()
+            .find(|m| m.metric == "claim_groundedness")
+            .unwrap();
         assert!((g.score - 0.0).abs() < 1e-6);
-        let h = acc.iter().find(|m| m.metric == "hallucination_rate").unwrap();
+        let h = acc
+            .iter()
+            .find(|m| m.metric == "hallucination_rate")
+            .unwrap();
         assert!((h.score - 0.0).abs() < 1e-6);
     }
 
@@ -2094,7 +2220,10 @@ mod advance_tests {
         let ctx = ctx_for(&summary, "hash-rubric-nc");
         let mut acc = Vec::new();
 
-        let c = |s: u8| RubricCriterion { score: s, rationale: "r".into() };
+        let c = |s: u8| RubricCriterion {
+            score: s,
+            rationale: "r".into(),
+        };
         let response = LlmResponsePayload::Rubric(RubricScores {
             relevance: c(5),
             coherence: c(4),
@@ -2102,10 +2231,9 @@ mod advance_tests {
             clinical_utility: c(2),
             terminology: c(1),
         });
-        let (state, next) =
-            advance_rubric(&db, "memory://", &ctx, response, None, &mut acc)
-                .await
-                .expect("rubric");
+        let (state, next) = advance_rubric(&db, "memory://", &ctx, response, None, &mut acc)
+            .await
+            .expect("rubric");
 
         // Five new rubric_* rows.
         let rubric_count = acc
@@ -2116,7 +2244,10 @@ mod advance_tests {
         // 5 → 1.0, 1 → 0.0, 3 → 0.5 (locking the normalise path).
         let rel = acc.iter().find(|m| m.metric == "rubric_relevance").unwrap();
         assert!((rel.score - 1.0).abs() < 1e-6);
-        let term = acc.iter().find(|m| m.metric == "rubric_terminology").unwrap();
+        let term = acc
+            .iter()
+            .find(|m| m.metric == "rubric_terminology")
+            .unwrap();
         assert!((term.score - 0.0).abs() < 1e-6);
 
         // No claims → citations skipped, Done.

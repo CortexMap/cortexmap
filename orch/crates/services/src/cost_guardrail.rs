@@ -239,7 +239,8 @@ mod tests {
                 if !self.fields.is_empty() {
                     self.fields.push(' ');
                 }
-                self.fields.push_str(&format!("{}={:?}", field.name(), value));
+                self.fields
+                    .push_str(&format!("{}={:?}", field.name(), value));
             }
         }
     }
@@ -279,9 +280,7 @@ mod tests {
 
     // ---- Mock infra ----
 
-    type HttpResponder = Box<
-        dyn Fn(&str) -> Result<serde_json::Value, MockErr> + Send + Sync,
-    >;
+    type HttpResponder = Box<dyn Fn(&str) -> Result<serde_json::Value, MockErr> + Send + Sync>;
 
     struct MockInfra {
         env: HashMap<String, String>,
@@ -313,9 +312,8 @@ mod tests {
             self
         }
         fn with_http_err(self) -> Self {
-            *self.http_responder.lock().unwrap() = Some(Box::new(|_url: &str| {
-                Err(MockErr("boom".to_string()))
-            }));
+            *self.http_responder.lock().unwrap() =
+                Some(Box::new(|_url: &str| Err(MockErr("boom".to_string()))));
             self
         }
     }
@@ -385,17 +383,13 @@ mod tests {
     impl HttpClient for MockInfra {
         type Error = MockErr;
 
-        async fn get<T: DeserializeOwned + Send>(
-            &self,
-            url: &str,
-        ) -> Result<T, Self::Error> {
+        async fn get<T: DeserializeOwned + Send>(&self, url: &str) -> Result<T, Self::Error> {
             let guard = self.http_responder.lock().unwrap();
             let responder = guard
                 .as_ref()
                 .expect("test did not stage an http responder");
             let value = responder(url)?;
-            serde_json::from_value(value)
-                .map_err(|e| MockErr(format!("deserialize: {}", e)))
+            serde_json::from_value(value).map_err(|e| MockErr(format!("deserialize: {}", e)))
         }
 
         async fn post<Req: Serialize + Send + Sync, Res: DeserializeOwned + Send + Sync>(
@@ -430,27 +424,21 @@ mod tests {
 
     #[tokio::test]
     async fn is_enabled_true_when_config_set_true() {
-        let infra = Arc::new(
-            base_infra().with_config(ConfigKey::CostGuardrailEnabled, "true"),
-        );
+        let infra = Arc::new(base_infra().with_config(ConfigKey::CostGuardrailEnabled, "true"));
         let g = CostGuardrail::new(infra);
         assert!(g.is_enabled().await);
     }
 
     #[tokio::test]
     async fn is_enabled_true_ignores_case() {
-        let infra = Arc::new(
-            base_infra().with_config(ConfigKey::CostGuardrailEnabled, "TrUe"),
-        );
+        let infra = Arc::new(base_infra().with_config(ConfigKey::CostGuardrailEnabled, "TrUe"));
         let g = CostGuardrail::new(infra);
         assert!(g.is_enabled().await);
     }
 
     #[tokio::test]
     async fn is_enabled_false_when_config_set_false() {
-        let infra = Arc::new(
-            base_infra().with_config(ConfigKey::CostGuardrailEnabled, "false"),
-        );
+        let infra = Arc::new(base_infra().with_config(ConfigKey::CostGuardrailEnabled, "false"));
         let g = CostGuardrail::new(infra);
         assert!(!g.is_enabled().await);
     }
@@ -473,9 +461,8 @@ mod tests {
 
     #[tokio::test]
     async fn poll_interval_respects_config_override() {
-        let infra = Arc::new(
-            base_infra().with_config(ConfigKey::CostGuardrailPollIntervalSecs, "42"),
-        );
+        let infra =
+            Arc::new(base_infra().with_config(ConfigKey::CostGuardrailPollIntervalSecs, "42"));
         let g = CostGuardrail::new(infra);
         assert_eq!(g.poll_interval_secs().await, 42);
     }
@@ -497,9 +484,7 @@ mod tests {
 
     #[tokio::test]
     async fn brainatlas_base_url_from_env_var() {
-        let infra = Arc::new(
-            base_infra().with_env("BRAINATLAS_HTTP_ADDR", "http://env-host:9000"),
-        );
+        let infra = Arc::new(base_infra().with_env("BRAINATLAS_HTTP_ADDR", "http://env-host:9000"));
         let g = CostGuardrail::new(infra);
         let url = g.brainatlas_base_url().await.expect("ok");
         assert_eq!(url, "http://env-host:9000");
@@ -508,9 +493,7 @@ mod tests {
     #[tokio::test]
     async fn brainatlas_base_url_env_var_is_normalized() {
         // No scheme + 0.0.0.0 should be rewritten to http://localhost.
-        let infra = Arc::new(
-            base_infra().with_env("BRAINATLAS_HTTP_ADDR", "0.0.0.0:8082"),
-        );
+        let infra = Arc::new(base_infra().with_env("BRAINATLAS_HTTP_ADDR", "0.0.0.0:8082"));
         let g = CostGuardrail::new(infra);
         let url = g.brainatlas_base_url().await.expect("ok");
         assert_eq!(url, "http://localhost:8082");
@@ -555,9 +538,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn run_once_short_circuits_when_no_thresholds() {
         let (store, _guard) = install_capture();
-        let infra = Arc::new(
-            base_infra().with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082"),
-        );
+        let infra = Arc::new(base_infra().with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082"));
         let g = CostGuardrail::new(infra);
         let result = g.run_once().await;
         let events = store.snapshot();
@@ -594,8 +575,7 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|e| e.level == Level::WARN
-                    && e.message.contains("usage fetch failed")),
+                .any(|e| e.level == Level::WARN && e.message.contains("usage fetch failed")),
             "expected a warn about fetch failure, got: {:#?}",
             events
         );

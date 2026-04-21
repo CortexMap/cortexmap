@@ -75,7 +75,8 @@ mod tests {
             let h = compute_hash(s);
             assert_eq!(h.len(), 64, "hash of {:?} has wrong length", s);
             assert!(
-                h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                h.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
                 "hash must be lowercase hex, got {}",
                 h
             );

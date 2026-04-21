@@ -319,10 +319,7 @@ mod tests {
         fn new() -> Self {
             let mut env = HashMap::new();
             env.insert("OPENROUTER_API_KEY".to_string(), "sk-test".to_string());
-            env.insert(
-                "CHAT_MODEL".to_string(),
-                "openai/gpt-4o-mini".to_string(),
-            );
+            env.insert("CHAT_MODEL".to_string(), "openai/gpt-4o-mini".to_string());
             env.insert("DATABASE_URL".to_string(), "postgres://mock".to_string());
             Self {
                 env,
@@ -386,10 +383,7 @@ mod tests {
     impl EnvInfra for MockInfra {
         type Error = MockErr;
         fn get(&self, key: &str) -> Result<String, Self::Error> {
-            self.env
-                .get(key)
-                .cloned()
-                .ok_or(MockErr("env key missing"))
+            self.env.get(key).cloned().ok_or(MockErr("env key missing"))
         }
     }
 
@@ -405,7 +399,10 @@ mod tests {
             _tools: &[serde_json::Value],
         ) -> Result<LlmCallOutcome<LlmResponse>, Self::Error> {
             let mut q = self.summarize_queue.lock().unwrap();
-            assert!(!q.is_empty(), "summarize_with_tools called with empty queue");
+            assert!(
+                !q.is_empty(),
+                "summarize_with_tools called with empty queue"
+            );
             match q.remove(0) {
                 CannedSummarize::Ok(o) => Ok(o),
                 CannedSummarize::Err(m) => Err(MockErr(m)),
@@ -443,11 +440,7 @@ mod tests {
     #[async_trait::async_trait]
     impl LlmUsageRepo for MockInfra {
         type Error = MockErr;
-        async fn record(
-            &self,
-            _db: &str,
-            row: NewLlmCallUsage,
-        ) -> Result<(), Self::Error> {
+        async fn record(&self, _db: &str, row: NewLlmCallUsage) -> Result<(), Self::Error> {
             self.records.lock().unwrap().push(row);
             Ok(())
         }
@@ -465,11 +458,7 @@ mod tests {
     #[async_trait::async_trait]
     impl Postgres for MockInfra {
         type Error = MockErr;
-        async fn execute_query(
-            &self,
-            _db: &str,
-            _q: Query,
-        ) -> Result<QueryResult, Self::Error> {
+        async fn execute_query(&self, _db: &str, _q: Query) -> Result<QueryResult, Self::Error> {
             unreachable!("Postgres::execute_query not used in llm_service tests")
         }
     }
@@ -896,4 +885,3 @@ mod tests {
         assert_eq!(resp.claims.len(), 1);
     }
 }
-

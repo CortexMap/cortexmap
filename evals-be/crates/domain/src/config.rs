@@ -75,10 +75,7 @@ mod tests {
     /// the DB-backed config table, so a typo here is a silent regression.
     #[test]
     fn config_key_strings_are_snake_case() {
-        assert_eq!(
-            <&'static str>::from(ConfigKey::EvalVersion),
-            "eval_version"
-        );
+        assert_eq!(<&'static str>::from(ConfigKey::EvalVersion), "eval_version");
         assert_eq!(
             <&'static str>::from(ConfigKey::EvalConcurrency),
             "eval_concurrency"
@@ -147,9 +144,18 @@ mod tests {
     #[test]
     fn eval_version_default_is_semver_ish() {
         let v = ConfigKey::EvalVersion.default_value();
-        assert!(v.starts_with('v'), "eval_version default should start with 'v': {}", v);
+        assert!(
+            v.starts_with('v'),
+            "eval_version default should start with 'v': {}",
+            v
+        );
         let rest = &v[1..];
-        assert_eq!(rest.split('.').count(), 3, "expected v<major>.<minor>.<patch>, got {}", v);
+        assert_eq!(
+            rest.split('.').count(),
+            3,
+            "expected v<major>.<minor>.<patch>, got {}",
+            v
+        );
         for part in rest.split('.') {
             part.parse::<u32>()
                 .unwrap_or_else(|_| panic!("version component {:?} not numeric in {}", part, v));

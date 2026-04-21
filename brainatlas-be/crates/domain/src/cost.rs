@@ -279,8 +279,7 @@ mod tests {
         let big = u32::MAX;
         let usage = Usage::new(big, big, big as u32);
         let cost = p.compute_cost_usd(usage, LlmEndpointKind::ChatCompletion);
-        let expected = (big as f64) * 0.15 / 1_000_000.0
-            + (big as f64) * 0.60 / 1_000_000.0;
+        let expected = (big as f64) * 0.15 / 1_000_000.0 + (big as f64) * 0.60 / 1_000_000.0;
         assert!(cost.is_finite(), "cost overflowed to non-finite: {cost}");
         // Relative tolerance: large magnitudes can drift a bit in the last bits.
         assert!(
