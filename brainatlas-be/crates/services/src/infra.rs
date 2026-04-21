@@ -1,6 +1,7 @@
 use domain::{
-    BrainRegionEntry, ChunkSource, ExistingSummary, LlmResponse, NewEmbedding, NewRegionSummary,
-    RegionMapping, SimilarChunk,
+    BrainRegionEntry, ChunkSource, ExistingSummary, LlmCallOutcome, LlmPricing, LlmResponse,
+    NewEmbedding, NewLlmCallUsage, NewRegionSummary, RegionMapping, SimilarChunk, UsageAggregate,
+    UsageAggregateFilter,
 };
 use uuid::Uuid;
 
@@ -47,6 +48,8 @@ pub trait Infra:
     + EmbeddingGenerator<Error = <Self as Infra>::Error>
     + LlmClient<Error = <Self as Infra>::Error>
     + VectorDatabase<Error = <Self as Infra>::Error>
+    + LlmPricingRepo<Error = <Self as Infra>::Error>
+    + LlmUsageRepo<Error = <Self as Infra>::Error>
 {
     type Error: std::error::Error + Send + Sync + 'static;
 }
@@ -58,7 +61,9 @@ where
         + S3Storage<Error = E>
         + EmbeddingGenerator<Error = E>
         + LlmClient<Error = E>
-        + VectorDatabase<Error = E>,
+        + VectorDatabase<Error = E>
+        + LlmPricingRepo<Error = E>
+        + LlmUsageRepo<Error = E>,
     E: std::error::Error + Send + Sync + 'static,
 {
     type Error = E;
@@ -87,13 +92,16 @@ pub trait S3Storage: Send + Sync {
 pub trait EmbeddingGenerator: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    /// Generate embedding for text chunk
+    /// Generate embedding for text chunk. Returns the embedding together with
+    /// provider-reported token usage so the accounting helper can persist a
+    /// cost row. Implementations that cannot obtain usage must still return
+    /// `LlmCallOutcome` with `Usage::default()` and log a warning.
     async fn generate_embedding(
         &self,
         api_key: &str,
         embedding_model: &str,
         text: &str,
-    ) -> Result<Vec<f32>, Self::Error>;
+    ) -> Result<LlmCallOutcome<Vec<f32>>, Self::Error>;
 }
 
 /// LLM client for text generation
@@ -102,23 +110,26 @@ pub trait LlmClient: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Send a chat completion request with tool definitions, returning either
-    /// tool calls the LLM wants to make or the final text response.
+    /// tool calls the LLM wants to make or the final text response — together
+    /// with provider-reported token usage.
     async fn summarize_with_tools(
         &self,
         api_key: &str,
         chat_model: &str,
         messages: &[serde_json::Value],
         tools: &[serde_json::Value],
-    ) -> Result<LlmResponse, Self::Error>;
+    ) -> Result<LlmCallOutcome<LlmResponse>, Self::Error>;
 
-    /// Generate search queries for a brain region
+    /// Generate search queries for a brain region. The returned `Usage` is
+    /// aggregated across the internal iterations of the tool-calling loop
+    /// (see `OpenRouterClient::generate_queries`).
     async fn generate_queries(
         &self,
         api_key: &str,
         chat_model: &str,
         region_name: &str,
         count: u32,
-    ) -> Result<Vec<String>, Self::Error>;
+    ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error>;
 }
 
 /// Vector database operations
@@ -171,4 +182,32 @@ pub trait VectorDatabase: Send + Sync {
         database_url: &str,
         chunk_id: Uuid,
     ) -> Result<Option<ChunkSource>, Self::Error>;
+}
+
+/// Read-only access to the `llm_pricing` catalogue. One row per (model,
+/// effective_from); the repo returns the latest one for a given model.
+#[async_trait::async_trait]
+pub trait LlmPricingRepo: Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    async fn latest_for_model(
+        &self,
+        database_url: &str,
+        model: &str,
+    ) -> Result<Option<LlmPricing>, Self::Error>;
+}
+
+/// Persistence port for `llm_call_usage`. One row is recorded per logical LLM
+/// call (multi-iteration calls are aggregated before persistence).
+#[async_trait::async_trait]
+pub trait LlmUsageRepo: Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    async fn record(&self, database_url: &str, row: NewLlmCallUsage) -> Result<(), Self::Error>;
+
+    async fn aggregate(
+        &self,
+        database_url: &str,
+        filter: UsageAggregateFilter,
+    ) -> Result<UsageAggregate, Self::Error>;
 }

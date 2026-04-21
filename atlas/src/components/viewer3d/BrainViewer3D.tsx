@@ -3,6 +3,7 @@ import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { TrackballControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useAtlasStore } from '../../store/atlasStore';
+import { useSelectRegion } from '../../hooks/useSelectRegion';
 import { findNode, getAncestorPath } from '../../utils/treeUtils';
 import { BRAIN_CENTER, BRAIN_SCALE } from '../../utils/objLoader';
 import styles from './BrainViewer3D.module.css';
@@ -16,6 +17,7 @@ let cameraAnimating = false;
 
 export function BrainViewer3D() {
   const { loadInitialMeshes, meshesLoading, meshLoadProgress } = useAtlasStore();
+  const selectRegion = useSelectRegion();
   const [toast, setToast] = useState<{ regionName: string; parentName: string } | null>(null);
   const toastTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -136,7 +138,7 @@ export function BrainViewer3D() {
         style={{ background: '#1a1a2e' }}
         onPointerMissed={() => {
           // Click on empty space = deselect
-          useAtlasStore.getState().selectStructure(null);
+          selectRegion(null);
         }}
       >
         <SceneLights />
@@ -172,9 +174,10 @@ function SceneLights() {
 function SceneContent() {
   const {
     loadedMeshes, visibleMeshIds, selectedStructureId, hoveredStructureId,
-    meshOpacity, viewer3dMode, ontology, selectStructure, hoverStructure,
+    meshOpacity, viewer3dMode, ontology, hoverStructure,
     focused3dRegionId, highlight3d, checked3dIds, fallback3d,
   } = useAtlasStore();
+  const selectRegion = useSelectRegion();
 
   const shellGeometry = loadedMeshes.get(997);
   const hasChecked = checked3dIds.size > 0;
@@ -230,7 +233,7 @@ function SceneContent() {
           <mesh
             key={id}
             geometry={geo}
-            onClick={(e) => { e.stopPropagation(); selectStructure(id); }}
+            onClick={(e) => { e.stopPropagation(); selectRegion(id); }}
             onPointerOver={(e) => { e.stopPropagation(); if (highlight3d) hoverStructure(id); }}
             onPointerOut={() => { if (highlight3d) hoverStructure(null); }}
           >

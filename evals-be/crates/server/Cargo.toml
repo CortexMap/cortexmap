@@ -1,0 +1,21 @@
+[package]
+name = "evals-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+api.workspace = true
+app.workspace = true
+services.workspace = true
+infra.workspace = true
+domain.workspace = true
+rpc-types.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+serde.workspace = true
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy.workspace = true

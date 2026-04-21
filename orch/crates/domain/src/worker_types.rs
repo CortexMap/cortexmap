@@ -17,6 +17,10 @@ pub struct WorkerStatus {
     pub uptime_seconds: f64,
     pub tasks_failed: i64,
     pub success_rate: f64, // 0.0 to 1.0
+    pub task_timeout_secs: u64,
+    pub failure_backoff_base_secs: u64,
+    pub max_retry_attempts: u32,
+    pub backoff_strategy: String,
 }
 
 /// Request to allocate workers
@@ -28,6 +32,12 @@ pub struct AllocateWorkersRequest {
     /// Retry configuration for task-level backoff and per-component limits
     #[serde(default)]
     pub retry_config: Option<FetcherRetryConfig>,
+    /// Reserved for the device-subscription follow-up (v2).
+    /// When a future fetcher-be instance allocates workers on behalf of a
+    /// specific device, orch can populate this field without any wire-format
+    /// change. Must remain `None` in v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 /// Retry configuration that orch forwards to the fetcher service.
@@ -56,6 +66,12 @@ pub struct FetcherRetryConfig {
     pub abstract_max_retries: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pdf_max_retries: Option<u32>,
+    /// Reserved for the device-subscription follow-up (v2).
+    /// Once fetcher-be starts reporting 429-driven cooldowns, orch needs to
+    /// transmit the cooldown duration per device. Adding the optional field
+    /// now avoids a v2 API break. Must remain `None`/unset in v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_cooldown_secs: Option<u64>,
 }
 
 /// Response after allocating workers
@@ -97,6 +113,7 @@ mod tests {
         assert!(config.summary_max_retries.is_none());
         assert!(config.abstract_max_retries.is_none());
         assert!(config.pdf_max_retries.is_none());
+        assert!(config.device_cooldown_secs.is_none());
     }
 
     #[test]
@@ -110,6 +127,7 @@ mod tests {
             summary_max_retries: None,
             abstract_max_retries: Some(4),
             pdf_max_retries: None,
+            device_cooldown_secs: None,
         };
 
         let json = serde_json::to_value(&config).unwrap();
@@ -121,6 +139,7 @@ mod tests {
         assert!(json.get("stale_task_multiplier").is_none());
         assert!(json.get("summary_max_retries").is_none());
         assert!(json.get("pdf_max_retries").is_none());
+        assert!(json.get("device_cooldown_secs").is_none());
     }
 
     #[test]
@@ -134,6 +153,7 @@ mod tests {
         assert_eq!(request.task_timeout_secs, 30);
         assert_eq!(request.max_retry_attempts, 3);
         assert!(request.retry_config.is_none());
+        assert!(request.device_id.is_none());
     }
 
     #[test]
@@ -149,5 +169,31 @@ mod tests {
         assert_eq!(retry.summary_max_retries, Some(7));
         assert!(retry.abstract_max_retries.is_none());
         assert!(retry.pdf_max_retries.is_none());
+        assert!(retry.device_cooldown_secs.is_none());
+    }
+
+    #[test]
+    fn test_device_id_backward_compat_serialization() {
+        // Verify device_id=None is not serialized (wire-compatible with existing fetcher-be)
+        let request = AllocateWorkersRequest {
+            worker_count: 2,
+            task_timeout_secs: 30,
+            max_retry_attempts: 3,
+            retry_config: None,
+            device_id: None,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert!(json.get("device_id").is_none());
+
+        // Verify device_id=Some roundtrips correctly
+        let request_with_device = AllocateWorkersRequest {
+            worker_count: 2,
+            task_timeout_secs: 30,
+            max_retry_attempts: 3,
+            retry_config: None,
+            device_id: Some("device-abc".to_string()),
+        };
+        let json2 = serde_json::to_value(&request_with_device).unwrap();
+        assert_eq!(json2["device_id"], "device-abc");
     }
 }

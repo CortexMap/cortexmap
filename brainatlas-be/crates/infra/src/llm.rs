@@ -1,5 +1,5 @@
 use crate::error::InfraError;
-use domain::{BooleanQuery, LlmResponse, ToolCall};
+use domain::{BooleanQuery, LlmCallOutcome, LlmEndpointKind, LlmResponse, ToolCall, Usage};
 use reqwest::Client;
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
@@ -58,11 +58,35 @@ struct EmbeddingRequest {
 #[derive(Deserialize)]
 struct EmbeddingResponse {
     data: Vec<EmbeddingData>,
+    #[serde(default)]
+    usage: Option<UsageWire>,
 }
 
 #[derive(Deserialize)]
 struct EmbeddingData {
     embedding: Vec<f32>,
+}
+
+/// Token usage block returned by OpenRouter. Only the three fields we care
+/// about are deserialized; any extras are ignored.
+#[derive(Deserialize, Default, Debug, Clone, Copy)]
+struct UsageWire {
+    #[serde(default)]
+    prompt_tokens: u32,
+    #[serde(default)]
+    completion_tokens: u32,
+    #[serde(default)]
+    total_tokens: u32,
+}
+
+impl From<UsageWire> for Usage {
+    fn from(w: UsageWire) -> Self {
+        Usage {
+            prompt_tokens: w.prompt_tokens,
+            completion_tokens: w.completion_tokens,
+            total_tokens: w.total_tokens,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -102,6 +126,8 @@ struct ToolCallFunction {
 #[derive(Deserialize)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
+    #[serde(default)]
+    usage: Option<UsageWire>,
 }
 
 #[derive(Deserialize)]
@@ -118,7 +144,7 @@ impl EmbeddingGenerator for OpenRouterClient {
         api_key: &str,
         embedding_model: &str,
         text: &str,
-    ) -> Result<Vec<f32>, Self::Error> {
+    ) -> Result<LlmCallOutcome<Vec<f32>>, Self::Error> {
         info!("Generating embedding for {} characters", text.len());
 
         let request = EmbeddingRequest {
@@ -154,6 +180,17 @@ impl EmbeddingGenerator for OpenRouterClient {
             InfraError::Http(e)
         })?;
 
+        let usage: Usage = match embedding_response.usage {
+            Some(u) => u.into(),
+            None => {
+                warn!(
+                    model = embedding_model,
+                    "Embedding response omitted `usage` block; cost tracking will record zero tokens"
+                );
+                Usage::default()
+            }
+        };
+
         let embedding = embedding_response
             .data
             .first()
@@ -164,8 +201,18 @@ impl EmbeddingGenerator for OpenRouterClient {
             .embedding
             .clone();
 
-        info!("Generated embedding of {} dimensions", embedding.len());
-        Ok(embedding)
+        info!(
+            "Generated embedding of {} dimensions (prompt_tokens={}, total_tokens={})",
+            embedding.len(),
+            usage.prompt_tokens,
+            usage.total_tokens
+        );
+        Ok(LlmCallOutcome::new(
+            embedding,
+            usage,
+            embedding_model.to_string(),
+            LlmEndpointKind::Embedding,
+        ))
     }
 }
 
@@ -179,13 +226,14 @@ impl LlmClient for OpenRouterClient {
         chat_model: &str,
         messages: &[serde_json::Value],
         tools: &[serde_json::Value],
-    ) -> Result<LlmResponse, Self::Error> {
+    ) -> Result<LlmCallOutcome<LlmResponse>, Self::Error> {
         info!(
             "Calling LLM with {} messages and {} tools",
             messages.len(),
             tools.len()
         );
 
+        let has_tools = !tools.is_empty();
         let request = ChatRequest {
             model: chat_model.to_string(),
             messages: messages.to_vec(),
@@ -226,10 +274,27 @@ impl LlmClient for OpenRouterClient {
             InfraError::Http(e)
         })?;
 
+        let usage: Usage = match chat_response.usage {
+            Some(u) => u.into(),
+            None => {
+                warn!(
+                    model = chat_model,
+                    "Chat response omitted `usage` block; cost tracking will record zero tokens"
+                );
+                Usage::default()
+            }
+        };
+
         let choice = chat_response.choices.first().ok_or_else(|| {
             error!("No choices in chat response");
             InfraError::NotFound
         })?;
+
+        let endpoint = if has_tools {
+            LlmEndpointKind::ChatCompletionWithTools
+        } else {
+            LlmEndpointKind::ChatCompletion
+        };
 
         // Check if the LLM returned tool calls
         if let Some(tool_calls) = &choice.message.tool_calls
@@ -244,17 +309,29 @@ impl LlmClient for OpenRouterClient {
                 })
                 .collect();
             info!("LLM requested {} tool call(s)", calls.len());
-            return Ok(LlmResponse::ToolCalls(calls));
+            return Ok(LlmCallOutcome::new(
+                LlmResponse::ToolCalls(calls),
+                usage,
+                chat_model.to_string(),
+                endpoint,
+            ));
         }
 
         // Otherwise, return the final text content
         let content = choice.message.content.clone().unwrap_or_default();
 
         info!(
-            "LLM returned final response of {} characters",
-            content.len()
+            "LLM returned final response of {} characters (prompt_tokens={}, completion_tokens={})",
+            content.len(),
+            usage.prompt_tokens,
+            usage.completion_tokens,
         );
-        Ok(LlmResponse::Final(content))
+        Ok(LlmCallOutcome::new(
+            LlmResponse::Final(content),
+            usage,
+            chat_model.to_string(),
+            endpoint,
+        ))
     }
 
     async fn generate_queries(
@@ -263,7 +340,7 @@ impl LlmClient for OpenRouterClient {
         chat_model: &str,
         region_name: &str,
         count: u32,
-    ) -> Result<Vec<String>, Self::Error> {
+    ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error> {
         info!(
             "Generating {} search queries for region: {} (using tool calling)",
             count, region_name
@@ -310,6 +387,7 @@ impl LlmClient for OpenRouterClient {
         ];
         let tools = vec![tool_def];
         let mut collected_queries: Vec<String> = Vec::new();
+        let mut aggregated_usage = Usage::default();
 
         // Multi-turn tool calling loop (max 3 iterations)
         const MAX_ITERATIONS: usize = 3;
@@ -355,6 +433,20 @@ impl LlmClient for OpenRouterClient {
                 error!("Failed to parse chat response: {}", e);
                 InfraError::Http(e)
             })?;
+
+            // Accumulate usage across iterations.
+            match chat_response.usage {
+                Some(u) => {
+                    aggregated_usage = aggregated_usage.saturating_add(u.into());
+                }
+                None => {
+                    warn!(
+                        model = chat_model,
+                        iteration = iteration + 1,
+                        "Query-gen chat response omitted `usage`; treating iteration as 0 tokens"
+                    );
+                }
+            }
 
             let choice = chat_response.choices.first().ok_or_else(|| {
                 error!("No choices in chat response");
@@ -461,11 +553,18 @@ impl LlmClient for OpenRouterClient {
         }
 
         info!(
-            "Generated {} queries (requested {})",
+            "Generated {} queries (requested {}, aggregated prompt_tokens={}, completion_tokens={})",
             collected_queries.len(),
-            count
+            count,
+            aggregated_usage.prompt_tokens,
+            aggregated_usage.completion_tokens,
         );
-        Ok(collected_queries)
+        Ok(LlmCallOutcome::new(
+            collected_queries,
+            aggregated_usage,
+            chat_model.to_string(),
+            LlmEndpointKind::ChatCompletionWithTools,
+        ))
     }
 }
 
@@ -605,5 +704,209 @@ mod tests {
                 BooleanQuery::term("thalamus").to_query_string(),
             ]
         );
+    }
+
+    // ── Usage-block parsing tests (Task 21 in plan) ──────────────────────
+
+    #[test]
+    fn test_chat_response_parses_usage_when_present() {
+        let json = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "hi" } }],
+            "usage": { "prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19 }
+        });
+        let parsed: ChatResponse = serde_json::from_value(json).expect("ChatResponse decodes");
+        let usage: Usage = parsed.usage.expect("usage present").into();
+        assert_eq!(usage.prompt_tokens, 12);
+        assert_eq!(usage.completion_tokens, 7);
+        assert_eq!(usage.total_tokens, 19);
+    }
+
+    #[test]
+    fn test_chat_response_missing_usage_is_none() {
+        let json = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "hi" } }]
+        });
+        let parsed: ChatResponse = serde_json::from_value(json).expect("decodes without usage");
+        assert!(parsed.usage.is_none());
+    }
+
+    #[test]
+    fn test_chat_response_partial_usage_defaults_missing_fields_to_zero() {
+        // OpenRouter occasionally sends only `total_tokens` (e.g. streaming
+        // finalization). We should still decode cleanly and zero-fill.
+        let json = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "hi" } }],
+            "usage": { "total_tokens": 5 }
+        });
+        let parsed: ChatResponse = serde_json::from_value(json).expect("decodes partial usage");
+        let usage: Usage = parsed.usage.expect("usage present").into();
+        assert_eq!(usage.prompt_tokens, 0);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 5);
+    }
+
+    #[test]
+    fn test_embedding_response_parses_usage_when_present() {
+        let json = serde_json::json!({
+            "data": [{ "embedding": [0.1, 0.2, 0.3] }],
+            "usage": { "prompt_tokens": 42, "total_tokens": 42 }
+        });
+        let parsed: EmbeddingResponse =
+            serde_json::from_value(json).expect("EmbeddingResponse decodes");
+        let usage: Usage = parsed.usage.expect("usage present").into();
+        assert_eq!(usage.prompt_tokens, 42);
+        assert_eq!(usage.total_tokens, 42);
+    }
+
+    #[test]
+    fn test_embedding_response_missing_usage_is_none() {
+        let json = serde_json::json!({
+            "data": [{ "embedding": [0.1, 0.2, 0.3] }]
+        });
+        let parsed: EmbeddingResponse =
+            serde_json::from_value(json).expect("decodes without usage");
+        assert!(parsed.usage.is_none());
+    }
+
+    // ── Gap-fill tests (Plan Task 1.10) ──────────────────────────────────
+
+    /// Tool-calling loop in `OpenRouterClient::generate_queries` aggregates
+    /// `usage` across iterations via `Usage::saturating_add` (see
+    /// `llm.rs:437-449`). Simulate two iterations by parsing two successive
+    /// `ChatResponse` wire payloads and summing their usage — the resulting
+    /// `Usage` must be the element-wise total.
+    #[test]
+    fn test_tool_calling_loop_aggregates_usage_across_iterations() {
+        let iter1 = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "i1" } }],
+            "usage": { "prompt_tokens": 100, "completion_tokens": 40, "total_tokens": 140 }
+        });
+        let iter2 = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "i2" } }],
+            "usage": { "prompt_tokens": 25, "completion_tokens": 10, "total_tokens": 35 }
+        });
+
+        let r1: ChatResponse = serde_json::from_value(iter1).unwrap();
+        let r2: ChatResponse = serde_json::from_value(iter2).unwrap();
+
+        // Mirror the production aggregation loop exactly.
+        let mut aggregated = Usage::default();
+        for r in [r1, r2] {
+            match r.usage {
+                Some(u) => aggregated = aggregated.saturating_add(u.into()),
+                None => { /* treat as zero-token iteration */ }
+            }
+        }
+
+        assert_eq!(aggregated.prompt_tokens, 125);
+        assert_eq!(aggregated.completion_tokens, 50);
+        assert_eq!(aggregated.total_tokens, 175);
+    }
+
+    /// Aggregation must survive an iteration where the upstream response
+    /// omitted the `usage` block entirely — that iteration contributes zero.
+    #[test]
+    fn test_tool_calling_loop_skips_iterations_without_usage() {
+        let iter1 = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "i1" } }],
+            "usage": { "prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10 }
+        });
+        let iter2 = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "i2" } }]
+        });
+
+        let r1: ChatResponse = serde_json::from_value(iter1).unwrap();
+        let r2: ChatResponse = serde_json::from_value(iter2).unwrap();
+        assert!(r2.usage.is_none());
+
+        let mut aggregated = Usage::default();
+        for r in [r1, r2] {
+            if let Some(u) = r.usage {
+                aggregated = aggregated.saturating_add(u.into());
+            }
+        }
+
+        assert_eq!(aggregated.prompt_tokens, 7);
+        assert_eq!(aggregated.completion_tokens, 3);
+        assert_eq!(aggregated.total_tokens, 10);
+    }
+
+    /// An explicitly empty usage block (`"usage": {}`) must decode with every
+    /// field defaulted to zero — this mirrors the worst-case provider
+    /// response where a `usage` key is present but empty.
+    #[test]
+    fn test_chat_response_empty_usage_object_zero_fills_all_fields() {
+        let json = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "hi" } }],
+            "usage": {}
+        });
+        let parsed: ChatResponse = serde_json::from_value(json).expect("empty usage decodes");
+        let usage: Usage = parsed.usage.expect("usage present").into();
+        assert_eq!(usage.prompt_tokens, 0);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 0);
+    }
+
+    /// When `completion_tokens` is omitted (e.g. some providers only report
+    /// `prompt_tokens` + `total_tokens`), the missing field defaults to zero
+    /// without failing deserialisation.
+    #[test]
+    fn test_chat_response_missing_completion_tokens_defaults_to_zero() {
+        let json = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "hi" } }],
+            "usage": { "prompt_tokens": 8, "total_tokens": 8 }
+        });
+        let parsed: ChatResponse = serde_json::from_value(json).expect("decodes partial usage");
+        let usage: Usage = parsed.usage.expect("usage present").into();
+        assert_eq!(usage.prompt_tokens, 8);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 8);
+    }
+
+    /// `LlmCallOutcome::new` round-trips every field — this is the outcome
+    /// produced by `summarize_with_tools` on both the final-text and
+    /// tool-call branches of `llm.rs:312-334`.
+    #[test]
+    fn test_llm_call_outcome_new_preserves_fields_for_missing_usage_fallback() {
+        // Production code at llm.rs:277-286 substitutes `Usage::default()`
+        // when the response omits `usage`. Construct the resulting outcome
+        // directly and assert the contract.
+        let outcome = LlmCallOutcome::new(
+            domain::LlmResponse::Final("text".to_string()),
+            Usage::default(),
+            "openai/gpt-4o-mini".to_string(),
+            LlmEndpointKind::ChatCompletion,
+        );
+        assert_eq!(outcome.usage.prompt_tokens, 0);
+        assert_eq!(outcome.usage.completion_tokens, 0);
+        assert_eq!(outcome.usage.total_tokens, 0);
+        assert_eq!(outcome.model, "openai/gpt-4o-mini");
+        match outcome.value {
+            domain::LlmResponse::Final(t) => assert_eq!(t, "text"),
+            _ => panic!("expected Final"),
+        }
+    }
+
+    /// `UsageWire` ignores unknown fields (serde's default) — providers
+    /// occasionally send extras like `prompt_tokens_details`. We must not
+    /// fail deserialisation on them.
+    #[test]
+    fn test_chat_response_usage_tolerates_unknown_fields() {
+        let json = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "hi" } }],
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 4,
+                "total_tokens": 15,
+                "prompt_tokens_details": { "cached_tokens": 0 },
+                "completion_tokens_details": { "reasoning_tokens": 7 }
+            }
+        });
+        let parsed: ChatResponse =
+            serde_json::from_value(json).expect("decodes despite extra fields");
+        let usage: Usage = parsed.usage.expect("usage present").into();
+        assert_eq!(usage.prompt_tokens, 11);
+        assert_eq!(usage.completion_tokens, 4);
+        assert_eq!(usage.total_tokens, 15);
     }
 }

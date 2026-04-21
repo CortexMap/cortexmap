@@ -191,6 +191,45 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    llm_pricing (id) {
+        id -> Uuid,
+        #[max_length = 256]
+        model -> Varchar,
+        input_price_per_million -> Numeric,
+        output_price_per_million -> Numeric,
+        embedding_price_per_million -> Nullable<Numeric>,
+        #[max_length = 8]
+        currency -> Varchar,
+        effective_from -> Timestamptz,
+        created_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    llm_call_usage (id) {
+        id -> Uuid,
+        created_at -> Timestamptz,
+        #[max_length = 32]
+        endpoint -> Varchar,
+        #[max_length = 256]
+        model -> Varchar,
+        prompt_tokens -> Int4,
+        completion_tokens -> Int4,
+        total_tokens -> Int4,
+        cost_usd -> Nullable<Numeric>,
+        #[max_length = 128]
+        correlation_id -> Nullable<Varchar>,
+        region_id -> Nullable<Int4>,
+        summary_id -> Nullable<Uuid>,
+        batch_id -> Nullable<Uuid>,
+        #[max_length = 64]
+        caller_tag -> Nullable<Varchar>,
+        #[max_length = 128]
+        request_id -> Nullable<Varchar>,
+    }
+}
+
 diesel::joinable!(brain_region_embeddings -> region_summary (summary_id));
 diesel::joinable!(fetch_task_components -> fetch_tasks (task_id));
 diesel::joinable!(fetch_task_logs -> fetch_tasks (task_id));
@@ -205,6 +244,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     fetch_tasks,
     langchain_pg_collection,
     langchain_pg_embedding,
+    llm_call_usage,
+    llm_pricing,
     orch_config,
     papers,
     processed_fetch_tasks,

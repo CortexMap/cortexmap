@@ -44,6 +44,8 @@ jobs:
           workspace: brainatlas-be
         - lcov_name: lcov-orch
           workspace: orch
+        - lcov_name: lcov-evals
+          workspace: evals-be
       fail-fast: false
     steps:
     - name: Checkout Code
@@ -87,6 +89,10 @@ jobs:
           $PSQL -f "$f" || true
         done
         for f in brainatlas-be/migrations/*/up.sql; do
+          echo "Running migration: $f"
+          $PSQL -f "$f" || true
+        done
+        for f in evals-be/migrations/*/up.sql; do
           echo "Running migration: $f"
           $PSQL -f "$f" || true
         done
@@ -141,7 +147,7 @@ jobs:
         pattern: lcov-*
         merge-multiple: 'true'
     - name: Merge coverage reports
-      run: lcov --add-tracefile lcov-fetcher.info --add-tracefile lcov-brainatlas.info --add-tracefile lcov-orch.info --output-file lcov.info
+      run: lcov --add-tracefile lcov-fetcher.info --add-tracefile lcov-brainatlas.info --add-tracefile lcov-orch.info --add-tracefile lcov-evals.info --output-file lcov.info
     - name: Upload Coverage to Codecov
       uses: Wandalen/wretry.action@e68c23e6309f2871ca8ae4763e7629b9c258e1ea
       with:

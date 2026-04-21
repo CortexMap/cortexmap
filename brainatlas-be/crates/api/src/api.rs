@@ -6,6 +6,7 @@ use domain::rpc_types::{
 use uuid::Uuid;
 
 #[async_trait::async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait BrainRegionApi: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -26,7 +27,8 @@ pub trait BrainRegionApi: Send + Sync {
     /// POST /api/status
     async fn status(&self, id: Uuid) -> Result<StatusResponse, Self::Error>;
 
-    /// Chunk, embed, and summarize the S3 files for a region, then persist to region_summary.
+    /// Chunk, embed, and optionally summarize the S3 files for a region, then persist to region_summary.
+    /// When skip_summarization is true, only chunks and embeds (no RAG summary).
     /// POST /api/process — called by orch
     async fn process_region(
         &self,
@@ -36,6 +38,18 @@ pub trait BrainRegionApi: Send + Sync {
         paper_metadata: Vec<PaperMetadata>,
         chat_model: Option<String>,
         embedding_model: Option<String>,
+        skip_summarization: bool,
+        correlation_id: Option<String>,
+    ) -> Result<ProcessRegionResponse, Self::Error>;
+
+    /// Generate a knowledge-only summary for a region with zero NCBI results.
+    /// POST /api/process-no-papers — called by orch
+    async fn process_region_no_papers(
+        &self,
+        region_id: Option<Uuid>,
+        batch_id: Option<Uuid>,
+        chat_model: Option<String>,
+        correlation_id: Option<String>,
     ) -> Result<ProcessRegionResponse, Self::Error>;
 
     /// Generate search queries for a brain region using LLM.
@@ -44,6 +58,7 @@ pub trait BrainRegionApi: Send + Sync {
         &self,
         region_name: String,
         count: u32,
+        correlation_id: Option<String>,
     ) -> Result<GenerateQueriesResponse, Self::Error>;
 
     /// Resolve a chunk UUID to its full source details.

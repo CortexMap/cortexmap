@@ -2,8 +2,10 @@ use crate::{ApiError, OrchApi};
 use app::{AppError, OrchApp, Services};
 use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
-    GenerateSummaryResult, PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult,
-    SearchResponse, StopWorkersRequest, WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
+    GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, PipelineTriggerRequest,
+    PipelineTriggerResult, RedisStats, Region, RegionStatusResult, SearchRegionResult,
+    SearchResponse, StopWorkersRequest, SummaryFreshness, SystemStats, WorkerAllocationResponse,
+    WorkerStatus, WorkerStopResponse,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -159,6 +161,79 @@ where
     async fn reverse_search(&self, query: String) -> Result<SearchResponse, Self::Error> {
         self.app()
             .reverse_search(&query)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_pipeline_status(&self) -> Result<PipelineHealthStatus, Self::Error> {
+        self.app()
+            .get_pipeline_status()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_system_stats(&self) -> Result<SystemStats, Self::Error> {
+        self.app()
+            .get_system_stats()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_summary_freshness(&self) -> Result<SummaryFreshness, Self::Error> {
+        self.app()
+            .get_summary_freshness()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn trigger_pipeline(
+        &self,
+        req: PipelineTriggerRequest,
+    ) -> Result<PipelineTriggerResult, Self::Error> {
+        self.app()
+            .trigger_pipeline(req)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_redis_stats(&self) -> Result<RedisStats, Self::Error> {
+        self.app()
+            .get_redis_stats()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_eval_status(&self) -> Result<app::EvalStatusSummary, Self::Error> {
+        self.app()
+            .get_eval_status()
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_eval_worst(
+        &self,
+        metric: String,
+        limit: i64,
+    ) -> Result<app::EvalWorstOffenders, Self::Error> {
+        self.app()
+            .get_eval_worst(metric, limit)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_eval_run_cost(&self, run_id: Uuid) -> Result<domain::EvalRunCost, Self::Error> {
+        self.app()
+            .get_eval_run_cost(run_id)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
+    async fn get_llm_cost_summary(
+        &self,
+        since_hours: Option<u32>,
+    ) -> Result<domain::LlmCostSummary, Self::Error> {
+        self.app()
+            .get_llm_cost_summary(since_hours)
             .await
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }

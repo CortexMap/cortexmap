@@ -1,5 +1,3 @@
-mod server;
-
 use api::{Orch, OrchApi};
 use infra::OrchInfra;
 use server::OrchServer;

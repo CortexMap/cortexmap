@@ -75,6 +75,13 @@ RUN apt-get update && apt-get install -y \
 
 COPY --from=builder /app/target/release/cortexmap-be /usr/local/bin/cortexmap-be
 
+# Run as an unprivileged user instead of the default root.
+# The service binds to an unprivileged port (>1024), so no extra capabilities
+# are required.
+RUN groupadd --system --gid 10001 app \
+ && useradd  --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+USER app:app
+
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/cortexmap-be"]

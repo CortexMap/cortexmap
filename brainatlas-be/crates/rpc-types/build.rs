@@ -16,6 +16,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "com.cortexmap.StatusResponse",
         "com.cortexmap.ProcessRegionRequest",
         "com.cortexmap.ProcessRegionResponse",
+        "com.cortexmap.ProcessNoPapersRequest",
+        "com.cortexmap.ProcessNoPapersResponse",
         "com.cortexmap.GenerateQueriesRequest",
         "com.cortexmap.GenerateQueriesResponse",
         "com.cortexmap.PaperMetadata",
@@ -30,6 +32,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Add serde(default) to paper_metadata field for backward compatibility
     config = config.field_attribute(
         "com.cortexmap.ProcessRegionRequest.paper_metadata",
+        "#[serde(default)]",
+    );
+
+    // Add serde(default) to skip_summarization for backward compatibility
+    config = config.field_attribute(
+        "com.cortexmap.ProcessRegionRequest.skip_summarization",
+        "#[serde(default)]",
+    );
+
+    // Add serde(default) to correlation_id fields (cost tracking, backward compatible)
+    config = config.field_attribute(
+        "com.cortexmap.ProcessRegionRequest.correlation_id",
+        "#[serde(default)]",
+    );
+    config = config.field_attribute(
+        "com.cortexmap.GenerateQueriesRequest.correlation_id",
+        "#[serde(default)]",
+    );
+
+    // ProcessNoPapersRequest optional fields — default for backward compatibility.
+    config = config.field_attribute(
+        "com.cortexmap.ProcessNoPapersRequest.chat_model",
+        "#[serde(default)]",
+    );
+    config = config.field_attribute(
+        "com.cortexmap.ProcessNoPapersRequest.correlation_id",
         "#[serde(default)]",
     );
 

@@ -1,11 +1,15 @@
 use crate::batch_orchestration::OrchBatchOrchestration;
 use crate::completion_watcher::CompletionWatcher;
 use crate::config_management::OrchConfigManagement;
+use crate::cost_guardrail::CostGuardrail;
+use crate::eval_orchestrator::EvalOrchestrator;
+use crate::pipeline_runner::OrchPipelineRunner;
 use crate::region_management::OrchRegionManagement;
 use crate::{Infra, ServiceError};
 use app::{
-    BatchOrchestration, CompletionOrchestrator, ConfigManagement, HealthCheck, RegionManagement,
-    WorkerManagement,
+    BatchOrchestration, CompletionOrchestrator, ConfigManagement, CostGuardrailOrchestration,
+    EvalOrchestration, EvalStatusSummary, EvalWorstOffenders, HealthCheck, PipelineRunner,
+    RegionManagement, WorkerManagement,
 };
 use domain::{
     AllocateWorkersRequest, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult,
@@ -21,6 +25,9 @@ pub struct OrchServices<I> {
     region_management: OrchRegionManagement<I>,
     batch_orchestration: OrchBatchOrchestration<I>,
     config_management: OrchConfigManagement<I>,
+    pipeline_runner: OrchPipelineRunner<I>,
+    eval_orchestrator: EvalOrchestrator<I>,
+    cost_guardrail: CostGuardrail<I>,
     infra: Arc<I>,
 }
 
@@ -30,16 +37,21 @@ impl<I: Infra> OrchServices<I> {
         let region_management = OrchRegionManagement::new(infra.clone());
         let batch_orchestration = OrchBatchOrchestration::new(infra.clone());
         let config_management = OrchConfigManagement::new(infra.clone());
+        let pipeline_runner = OrchPipelineRunner::new(infra.clone());
+        let eval_orchestrator = EvalOrchestrator::new(infra.clone());
+        let cost_guardrail = CostGuardrail::new(infra.clone());
         Self {
             completion_watcher,
             region_management,
             batch_orchestration,
             config_management,
+            pipeline_runner,
+            eval_orchestrator,
+            cost_guardrail,
             infra,
         }
     }
 }
-
 #[async_trait::async_trait]
 impl<E, I> CompletionOrchestrator for OrchServices<I>
 where
@@ -141,6 +153,25 @@ where
         self.region_management.count_regions_without_batches().await
     }
 
+    async fn count_actively_fetching_regions(&self) -> Result<i64, Self::Error> {
+        self.region_management
+            .count_actively_fetching_regions()
+            .await
+    }
+
+    async fn get_latest_active_summary_age(
+        &self,
+        region_id: Uuid,
+    ) -> Result<Option<chrono::NaiveDateTime>, Self::Error> {
+        self.region_management
+            .get_latest_active_summary_age(region_id)
+            .await
+    }
+
+    async fn get_summary_freshness(&self) -> Result<domain::SummaryFreshness, Self::Error> {
+        self.region_management.get_summary_freshness().await
+    }
+
     async fn get_query_generation_limit(&self) -> Result<Option<u32>, Self::Error> {
         self.region_management.get_query_generation_limit().await
     }
@@ -151,6 +182,10 @@ where
 
     async fn delete_queries(&self, region_id: Uuid) -> Result<(), Self::Error> {
         self.region_management.delete_queries(region_id).await
+    }
+
+    async fn delete_all_queries(&self) -> Result<i64, Self::Error> {
+        self.region_management.delete_all_queries().await
     }
 
     async fn get_chunk_source(
@@ -250,6 +285,12 @@ where
             .count_completed_tasks(task_ids)
             .await
     }
+
+    async fn get_completed_task_ids(&self, task_ids: Vec<i64>) -> Result<Vec<i64>, Self::Error> {
+        self.batch_orchestration
+            .get_completed_task_ids(task_ids)
+            .await
+    }
 }
 
 #[async_trait::async_trait]
@@ -340,5 +381,118 @@ where
         req: StopWorkersRequest,
     ) -> Result<WorkerStopResponse, Self::Error> {
         self.batch_orchestration.stop_workers(req).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> PipelineRunner for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn generate_queries_for_new_regions(&self) -> Result<(usize, usize), Self::Error> {
+        self.pipeline_runner
+            .generate_queries_for_new_regions()
+            .await
+    }
+
+    async fn discover_new_papers(&self) -> Result<(usize, usize), Self::Error> {
+        self.pipeline_runner.discover_new_papers().await
+    }
+
+    async fn ensure_fetcher_running(&self) -> Result<(), Self::Error> {
+        self.pipeline_runner.ensure_fetcher_running().await
+    }
+
+    async fn get_pending_fetch_task_count(&self) -> Result<i64, Self::Error> {
+        self.pipeline_runner.get_pending_fetch_task_count().await
+    }
+
+    async fn generate_queries_for_new_regions_count(&self) -> Result<i64, Self::Error> {
+        self.pipeline_runner
+            .generate_queries_for_new_regions_count()
+            .await
+    }
+
+    async fn get_regions_with_queries_count(&self) -> Result<i64, Self::Error> {
+        self.pipeline_runner.get_regions_with_queries_count().await
+    }
+
+    async fn get_system_stats(&self) -> Result<domain::SystemStats, Self::Error> {
+        self.pipeline_runner.get_system_stats().await
+    }
+
+    async fn get_redis_stats(&self) -> Result<domain::RedisStats, Self::Error> {
+        self.pipeline_runner.get_redis_stats().await
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> EvalOrchestration for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn eval_orchestrator_enabled(&self) -> bool {
+        self.eval_orchestrator.is_enabled().await
+    }
+
+    async fn eval_orchestrator_poll_interval_secs(&self) -> u64 {
+        self.eval_orchestrator.poll_interval_secs().await
+    }
+
+    async fn eval_orchestrator_run_cycle(&self) -> Result<(usize, usize), Self::Error> {
+        self.eval_orchestrator.run_cycle().await
+    }
+
+    async fn eval_orchestrator_get_status(&self) -> Result<EvalStatusSummary, Self::Error> {
+        self.eval_orchestrator.get_status().await
+    }
+
+    async fn eval_orchestrator_get_worst(
+        &self,
+        metric: String,
+        limit: i64,
+    ) -> Result<EvalWorstOffenders, Self::Error> {
+        self.eval_orchestrator.get_worst(metric, limit).await
+    }
+
+    async fn eval_orchestrator_get_run_cost(
+        &self,
+        run_id: uuid::Uuid,
+    ) -> Result<domain::EvalRunCost, Self::Error> {
+        self.eval_orchestrator.get_run_cost(run_id).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> CostGuardrailOrchestration for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn cost_guardrail_enabled(&self) -> bool {
+        self.cost_guardrail.is_enabled().await
+    }
+
+    async fn cost_guardrail_poll_interval_secs(&self) -> u64 {
+        self.cost_guardrail.poll_interval_secs().await
+    }
+
+    async fn cost_guardrail_run_once(&self) -> Option<f64> {
+        self.cost_guardrail.run_once().await
+    }
+
+    async fn get_llm_cost_summary(
+        &self,
+        since_hours: Option<u32>,
+    ) -> Result<domain::LlmCostSummary, Self::Error> {
+        self.cost_guardrail.get_summary(since_hours).await
     }
 }

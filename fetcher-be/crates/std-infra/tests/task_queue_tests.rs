@@ -50,6 +50,57 @@ async fn cleanup_test_data(_ctx: &InfraContext<StdInfra>, query: &str) {
         .ok();
 }
 
+/// Cleanup test data by deleting all tasks matching the given pmc_id.
+/// Needed for tests that exercise the `on_conflict(pmc_id) do_nothing` path,
+/// because duplicate inserts with different `query` values still collapse to
+/// a single row (the first-inserted one) and a cleanup keyed on `query`
+/// would miss it.
+async fn cleanup_test_data_by_pmc_id(_ctx: &InfraContext<StdInfra>, pmc_id: &str) {
+    let database_url = get_test_database_url();
+    let manager = ConnectionManager::<PgConnection>::new(database_url);
+    let pool = r2d2::Pool::builder()
+        .max_size(1)
+        .build(manager)
+        .expect("Failed to create cleanup pool");
+    let conn = &mut pool.get().expect("Failed to get cleanup connection");
+
+    diesel::sql_query(
+        "DELETE FROM fetch_task_components WHERE task_id IN (SELECT id FROM fetch_tasks WHERE pmc_id = $1)",
+    )
+    .bind::<diesel::sql_types::Text, _>(pmc_id)
+    .execute(conn)
+    .ok();
+    diesel::sql_query("DELETE FROM fetch_tasks WHERE pmc_id = $1")
+        .bind::<diesel::sql_types::Text, _>(pmc_id)
+        .execute(conn)
+        .ok();
+}
+
+/// Count rows in `fetch_tasks` matching the given pmc_id.
+/// Used to guard the "duplicate insert does not create a second row"
+/// invariant introduced by commit aab8ee5 (unique constraint on pmc_id alone).
+async fn count_tasks_by_pmc_id(pmc_id: &str) -> i64 {
+    let database_url = get_test_database_url();
+    let manager = ConnectionManager::<PgConnection>::new(database_url);
+    let pool = r2d2::Pool::builder()
+        .max_size(1)
+        .build(manager)
+        .expect("Failed to create count pool");
+    let conn = &mut pool.get().expect("Failed to get count connection");
+
+    #[derive(diesel::QueryableByName)]
+    struct CountRow {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        count: i64,
+    }
+
+    diesel::sql_query("SELECT COUNT(*) as count FROM fetch_tasks WHERE pmc_id = $1")
+        .bind::<diesel::sql_types::Text, _>(pmc_id)
+        .get_result::<CountRow>(conn)
+        .map(|r| r.count)
+        .unwrap_or(0)
+}
+
 #[tokio::test]
 async fn test_enqueue_task() {
     let ctx = setup_test_context().await;
@@ -82,30 +133,124 @@ async fn test_enqueue_task() {
 async fn test_duplicate_task_handling() {
     let ctx = setup_test_context().await;
     let query = "test_duplicate_task";
+    let pmc_id = "PMC_DUP_HANDLING";
 
+    cleanup_test_data_by_pmc_id(&ctx, pmc_id).await;
     cleanup_test_data(&ctx, query).await;
 
-    // Enqueue same task twice
-    ctx.infra
-        .enqueue_task("PMC123456".to_string(), query.to_string(), 3)
+    // First enqueue — the actual INSERT.
+    let first = ctx
+        .infra
+        .enqueue_task(pmc_id.to_string(), query.to_string(), 3)
         .await
         .expect("First enqueue failed");
-    ctx.infra
-        .enqueue_task("PMC123456".to_string(), query.to_string(), 3)
+
+    // Second enqueue — must hit the `on_conflict(pmc_id).do_nothing()` branch
+    // (introduced in commit aab8ee5) and return the EXISTING row, not a new
+    // insert and not an error.
+    let second = ctx
+        .infra
+        .enqueue_task(pmc_id.to_string(), query.to_string(), 3)
         .await
         .expect("Second enqueue failed");
 
-    // Should still have only one task (idempotent)
+    // Contract #1: the returned task is the pre-existing row (same id).
+    assert_eq!(
+        second.id, first.id,
+        "Duplicate enqueue must return the existing task id, not a fresh insert"
+    );
+
+    // Contract #2: created_at is the ORIGINAL timestamp (row was not rewritten).
+    assert_eq!(
+        second.created_at, first.created_at,
+        "Duplicate enqueue must not overwrite created_at on the existing row"
+    );
+
+    // Contract #3: pmc_id round-trips unchanged.
+    assert_eq!(second.pmc_id, first.pmc_id);
+
+    // Contract #4: exactly one row exists for this pmc_id — no extra insert leaked.
+    let count = count_tasks_by_pmc_id(pmc_id).await;
+    assert_eq!(
+        count, 1,
+        "Expected exactly 1 row for pmc_id={}, got {}",
+        pmc_id, count
+    );
+
+    // Retain the original smoke check for the stats endpoint.
     let stats = ctx
         .infra
         .get_task_stats()
         .await
         .expect("Failed to get stats");
-
-    // Note: This might be 1 or more depending on other tests, so we just verify no error
     assert!(stats.total >= 1, "Expected at least one task");
 
+    cleanup_test_data_by_pmc_id(&ctx, pmc_id).await;
     cleanup_test_data(&ctx, query).await;
+}
+
+/// Regression test for commit aab8ee5 ("fix: doplicate task ids"):
+/// the unique constraint on `fetch_tasks` is `pmc_id` ALONE, not
+/// `(pmc_id, query)`. Two enqueues with the same pmc_id but different
+/// `query` values must collapse to a single row (the first insert's),
+/// and the second call must return that existing row unchanged.
+#[tokio::test]
+async fn test_duplicate_task_with_different_query_returns_existing() {
+    let ctx = setup_test_context().await;
+    let pmc_id = "PMC_DIFF_QUERY";
+    let query_one = "test_dup_diff_query_Q1";
+    let query_two = "test_dup_diff_query_Q2";
+
+    cleanup_test_data_by_pmc_id(&ctx, pmc_id).await;
+    cleanup_test_data(&ctx, query_one).await;
+    cleanup_test_data(&ctx, query_two).await;
+
+    // First insert — discovers the paper via Q1.
+    let first = ctx
+        .infra
+        .enqueue_task(pmc_id.to_string(), query_one.to_string(), 3)
+        .await
+        .expect("First enqueue failed");
+
+    assert_eq!(first.query, query_one, "First row should carry Q1");
+
+    // Second insert — a different query discovers the SAME paper. The
+    // on_conflict(pmc_id) clause must ignore the new `query` value and
+    // return the original row.
+    let second = ctx
+        .infra
+        .enqueue_task(pmc_id.to_string(), query_two.to_string(), 3)
+        .await
+        .expect("Second enqueue (different query) failed");
+
+    // Contract: same id as the first row.
+    assert_eq!(
+        second.id, first.id,
+        "Duplicate pmc_id with a different query must return the original id"
+    );
+    // Contract: created_at preserved.
+    assert_eq!(
+        second.created_at, first.created_at,
+        "Duplicate pmc_id must not refresh created_at"
+    );
+    // Contract: the returned row retains the ORIGINAL query (Q1), because
+    // `on_conflict(pmc_id).do_nothing()` does not rewrite columns on conflict.
+    assert_eq!(
+        second.query, query_one,
+        "Second enqueue must return the original row's query (Q1), not Q2"
+    );
+
+    // Contract: still exactly one row — the second query did not insert.
+    let count = count_tasks_by_pmc_id(pmc_id).await;
+    assert_eq!(
+        count, 1,
+        "Expected exactly 1 row for pmc_id={} after two inserts, got {}",
+        pmc_id, count
+    );
+
+    cleanup_test_data_by_pmc_id(&ctx, pmc_id).await;
+    cleanup_test_data(&ctx, query_one).await;
+    cleanup_test_data(&ctx, query_two).await;
 }
 
 #[tokio::test]

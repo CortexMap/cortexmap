@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orch System Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232733;
+    --border: #2e3348;
+    --text: #e1e4ed;
+    --text-dim: #8b8fa3;
+    --accent: #6c8cff;
+    --green: #34d399;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --orange: #fb923c;
+    --cyan: #22d3ee;
+    --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    padding: 1.5rem;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  header h1 { font-size: 1.5rem; font-weight: 600; }
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    display: none;
+  }
+  .spinner.active { display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .poll-control {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+  .poll-control label { white-space: nowrap; }
+  .poll-input {
+    width: 60px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    padding: 0.25rem 0.4rem;
+    text-align: center;
+  }
+  .poll-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 1rem;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.2rem;
+  }
+  .card h2 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 0.8rem;
+    font-weight: 500;
+  }
+  .card.wide { grid-column: 1 / -1; }
+
+  /* stat cards row */
+  .stat-row {
+    display: flex;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+  }
+  .stat-box {
+    flex: 1 1 130px;
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    text-align: center;
+  }
+  .stat-box .val {
+    font-family: var(--mono);
+    font-size: 1.8rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .stat-box .lbl {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    margin-top: 0.25rem;
+  }
+
+  /* tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  th {
+    text-align: left;
+    padding: 0.5rem 0.7rem;
+    color: var(--text-dim);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  td {
+    padding: 0.45rem 0.7rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  .num { font-family: var(--mono); text-align: right; }
+
+  /* status badges */
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-family: var(--mono);
+  }
+  .badge-green  { background: rgba(52,211,153,.15); color: var(--green); }
+  .badge-yellow { background: rgba(251,191,36,.15); color: var(--yellow); }
+  .badge-red    { background: rgba(248,113,113,.15); color: var(--red); }
+  .badge-orange { background: rgba(251,146,60,.15); color: var(--orange); }
+  .badge-cyan   { background: rgba(34,211,238,.15); color: var(--cyan); }
+  .badge-dim    { background: rgba(139,143,163,.12); color: var(--text-dim); }
+
+  /* bar chart */
+  .bar-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.35rem; }
+  .bar-label { width: 100px; font-size: 0.78rem; text-align: right; color: var(--text-dim); }
+  .bar-track { flex: 1; height: 18px; background: var(--surface2); border-radius: 4px; overflow: hidden; position: relative; }
+  .bar-fill { height: 100%; border-radius: 4px; transition: width .5s ease; }
+  .bar-val { font-family: var(--mono); font-size: 0.78rem; width: 50px; }
+
+  .error-msg { color: var(--red); font-size: 0.8rem; padding: 0.5rem; }
+
+  /* tooltips */
+  [data-tip] {
+    position: relative;
+    cursor: help;
+    border-bottom: 1px dotted var(--text-dim);
+  }
+  [data-tip]:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 6px);
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.45rem 0.65rem;
+    font-size: 0.74rem;
+    line-height: 1.4;
+    white-space: normal;
+    width: max-content;
+    max-width: 320px;
+    z-index: 100;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4);
+  }
+
+  @media (max-width: 600px) {
+    body { padding: 0.8rem; }
+    .grid { grid-template-columns: 1fr; }
+    .stat-box .val { font-size: 1.3rem; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Orch System Dashboard</h1>
+  <div class="meta">
+    <div class="poll-control">
+      <label for="pollInput">Poll</label>
+      <input type="text" id="pollInput" class="poll-input" title="e.g. 1s, 500ms, 5s">
+    </div>
+    <span id="lastUpdated">Loading...</span>
+    <div class="spinner active" id="spinner"></div>
+  </div>
+</header>
+
+<div class="grid">
+  <!-- Pipeline Trigger -->
+  <div class="card wide" id="triggerCard">
+    <h2>Pipeline Trigger <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim); margin-left: 0.5rem;">Manually kick the pipeline without waiting for the next cycle</span></h2>
+    <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;">
+      <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;" data-tip="Run Phase 1: generate LLM queries for regions that have no queries yet (or all regions if reset_queries is checked).">
+        <input type="checkbox" id="trigger_gen" checked>
+        <span>generate_queries</span>
+      </label>
+      <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;" data-tip="Run Phase 2: scan all regions with queries against NCBI, enqueue fetch tasks for new papers.">
+        <input type="checkbox" id="trigger_disc" checked>
+        <span>discover_papers</span>
+      </label>
+      <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;" data-tip="Run Phase 3: make sure at least one fetcher worker is running to drain the queue.">
+        <input type="checkbox" id="trigger_workers" checked>
+        <span>ensure_workers</span>
+      </label>
+      <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; color: var(--red); border-left: 1px solid var(--border); padding-left: 1rem; margin-left: 0.5rem;" data-tip="DESTRUCTIVE: Deletes ALL queries from region_queries table before generating new ones. Every region will get fresh LLM-generated queries.">
+        <input type="checkbox" id="trigger_reset">
+        <span>reset_queries (destructive)</span>
+      </label>
+      <button id="triggerBtn" style="margin-left: auto; padding: 0.5rem 1.2rem; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Trigger Pipeline</button>
+    </div>
+    <div id="triggerResult" style="margin-top: 0.8rem; font-family: monospace; font-size: 0.8rem; color: var(--text-dim); white-space: pre-wrap; display: none;"></div>
+  </div>
+
+  <!-- Pipeline Health -->
+  <div class="card wide" id="healthCard">
+    <h2>Pipeline Health</h2>
+    <div class="stat-row" id="healthStats">
+      <div class="stat-box"><div class="val" id="h_rwq">-</div><div class="lbl">Regions w/ Queries</div></div>
+      <div class="stat-box"><div class="val" id="h_rwoq">-</div><div class="lbl">Regions w/o Queries</div></div>
+      <div class="stat-box"><div class="val" id="h_pft">-</div><div class="lbl">Pending Fetch Tasks</div></div>
+      <div class="stat-box"><div class="val" id="h_wc">-</div><div class="lbl">Active Workers</div></div>
+    </div>
+  </div>
+
+  <!-- Pipeline Stats -->
+  <div class="card">
+    <h2>Pipeline Stats</h2>
+    <div id="pipelineStats"></div>
+  </div>
+
+  <!-- Fetch Tasks -->
+  <div class="card">
+    <h2>Fetch Tasks</h2>
+    <div id="fetchTasks"></div>
+  </div>
+
+  <!-- Processing Batches -->
+  <div class="card">
+    <h2>Processing Batches</h2>
+    <div id="batchStats"></div>
+  </div>
+
+  <!-- Papers & Summaries -->
+  <div class="card">
+    <h2>Papers &amp; Summaries</h2>
+    <div class="stat-row">
+      <div class="stat-box"><div class="val" id="s_papers">-</div><div class="lbl">Total Papers</div></div>
+      <div class="stat-box"><div class="val" id="s_summaries">-</div><div class="lbl">Total Summaries</div></div>
+    </div>
+    <div class="stat-row" style="margin-top:0.8rem">
+      <div class="stat-box" data-tip="Regions whose latest active summary is younger than the staleness window. Phase 2 will skip these on the next cycle."><div class="val" id="f_fresh">-</div><div class="lbl">Fresh</div></div>
+      <div class="stat-box" data-tip="Regions whose latest active summary is older than the staleness window. Phase 2 will regenerate these on the next cycle."><div class="val" id="f_stale">-</div><div class="lbl">Stale</div></div>
+      <div class="stat-box" data-tip="Regions with no usable active summary yet. Eligible for first generation."><div class="val" id="f_none">-</div><div class="lbl">No Summary</div></div>
+      <div class="stat-box" data-tip="Cutoff (in days) used to bucket summaries as fresh vs stale. Configured by `summary_staleness_days`."><div class="val" id="f_days">-</div><div class="lbl">Staleness (days)</div></div>
+    </div>
+  </div>
+
+  <!-- Query Stats -->
+  <div class="card">
+    <h2>Query Stats</h2>
+    <div class="stat-row" style="margin-bottom:0.8rem">
+      <div class="stat-box"><div class="val" id="q_total">-</div><div class="lbl">Total Queries</div></div>
+      <div class="stat-box"><div class="val" id="q_regions">-</div><div class="lbl">Regions w/ Queries</div></div>
+    </div>
+    <div id="queryDist"></div>
+  </div>
+
+  <!-- Workers -->
+  <div class="card wide">
+    <h2>Workers</h2>
+    <div id="workersTable" style="overflow-x:auto"></div>
+  </div>
+
+  <!-- Configuration -->
+  <div class="card wide">
+    <h2>Configuration</h2>
+    <div id="configTable" style="overflow-x:auto"></div>
+  </div>
+
+  <!-- Redis Cache -->
+  <div class="card wide">
+    <h2>Redis Cache <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim); margin-left: 0.5rem;" data-tip="Orch uses Redis only as a key-value cache. The actual task queue lives in PostgreSQL fetch_tasks.">read-through cache (not the task queue)</span></h2>
+    <div id="redisStatus" style="margin-bottom: 0.8rem"></div>
+    <div class="stat-row" id="redisOverview" style="margin-bottom: 0.8rem"></div>
+    <div id="redisPrefixes" style="overflow-x:auto"></div>
+  </div>
+
+  <!-- LLM Cost -->
+  <div class="card wide">
+    <h2>
+      LLM Cost
+      <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim); margin-left: 0.5rem;" data-tip="Aggregated from brainatlas-be llm_call_usage. Cost is computed from the per-model USD rates recorded at call time.">brainatlas-be llm_call_usage aggregate</span>
+      <span style="float: right; display: inline-flex; align-items: center; gap: 0.4rem;">
+        <label for="costWindow" style="font-size: 0.78rem; color: var(--text-dim); text-transform: none; letter-spacing: 0;">Window:</label>
+        <select id="costWindow" style="background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: var(--mono); font-size: 0.78rem; padding: 0.25rem 0.4rem;">
+          <option value="1">1h</option>
+          <option value="24" selected>24h</option>
+          <option value="168">7d</option>
+          <option value="720">30d</option>
+          <option value="">All time</option>
+        </select>
+      </span>
+    </h2>
+    <div id="costStatus" style="margin-bottom: 0.8rem"></div>
+    <div class="stat-row" id="costOverview" style="margin-bottom: 0.8rem"></div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem;">
+      <div>
+        <h3 style="font-size: 0.95rem; margin-bottom: 0.5rem;">By Model <span style="font-weight: normal; font-size: 0.75rem; color: var(--text-dim);" data-tip="Cost, tokens and calls grouped by the model field on each llm_call_usage row.">grouped by <code>model</code></span></h3>
+        <div id="costByModel" style="overflow-x:auto"></div>
+      </div>
+      <div>
+        <h3 style="font-size: 0.95rem; margin-bottom: 0.5rem;">By Caller Tag <span style="font-weight: normal; font-size: 0.75rem; color: var(--text-dim);" data-tip="Cost, tokens and calls grouped by caller_tag (e.g. 'summary', 'eval:groundedness', 'query_gen').">grouped by <code>caller_tag</code></span></h3>
+        <div id="costByCaller" style="overflow-x:auto"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Evals -->
+  <div class="card wide">
+    <h2>Evals <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim); margin-left: 0.5rem;" data-tip="Phase-4 quality evaluation: structural metrics + LLM-judged groundedness/rubric over generated region summaries.">automated quality scoring</span></h2>
+    <div id="evalStatus" style="margin-bottom: 0.8rem"></div>
+    <div class="stat-row" id="evalOverview" style="margin-bottom: 0.8rem"></div>
+    <h3 style="margin-top: 1rem; font-size: 1rem;">Worst offenders by groundedness <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim);" data-tip="Lowest groundedness scores: indicates summaries with claims poorly supported by retrieved chunks.">(top 10)</span></h3>
+    <div id="evalWorst" style="overflow-x:auto"></div>
+  </div>
+</div>
+
+<script>
+const BASE = '/orch';
+let fetching = false;
+let pollTimer = null;
+
+function $(id) { return document.getElementById(id); }
+
+// Parse duration string like "1s", "500ms", "2.5s" into milliseconds.
+// Returns null for invalid input.
+function parseDuration(str) {
+  if (!str) return null;
+  str = str.trim().toLowerCase();
+  let m;
+  if ((m = str.match(/^(\d+(?:\.\d+)?)\s*ms$/))) return Math.round(parseFloat(m[1]));
+  if ((m = str.match(/^(\d+(?:\.\d+)?)\s*s$/)))  return Math.round(parseFloat(m[1]) * 1000);
+  // bare number treated as seconds
+  if ((m = str.match(/^(\d+(?:\.\d+)?)$/)))       return Math.round(parseFloat(m[1]) * 1000);
+  return null;
+}
+
+// Format milliseconds back to a human string
+function fmtDuration(ms) {
+  if (ms < 1000) return ms + 'ms';
+  return (ms / 1000) + 's';
+}
+
+// Read poll interval: URL query > default 2s
+function getPollMs() {
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get('poll');
+  const ms = parseDuration(raw);
+  // Clamp to [200ms, 60s]
+  if (ms != null) return Math.max(200, Math.min(ms, 60000));
+  return 2000;
+}
+
+const POLL_MS = getPollMs();
+
+// Populate input with current value
+function initPollInput() {
+  const input = $('pollInput');
+  input.value = fmtDuration(POLL_MS);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') applyPollInput();
+  });
+  input.addEventListener('blur', applyPollInput);
+}
+
+function applyPollInput() {
+  const input = $('pollInput');
+  const ms = parseDuration(input.value);
+  if (ms == null || ms === POLL_MS) {
+    input.value = fmtDuration(POLL_MS); // reset on invalid
+    return;
+  }
+  const clamped = Math.max(200, Math.min(ms, 60000));
+  const params = new URLSearchParams(window.location.search);
+  params.set('poll', fmtDuration(clamped));
+  window.location.search = params.toString();
+}
+
+function fmt(n) {
+  if (n == null) return '-';
+  return Number(n).toLocaleString();
+}
+
+// Keyword descriptions shown on hover
+const TIPS = {
+  // Pipeline stats (region-level)
+  'total_regions':  'Total brain regions in the atlas.',
+  'not_started':    'Regions with no processing batch created yet. Phase 2 has not touched them.',
+  'fetch_queued':   'Regions whose batch is "collecting" — papers discovered, fetch tasks created, waiting for workers to download.',
+  'fetching':       'Regions with at least one fetch task actively being downloaded by a worker right now.',
+  'fetch_failed':   'Regions whose latest batch failed during fetching or LLM processing.',
+  'llm_queued':     'Regions where all papers are fetched and the batch is ready for LLM summarization.',
+  'processing':     'Regions currently being summarized by the LLM (brainatlas-be).',
+  'done':           'Regions fully processed end-to-end: queries generated, papers fetched, and LLM summary stored.',
+  'invalidated':    'Regions manually invalidated. They will be re-processed on the next pipeline cycle.',
+  // Fetch task statuses
+  'pending':        'Task is queued and waiting for a worker to pick it up.',
+  'in_progress':    'A worker has claimed this task and is actively downloading the paper.',
+  'completed':      'Paper successfully fetched and all components (abstract, summary, PDF) stored in S3.',
+  'failed':         'All retry attempts exhausted. The paper could not be fetched.',
+  // Batch statuses
+  'collecting':     'Batch is waiting for its fetch tasks to complete. Workers are downloading papers.',
+  'ready':          'All fetch tasks done. Batch is queued for LLM processing by the completion watcher.',
+  // Worker statuses
+  'running':        'Worker is active and processing tasks from the queue.',
+  'stopped':        'Worker has been shut down or its task loop exited.',
+  'idle':           'Worker is alive but the queue is empty — sleeping until new tasks arrive.',
+  // Misc
+  'error':          'An unexpected error occurred.',
+  'success':        'Operation completed successfully.',
+};
+
+function tip(key) {
+  const t = TIPS[key] || TIPS[key.toLowerCase()];
+  return t ? ` data-tip="${t.replace(/"/g, '&quot;')}"` : '';
+}
+
+function statusBadge(s) {
+  const sl = (s || '').toLowerCase();
+  let cls = 'badge-dim';
+  if (['completed','done','success','running'].includes(sl)) cls = 'badge-green';
+  else if (['processing','in_progress','collecting','fetching','ready'].includes(sl)) cls = 'badge-yellow';
+  else if (['failed','error'].includes(sl)) cls = 'badge-red';
+  else if (['pending','not_started','llm_queued','fetch_queued'].includes(sl)) cls = 'badge-cyan';
+  else if (['invalidated','stopped','idle'].includes(sl)) cls = 'badge-orange';
+  return `<span class="badge ${cls}"${tip(sl)}>${s}</span>`;
+}
+
+function renderStatusTable(containerId, items) {
+  if (!items || items.length === 0) {
+    $(containerId).innerHTML = '<div class="error-msg">No data</div>';
+    return;
+  }
+  let total = items.reduce((a, b) => a + b.count, 0);
+  let html = '<table><thead><tr><th>Status</th><th class="num">Count</th><th class="num">%</th></tr></thead><tbody>';
+  for (const r of items) {
+    let pct = total > 0 ? ((r.count / total) * 100).toFixed(1) : '0.0';
+    html += `<tr><td>${statusBadge(r.status)}</td><td class="num">${fmt(r.count)}</td><td class="num">${pct}%</td></tr>`;
+  }
+  html += `<tr style="font-weight:600"><td>Total</td><td class="num">${fmt(total)}</td><td class="num">100%</td></tr>`;
+  html += '</tbody></table>';
+  $(containerId).innerHTML = html;
+}
+
+function renderPipelineStats(data) {
+  if (!data) { $('pipelineStats').innerHTML = '<div class="error-msg">No data</div>'; return; }
+  const fields = [
+    { key: 'total_regions', label: 'Total Regions', color: 'var(--accent)' },
+    { key: 'not_started', label: 'Not Started', color: 'var(--text-dim)' },
+    { key: 'fetch_queued', label: 'Fetch Queued', color: 'var(--cyan)' },
+    { key: 'fetching', label: 'Fetching', color: 'var(--yellow)' },
+    { key: 'fetch_failed', label: 'Fetch Failed', color: 'var(--red)' },
+    { key: 'llm_queued', label: 'LLM Queued', color: 'var(--cyan)' },
+    { key: 'processing', label: 'Processing', color: 'var(--yellow)' },
+    { key: 'done', label: 'Done', color: 'var(--green)' },
+    { key: 'invalidated', label: 'Invalidated', color: 'var(--orange)' },
+  ];
+  let max = Math.max(...fields.map(f => data[f.key] || 0), 1);
+  let html = '';
+  for (const f of fields) {
+    let v = data[f.key] || 0;
+    let w = (v / max * 100).toFixed(1);
+    html += `<div class="bar-row">
+      <div class="bar-label"${tip(f.key)}>${f.label}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${f.color}"></div></div>
+      <div class="bar-val">${fmt(v)}</div>
+    </div>`;
+  }
+  $('pipelineStats').innerHTML = html;
+}
+
+function renderWorkers(data) {
+  if (!data || data.length === 0) {
+    $('workersTable').innerHTML = '<div class="error-msg">No workers reported</div>';
+    return;
+  }
+  const keys = Object.keys(data[0]);
+  let html = '<table><thead><tr>';
+  for (const k of keys) html += `<th>${k}</th>`;
+  html += '</tr></thead><tbody>';
+  for (const w of data) {
+    html += '<tr>';
+    for (const k of keys) {
+      let v = w[k];
+      if (k === 'status') { html += `<td>${statusBadge(v)}</td>`; }
+      else if (typeof v === 'number') { html += `<td class="num">${fmt(v)}</td>`; }
+      else { html += `<td>${v != null ? v : '-'}</td>`; }
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  $('workersTable').innerHTML = html;
+}
+
+function renderConfig(data) {
+  if (!data || data.length === 0) {
+    $('configTable').innerHTML = '<div class="error-msg">No config</div>';
+    return;
+  }
+  let html = '<table><thead><tr><th>Key</th><th>Value</th><th>Description</th><th>Updated</th></tr></thead><tbody>';
+  for (const c of data) {
+    let ts = c.updated_at ? new Date(c.updated_at).toLocaleString() : '-';
+    html += `<tr>
+      <td style="font-family:var(--mono);font-size:0.78rem">${c.key}</td>
+      <td class="num">${c.value}</td>
+      <td style="color:var(--text-dim);font-size:0.78rem">${c.description || '-'}</td>
+      <td style="color:var(--text-dim);font-size:0.75rem;white-space:nowrap">${ts}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  $('configTable').innerHTML = html;
+}
+
+function renderQueryDist(items) {
+  if (!items || items.length === 0) {
+    $('queryDist').innerHTML = '<div class="error-msg" style="font-size:0.78rem;color:var(--text-dim)">No distribution data</div>';
+    return;
+  }
+  let html = '<table><thead><tr><th class="num">Queries/Region</th><th class="num">Regions</th></tr></thead><tbody>';
+  for (const r of items) {
+    html += `<tr><td class="num">${fmt(r.query_count)}</td><td class="num">${fmt(r.num_regions)}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  $('queryDist').innerHTML = html;
+}
+
+async function safeFetch(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+async function poll() {
+  if (fetching) return;
+  fetching = true;
+  $('spinner').classList.add('active');
+
+  const costWindow = $('costWindow').value; // '' means all time
+  const costUrl = BASE + '/dev/api/llm-cost' + (costWindow ? `?since_hours=${costWindow}` : '');
+
+  const [health, stats, config, workers, sysStats, redis, evalStatus, evalWorst, freshness, cost] = await Promise.all([
+    safeFetch(BASE + '/api/pipeline/status'),
+    safeFetch(BASE + '/api/pipeline/stats'),
+    safeFetch(BASE + '/api/config'),
+    safeFetch(BASE + '/api/workers/status'),
+    safeFetch(BASE + '/dev/api/system-stats'),
+    safeFetch(BASE + '/dev/api/redis-stats'),
+    safeFetch(BASE + '/api/evals/status'),
+    safeFetch(BASE + '/api/evals/worst?metric=claim_groundedness&limit=10'),
+    safeFetch(BASE + '/dev/api/summary-freshness'),
+    safeFetch(costUrl),
+  ]);
+
+  // Pipeline Health
+  if (health) {
+    $('h_rwq').textContent = fmt(health.regions_with_queries);
+    $('h_rwoq').textContent = fmt(health.regions_without_queries);
+    $('h_pft').textContent = fmt(health.pending_fetch_tasks);
+    $('h_wc').textContent = fmt(health.worker_count);
+  }
+
+  // Pipeline Stats
+  renderPipelineStats(stats);
+
+  // System Stats
+  if (sysStats) {
+    renderStatusTable('fetchTasks', sysStats.fetch_tasks_by_status);
+    renderStatusTable('batchStats', sysStats.batches_by_status);
+    $('s_papers').textContent = fmt(sysStats.total_papers);
+    $('s_summaries').textContent = fmt(sysStats.total_summaries);
+    $('q_total').textContent = fmt(sysStats.total_queries);
+    $('q_regions').textContent = fmt(sysStats.regions_with_queries);
+    renderQueryDist(sysStats.query_distribution);
+  }
+
+  // Summary Freshness
+  if (freshness) {
+    $('f_fresh').textContent = fmt(freshness.fresh);
+    $('f_stale').textContent = fmt(freshness.stale);
+    $('f_none').textContent = fmt(freshness.no_summary);
+    $('f_days').textContent = fmt(freshness.staleness_days);
+  }
+
+  // Workers
+  renderWorkers(workers);
+
+  // Config
+  renderConfig(config);
+
+  // Redis
+  renderRedis(redis);
+
+  // Evals
+  renderEvals(evalStatus, evalWorst);
+
+  // LLM Cost
+  renderCost(cost, sysStats, evalStatus);
+
+  $('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  $('spinner').classList.remove('active');
+  fetching = false;
+}
+
+function fmtBytes(n) {
+  if (n == null || n === 0) return '0B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0; let v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v < 10 ? 1 : 0) + units[i];
+}
+
+function fmtUptime(s) {
+  if (!s) return '-';
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return d + 'd ' + h + 'h';
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm';
+}
+
+function renderRedis(r) {
+  const statusEl  = $('redisStatus');
+  const overEl    = $('redisOverview');
+  const tableEl   = $('redisPrefixes');
+
+  if (!r) {
+    statusEl.innerHTML = '<span class="badge badge-red">offline</span> <span style="color:var(--text-dim)">/dev/api/redis-stats unreachable</span>';
+    overEl.innerHTML = '';
+    tableEl.innerHTML = '';
+    return;
+  }
+
+  if (!r.connected) {
+    statusEl.innerHTML = '<span class="badge badge-red">disconnected</span> <span style="color:var(--text-dim)">' + (r.error || 'unknown error') + '</span>';
+    overEl.innerHTML = '';
+    tableEl.innerHTML = '';
+    return;
+  }
+
+  statusEl.innerHTML = '<span class="badge badge-green">connected</span> <span style="color:var(--text-dim)">redis ' + (r.server_version || '?') + '</span>';
+
+  const hitRatePct = (r.hit_rate * 100).toFixed(1) + '%';
+  overEl.innerHTML = `
+    <div class="stat-box"><div class="val">${fmt(r.total_keys)}</div><div class="lbl" data-tip="DBSIZE: total keys across the entire Redis DB.">Total Keys</div></div>
+    <div class="stat-box"><div class="val">${r.used_memory_human || fmtBytes(r.used_memory_bytes)}</div><div class="lbl" data-tip="INFO used_memory_human: bytes Redis is consuming for data + overhead.">Memory</div></div>
+    <div class="stat-box"><div class="val">${hitRatePct}</div><div class="lbl" data-tip="keyspace_hits / (keyspace_hits + keyspace_misses) since boot.">Hit Rate</div></div>
+    <div class="stat-box"><div class="val">${fmtUptime(r.uptime_secs)}</div><div class="lbl" data-tip="Redis server uptime since process start.">Uptime</div></div>
+    <div class="stat-box"><div class="val">${fmt(r.keyspace_hits)}</div><div class="lbl" data-tip="Cumulative cache hits since Redis boot.">Hits</div></div>
+    <div class="stat-box"><div class="val">${fmt(r.keyspace_misses)}</div><div class="lbl" data-tip="Cumulative cache misses since Redis boot.">Misses</div></div>
+  `;
+
+  const rows = (r.keys_by_prefix || []).map(p => `
+    <tr>
+      <td><code>${p.pattern}</code></td>
+      <td>${fmt(p.count)}</td>
+      <td style="color:var(--text-dim);font-size:0.78rem">${p.description}</td>
+    </tr>
+  `).join('');
+
+  tableEl.innerHTML = `
+    <table>
+      <thead><tr><th>Pattern</th><th>Keys</th><th>Description</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+initPollInput();
+poll();
+pollTimer = setInterval(poll, POLL_MS);
+
+// Pipeline trigger button
+$('triggerBtn').addEventListener('click', async () => {
+  const body = {
+    reset_queries:    $('trigger_reset').checked,
+    generate_queries: $('trigger_gen').checked,
+    discover_papers:  $('trigger_disc').checked,
+    ensure_workers:   $('trigger_workers').checked
+  };
+
+  const anySelected = body.reset_queries || body.generate_queries || body.discover_papers || body.ensure_workers;
+  if (!anySelected) {
+    alert('Select at least one option');
+    return;
+  }
+
+  if (body.reset_queries && !confirm('This will DELETE ALL queries for ALL regions. Continue?')) {
+    return;
+  }
+
+  const btn = $('triggerBtn');
+  const out = $('triggerResult');
+  btn.disabled = true;
+  btn.textContent = 'Running...';
+  out.style.display = 'block';
+  out.style.color = 'var(--text-dim)';
+  out.textContent = 'Triggering pipeline: ' + JSON.stringify(body);
+
+  try {
+    const res = await fetch(BASE + '/api/pipeline/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    out.style.color = res.ok ? 'var(--accent)' : 'var(--red)';
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    out.style.color = 'var(--red)';
+    out.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Trigger Pipeline';
+  }
+});
+
+function renderEvals(status, worst) {
+  const statusEl = $('evalStatus');
+  const overEl   = $('evalOverview');
+  const tableEl  = $('evalWorst');
+
+  if (!status) {
+    statusEl.innerHTML = '<span class="badge badge-red">offline</span> <span style="color:var(--text-dim)">/api/evals/status unreachable</span>';
+    overEl.innerHTML = '';
+    tableEl.innerHTML = '';
+    return;
+  }
+
+  statusEl.innerHTML = '<span class="badge badge-green">online</span>';
+
+  const fmtPct = (n) => n == null ? '-' : (n * 100).toFixed(1) + '%';
+  const fmtScore = (n) => n == null ? '-' : Number(n).toFixed(2);
+  const total = status.total_summaries || 0;
+  const scored = status.total_scored || 0;
+  const coverage = total > 0 ? scored / total : 0;
+  const pm = status.per_metric || {};
+  const grounded = pm.claim_groundedness ? pm.claim_groundedness.avg : null;
+  // Rubric overall = mean of all rubric_* metric averages present in per_metric.
+  const rubricEntries = Object.entries(pm).filter(([k]) => k.startsWith('rubric_'));
+  const rubric = rubricEntries.length > 0
+    ? rubricEntries.reduce((s, [, v]) => s + (v.avg || 0), 0) / rubricEntries.length
+    : null;
+  // Citation overall = mean of all citation_* metric averages present in per_metric.
+  const citationEntries = Object.entries(pm).filter(([k]) => k.startsWith('citation_'));
+  const citation = citationEntries.length > 0
+    ? citationEntries.reduce((s, [, v]) => s + (v.avg || 0), 0) / citationEntries.length
+    : null;
+
+  overEl.innerHTML = `
+    <div class="stat"><div class="label" data-tip="Total active region_summary rows in the DB.">Total summaries</div><div class="value">${fmt(total)}</div></div>
+    <div class="stat"><div class="label" data-tip="Summaries that have at least one row in eval_runs for the current eval_version.">Scored</div><div class="value">${fmt(scored)}</div></div>
+    <div class="stat"><div class="label" data-tip="Coverage = scored / total. 100% means all summaries have been evaluated for the current eval_version.">Coverage</div><div class="value">${fmtPct(coverage)}</div></div>
+    <div class="stat"><div class="label" data-tip="Average groundedness score (0–1): fraction of LLM-extracted claims supported by the retrieved chunks.">Avg groundedness</div><div class="value">${fmtScore(grounded)}</div></div>
+    <div class="stat"><div class="label" data-tip="Average rubric score (1–5): LLM judges accuracy, completeness, clarity, and format on a 5-point scale.">Avg rubric</div><div class="value">${fmtScore(rubric)}</div></div>
+    <div class="stat"><div class="label" data-tip="Average citation score (0–1): mean across presence, validity, scope, and (if enabled) support. Measures whether inline [chunk:UUID] markers are present, resolvable, in-scope, and actually support the adjacent claim.">Avg citation</div><div class="value">${fmtScore(citation)}</div></div>
+    <div class="stat"><div class="label" data-tip="Eval scoring schema version. Bump this in orch config to force re-scoring of all summaries with the new prompts/judges.">Eval version</div><div class="value">${status.eval_version || '-'}</div></div>
+  `;
+
+  if (!worst || !worst.entries || worst.entries.length === 0) {
+    tableEl.innerHTML = '<div style="color:var(--text-dim)">No data yet. Eval orchestrator may be disabled or no scores recorded.</div>';
+    return;
+  }
+
+  let html = '<table><thead><tr><th>Region</th><th>Summary ID</th><th>Score</th><th>Metric</th></tr></thead><tbody>';
+  for (const it of worst.entries) {
+    const sid = it.summary_id ? String(it.summary_id).substring(0, 8) : '-';
+    html += `<tr><td>${it.region_name || '-'}</td><td><code>${sid}</code></td><td>${fmtScore(it.score)}</td><td>${it.metric || '-'}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  tableEl.innerHTML = html;
+}
+
+// ---- LLM Cost ----
+
+// Format a USD amount with adaptive precision: full cents for < $1,
+// 4 decimals for < $100, 2 decimals otherwise. Small numbers get full
+// precision so $0.0003 doesn't render as $0.00.
+function fmtUsd(n) {
+  if (n == null) return '-';
+  const v = Number(n);
+  if (!isFinite(v)) return '-';
+  if (Math.abs(v) < 0.01) return '$' + v.toFixed(6);
+  if (Math.abs(v) < 1)    return '$' + v.toFixed(4);
+  if (Math.abs(v) < 100)  return '$' + v.toFixed(3);
+  return '$' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderCostBreakdownTable(containerId, rows, keyField, keyLabel, totalCost) {
+  const el = $(containerId);
+  if (!rows || rows.length === 0) {
+    el.innerHTML = '<div style="color:var(--text-dim);font-size:0.82rem;padding:0.4rem 0">No data.</div>';
+    return;
+  }
+  // Sort descending by total_cost_usd so the biggest spenders are on top.
+  const sorted = [...rows].sort((a, b) => (b.total_cost_usd || 0) - (a.total_cost_usd || 0));
+  let html = `<table>
+    <thead><tr>
+      <th>${keyLabel}</th>
+      <th class="num">Cost</th>
+      <th class="num">% of total</th>
+      <th class="num">Tokens</th>
+      <th class="num">Calls</th>
+      <th class="num">$/call</th>
+    </tr></thead><tbody>`;
+  for (const r of sorted) {
+    const cost = r.total_cost_usd || 0;
+    const tokens = r.total_tokens || 0;
+    const calls = r.total_calls || 0;
+    const share = totalCost > 0 ? ((cost / totalCost) * 100).toFixed(1) + '%' : '-';
+    const perCall = calls > 0 ? fmtUsd(cost / calls) : '-';
+    const name = r[keyField] == null || r[keyField] === '' ? '<span style="color:var(--text-dim)">(none)</span>' : r[keyField];
+    html += `<tr>
+      <td style="font-family:var(--mono);font-size:0.78rem">${name}</td>
+      <td class="num">${fmtUsd(cost)}</td>
+      <td class="num">${share}</td>
+      <td class="num">${fmt(tokens)}</td>
+      <td class="num">${fmt(calls)}</td>
+      <td class="num">${perCall}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function renderCost(c, sysStats, evalStatus) {
+  const statusEl = $('costStatus');
+  const overEl   = $('costOverview');
+
+  if (!c) {
+    statusEl.innerHTML = '<span class="badge badge-red">offline</span> <span style="color:var(--text-dim)">/dev/api/llm-cost unreachable (brainatlas-be may be down)</span>';
+    overEl.innerHTML = '';
+    $('costByModel').innerHTML = '';
+    $('costByCaller').innerHTML = '';
+    return;
+  }
+
+  const totalCost = c.total_cost_usd || 0;
+  const totalCalls = c.total_calls || 0;
+  const totalTokens = c.total_tokens || 0;
+  const windowLabel = c.since_hours == null
+    ? 'all time'
+    : (c.since_hours >= 24 && c.since_hours % 24 === 0
+        ? `last ${c.since_hours / 24}d`
+        : `last ${c.since_hours}h`);
+
+  statusEl.innerHTML = `<span class="badge badge-green">${windowLabel}</span> <span style="color:var(--text-dim)">aggregated from <code>llm_call_usage</code></span>`;
+
+  // Denominators are all-time (papers fetched via completed fetch_tasks,
+  // scored summaries in evals-be). When the user picks a non-"all time" window
+  // for cost, these ratios mix windowed cost with all-time denominators —
+  // surfaced in the tooltips below.
+  //
+  // We use completed fetch_tasks rather than papers.total_papers because the
+  // latter is 0 on brainatlas-only deploys (papers live in the fetcher DB,
+  // not accessible from orch's system-stats). Each completed fetch_task
+  // represents one paper successfully fetched + summarised.
+  let totalPapers = 0;
+  if (sysStats && Array.isArray(sysStats.fetch_tasks_by_status)) {
+    const done = sysStats.fetch_tasks_by_status.find(r => r.status === 'completed');
+    if (done) totalPapers = done.count || 0;
+  }
+  // Fall back to total_papers if the fetch_tasks breakdown is empty.
+  if (totalPapers === 0 && sysStats && sysStats.total_papers) {
+    totalPapers = sysStats.total_papers;
+  }
+  const totalEvals  = (evalStatus && evalStatus.total_scored) || 0;
+  const costPerPaper = totalPapers > 0 ? totalCost / totalPapers : 0;
+  const costPerEval  = totalEvals  > 0 ? totalCost / totalEvals  : 0;
+
+  // When the cost window is not "all time", the per-paper / per-eval ratios
+  // are only a rough long-run signal — mark them as such in the tooltip.
+  const mixNote = c.since_hours == null
+    ? ''
+    : ' Note: the denominator is all-time while the numerator is windowed, so this is only meaningful for the &quot;All time&quot; window.';
+
+  overEl.innerHTML = `
+    <div class="stat-box"><div class="val">${fmtUsd(totalCost)}</div><div class="lbl" data-tip="Sum of cost_usd across all llm_call_usage rows in the selected window.">Total Cost</div></div>
+    <div class="stat-box"><div class="val">${fmt(totalCalls)}</div><div class="lbl" data-tip="Number of LLM API calls recorded.">Calls</div></div>
+    <div class="stat-box"><div class="val">${fmt(totalTokens)}</div><div class="lbl" data-tip="prompt_tokens + completion_tokens across all calls.">Total Tokens</div></div>
+    <div class="stat-box"><div class="val">${fmt(c.total_prompt_tokens || 0)}</div><div class="lbl" data-tip="Sum of prompt_tokens (input).">Prompt Tokens</div></div>
+    <div class="stat-box"><div class="val">${fmt(c.total_completion_tokens || 0)}</div><div class="lbl" data-tip="Sum of completion_tokens (output).">Completion Tokens</div></div>
+    <div class="stat-box"><div class="val">${fmtUsd(costPerPaper)}</div><div class="lbl" data-tip="Total LLM cost divided by the number of completed fetch_tasks (one task = one paper successfully fetched + summarised). Includes all LLM-driven work per paper: abstract summarisation, query generation, eval judging, etc.${mixNote}">Avg cost / paper</div></div>
+    <div class="stat-box"><div class="val">${fmtUsd(costPerEval)}</div><div class="lbl" data-tip="Total LLM cost divided by the number of distinct summaries scored for the current eval_version (what the Evals card calls &quot;Scored&quot;). One scored summary = one eval_runs row covering all metrics (groundedness, rubric, citation).${mixNote}">Avg cost / eval</div></div>
+  `;
+
+  renderCostBreakdownTable('costByModel',  c.by_model,      'model',      'Model',      totalCost);
+  renderCostBreakdownTable('costByCaller', c.by_caller_tag, 'caller_tag', 'Caller Tag', totalCost);
+}
+
+// Re-poll immediately when the user picks a new window.
+$('costWindow').addEventListener('change', () => { poll(); });
+</script>
+</body>
+</html>

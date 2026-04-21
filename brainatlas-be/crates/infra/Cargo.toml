@@ -22,3 +22,8 @@ aws-config.workspace = true
 sha2.workspace = true
 serde.workspace = true
 schemars.workspace = true
+bigdecimal.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+diesel = { version = "2.3.2", features = ["postgres", "r2d2", "chrono", "uuid", "numeric"] }

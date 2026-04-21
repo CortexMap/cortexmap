@@ -1,5 +1,3 @@
-mod server;
-
 use api::BrainAtlasApi;
 use infra::BrainAtlasInfra;
 use server::BrainAtlasServer;

@@ -220,6 +220,23 @@ mod tests {
                 .push(pattern.to_string());
             Ok(0)
         }
+
+        async fn cache_stats(&self) -> Result<domain::RedisStats, Self::Error> {
+            Ok(domain::RedisStats {
+                connected: true,
+                error: None,
+                total_keys: self.entries.lock().unwrap().len() as u64,
+                keys_by_prefix: vec![],
+                used_memory_bytes: 0,
+                used_memory_human: "0B".to_string(),
+                uptime_secs: 0,
+                total_connections_received: 0,
+                keyspace_hits: 0,
+                keyspace_misses: 0,
+                hit_rate: 0.0,
+                server_version: "fake".to_string(),
+            })
+        }
     }
 
     #[test]

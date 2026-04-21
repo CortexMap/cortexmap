@@ -9,5 +9,12 @@ thiserror.workspace = true
 uuid.workspace = true
 domain.workspace = true
 app.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

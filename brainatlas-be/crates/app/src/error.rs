@@ -11,4 +11,7 @@ pub enum AppError<E: std::error::Error + Send + Sync + 'static> {
 
     #[error("LLM exceeded maximum tool call iterations ({0})")]
     MaxToolCallsExceeded(usize),
+
+    #[error("LLM unexpectedly requested a tool call when no tools were provided")]
+    UnexpectedToolCall,
 }

@@ -105,6 +105,7 @@ where
             summary_max_retries,
             abstract_max_retries,
             pdf_max_retries,
+            device_cooldown_secs: None, // Reserved for device-subscription v2
         })
     }
 }
@@ -166,6 +167,14 @@ struct WorkerInfo {
     tasks_failed: i64,
     #[serde(default)]
     success_rate: f64,
+    #[serde(default)]
+    task_timeout_secs: Option<u64>,
+    #[serde(default)]
+    failure_backoff_base_secs: Option<u64>,
+    #[serde(default)]
+    max_retry_attempts: Option<u64>,
+    #[serde(default)]
+    backoff_strategy: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -336,6 +345,18 @@ where
             .map_err(ServiceError::InfraError)?;
 
         Ok(count as i32)
+    }
+
+    async fn get_completed_task_ids(&self, task_ids: Vec<i64>) -> Result<Vec<i64>, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        self.infra
+            .get_completed_task_ids(&database_url, &task_ids)
+            .await
+            .map_err(ServiceError::InfraError)
     }
 
     async fn ensure_workers_allocated(&self) -> Result<(), Self::Error> {
@@ -522,6 +543,10 @@ where
                 uptime_seconds: w.uptime_seconds,
                 tasks_failed: w.tasks_failed,
                 success_rate: w.success_rate,
+                task_timeout_secs: w.task_timeout_secs.unwrap_or(0),
+                failure_backoff_base_secs: w.failure_backoff_base_secs.unwrap_or(0),
+                max_retry_attempts: w.max_retry_attempts.unwrap_or(0) as u32,
+                backoff_strategy: w.backoff_strategy.unwrap_or_default(),
             })
             .collect();
 

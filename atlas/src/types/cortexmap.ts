@@ -10,12 +10,21 @@ export interface CortexmapRegion {
   parent_acronym: string | null;
 }
 
+/** Eval scores attached to a scored summary by orch */
+export interface SummaryEvalScores {
+  eval_version: string;
+  scores: Record<string, number>;       // metric → score (0..1)
+  judge_models: Record<string, string>; // metric → judge model id
+}
+
 /** Summary from cortexmap orch API */
 export interface RegionSummary {
+  summary_id: string; // UUID
   summary: string;
   created_at: string;
   batch_id: string;
   sources: SummarySource[];
+  eval_scores?: SummaryEvalScores; // present only if summary has been evaluated
 }
 
 export interface SummarySource {

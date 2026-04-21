@@ -3,6 +3,7 @@ import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import { useAtlasStore } from '../../store/atlasStore';
+import { useSelectRegion } from '../../hooks/useSelectRegion';
 import './SearchFunc.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://capstone.ssdd.dev/orch/api';
@@ -35,7 +36,8 @@ export function SearchFunc() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  const { selectStructure, cortexmapRegionMap } = useAtlasStore();
+  const { cortexmapRegionMap } = useAtlasStore();
+  const selectRegion = useSelectRegion();
 
   // Focus input when popup opens; reset state when closed
   useEffect(() => {
@@ -121,10 +123,10 @@ export function SearchFunc() {
         (r) => r.id === item.region_id
       );
       const structureId = cortexmapEntry?.region_id ?? item.region_numeric_id;
-      selectStructure(structureId);
+      selectRegion(structureId);
       setOpen(false);
     },
-    [cortexmapRegionMap, selectStructure]
+    [cortexmapRegionMap, selectRegion]
   );
 
   const handleKeyDown = useCallback(

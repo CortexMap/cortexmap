@@ -53,18 +53,30 @@ impl TaskQueueInfra for StdTaskQueue {
 
         self.run_blocking(move |conn| {
             conn.transaction(|conn| {
-                // Insert the task or update if exists (using ON CONFLICT DO UPDATE to always return a row)
-                let task: FetchTask = diesel::insert_into(fetch_tasks::table)
+                // Try to insert; if pmc_id already exists, skip.
+                // UNIQUE(pmc_id) ensures each paper is fetched exactly once
+                // regardless of which query discovered it.
+                let maybe_inserted: Option<FetchTask> = diesel::insert_into(fetch_tasks::table)
                     .values(NewFetchTask {
                         pmc_id: pmc_id.clone(),
                         query: query.clone(),
                         status: TaskStatus::Pending.as_str().to_string(),
                         priority: 0,
                     })
-                    .on_conflict((fetch_tasks::pmc_id, fetch_tasks::query))
-                    .do_update()
-                    .set(fetch_tasks::updated_at.eq(diesel::dsl::now))
-                    .get_result(conn)?;
+                    .on_conflict(fetch_tasks::pmc_id)
+                    .do_nothing()
+                    .get_result(conn)
+                    .optional()?;
+
+                let task = match maybe_inserted {
+                    Some(t) => t,
+                    None => {
+                        // Already exists — return the existing row
+                        fetch_tasks::table
+                            .filter(fetch_tasks::pmc_id.eq(&pmc_id))
+                            .first::<FetchTask>(conn)?
+                    }
+                };
 
                 // Create component records for this task if they don't exist
                 let components = vec![
@@ -723,7 +735,6 @@ impl TaskQueueInfra for StdTaskQueue {
             diesel::sql_query(
                 "UPDATE fetch_tasks 
                  SET status = 'pending',
-                     worker_id = NULL,
                      heartbeat_at = NULL,
                      started_at = NULL
                  WHERE id = $1",

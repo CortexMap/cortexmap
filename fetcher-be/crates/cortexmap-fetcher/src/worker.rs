@@ -383,12 +383,14 @@ where
 {
     let timeout_secs = blueprint.fetcher.task_timeout_secs;
     let empty_queue_sleep_secs = blueprint.fetcher.retry_config.empty_queue_sleep_secs;
+    let failure_backoff_base_secs = blueprint.fetcher.retry_config.failure_backoff_base_secs;
     let backoff_strategy = &blueprint.fetcher.retry_config.backoff_strategy;
 
     tracing::info!(
-        "Starting worker {} (timeout: {}s, max retries: {}, backoff: {:?})",
+        "Starting worker {} (timeout: {}s, failure_backoff: {}s, max retries: {}, backoff: {:?})",
         worker_id,
         timeout_secs,
+        failure_backoff_base_secs,
         blueprint.fetcher.max_retry_attempts,
         backoff_strategy
     );
@@ -426,7 +428,7 @@ where
                     consecutive_failures += 1;
                     let delay = compute_task_backoff_delay(
                         backoff_strategy,
-                        timeout_secs,
+                        failure_backoff_base_secs,
                         consecutive_failures,
                     );
                     tracing::debug!(
@@ -473,7 +475,7 @@ where
                     consecutive_failures += 1;
                     let delay = compute_task_backoff_delay(
                         backoff_strategy,
-                        timeout_secs,
+                        failure_backoff_base_secs,
                         consecutive_failures,
                     );
                     tracing::info!(
@@ -500,7 +502,7 @@ where
                 consecutive_failures += 1;
                 let delay = compute_task_backoff_delay(
                     backoff_strategy,
-                    timeout_secs,
+                    failure_backoff_base_secs,
                     consecutive_failures,
                 );
                 tracing::debug!(

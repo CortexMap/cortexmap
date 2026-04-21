@@ -153,6 +153,7 @@ async fn main() -> Result<()> {
     let retry_config = RetryConfig {
         empty_queue_sleep_secs: args.empty_queue_sleep_secs,
         stale_task_multiplier: args.stale_task_multiplier,
+        failure_backoff_base_secs: 5,
         backoff_strategy,
         component_max_retries,
     };

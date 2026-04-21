@@ -2,14 +2,23 @@
 pub use rpc_types;
 
 pub mod boolean_query;
+mod cost;
+mod evals;
 mod hash;
 mod processing;
 mod tool_calling;
+mod usage;
 
 pub use boolean_query::BooleanQuery;
+pub use cost::{
+    LlmPricing, NewLlmCallUsage, UsageAggregate, UsageAggregateFilter, UsageByCallerTag,
+    UsageByModel, UsageContext,
+};
+pub use evals::*;
 pub use hash::compute_hash;
 pub use processing::*;
 pub use tool_calling::*;
+pub use usage::{LlmCallOutcome, LlmEndpointKind, Usage};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -269,7 +278,7 @@ mod tests {
         };
 
         let proto: rpc_types::RegionMapping = region.into();
-        let color = proto.color.clone().unwrap();
+        let color = proto.color.unwrap();
         assert_eq!(
             proto.id.unwrap().value,
             "123e4567-e89b-12d3-a456-426614174000"

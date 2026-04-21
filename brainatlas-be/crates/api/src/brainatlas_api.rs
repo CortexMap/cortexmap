@@ -63,12 +63,14 @@ where
         paper_metadata: Vec<PaperMetadata>,
         chat_model: Option<String>,
         embedding_model: Option<String>,
+        skip_summarization: bool,
+        correlation_id: Option<String>,
     ) -> Result<ProcessRegionResponse, Self::Error> {
         // Validate region_id and batch_id are present
         let region_uuid = region_id.ok_or(ApiError::MissingOrInvalidId)?;
         let batch_uuid = batch_id.ok_or(ApiError::MissingOrInvalidId)?;
 
-        // Call the full processing pipeline
+        // Call the processing pipeline
         let summary_id = self
             .app()
             .process_region(
@@ -78,15 +80,53 @@ where
                 paper_metadata,
                 chat_model,
                 embedding_model,
+                skip_summarization,
+                correlation_id,
             )
             .await
             .map_err(ApiError::AppError)?;
+
+        let detail = if skip_summarization {
+            format!(
+                "Successfully chunked and embedded for summary {}",
+                summary_id
+            )
+        } else {
+            format!("Successfully created summary {}", summary_id)
+        };
 
         Ok(ProcessRegionResponse {
             region_id: Some(rpc_types::Uuid {
                 value: region_uuid.to_string(),
             }),
-            detail: format!("Successfully created summary {}", summary_id),
+            detail,
+        })
+    }
+
+    async fn process_region_no_papers(
+        &self,
+        region_id: Option<Uuid>,
+        batch_id: Option<Uuid>,
+        chat_model: Option<String>,
+        correlation_id: Option<String>,
+    ) -> Result<ProcessRegionResponse, Self::Error> {
+        let region_uuid = region_id.ok_or(ApiError::MissingOrInvalidId)?;
+        // Batch id is optional from the wire; synthesise one if absent so the
+        // usage rows still have a stable batch grouping.
+        let batch_uuid = batch_id.unwrap_or_else(Uuid::new_v4);
+
+        let summary_id = self
+            .app()
+            .process_region_no_papers(region_uuid, batch_uuid, chat_model, correlation_id)
+            .await
+            .map_err(ApiError::AppError)?;
+
+        let detail = format!("Successfully created knowledge-only summary {}", summary_id);
+        Ok(ProcessRegionResponse {
+            region_id: Some(rpc_types::Uuid {
+                value: region_uuid.to_string(),
+            }),
+            detail,
         })
     }
 
@@ -94,11 +134,12 @@ where
         &self,
         region_name: String,
         count: u32,
+        correlation_id: Option<String>,
     ) -> Result<GenerateQueriesResponse, Self::Error> {
         // Call the LLM to generate queries
         let queries = self
             .app()
-            .generate_queries(&region_name, count)
+            .generate_queries(&region_name, count, correlation_id, None)
             .await
             .map_err(ApiError::AppError)?;
 
@@ -110,5 +151,89 @@ where
             .get_chunk_source(chunk_id)
             .await
             .map_err(ApiError::AppError)
+    }
+}
+
+// Stateless eval-related helpers exposed directly on `BrainAtlasApi` (not part
+// of the `BrainRegionApi` trait because they are pure LLM proxies, not part
+// of the brain-region domain).
+impl<E, S> BrainAtlasApi<S>
+where
+    E: std::error::Error + Send + Sync + 'static,
+    S: Services<Error = E> + 'static,
+{
+    pub async fn embed(
+        &self,
+        text: &str,
+        embedding_model: Option<&str>,
+        correlation_id: Option<String>,
+    ) -> Result<Vec<f32>, AppError<E>> {
+        self.app()
+            .embed(text, embedding_model, correlation_id)
+            .await
+    }
+
+    pub async fn extract_claims(
+        &self,
+        summary_text: &str,
+        region_name: &str,
+        chat_model: Option<&str>,
+        correlation_id: Option<String>,
+    ) -> Result<domain::ClaimsResponse, AppError<E>> {
+        self.app()
+            .extract_claims(summary_text, region_name, chat_model, correlation_id)
+            .await
+    }
+
+    pub async fn judge_groundedness(
+        &self,
+        claim_text: &str,
+        evidence_chunks: &[String],
+        chat_model: Option<&str>,
+        correlation_id: Option<String>,
+    ) -> Result<domain::GroundednessVerdict, AppError<E>> {
+        self.app()
+            .judge_groundedness(claim_text, evidence_chunks, chat_model, correlation_id)
+            .await
+    }
+
+    pub async fn judge_rubric(
+        &self,
+        summary_text: &str,
+        region_name: &str,
+        chat_model: Option<&str>,
+        correlation_id: Option<String>,
+    ) -> Result<domain::RubricScores, AppError<E>> {
+        self.app()
+            .judge_rubric(summary_text, region_name, chat_model, correlation_id)
+            .await
+    }
+
+    pub async fn judge_citation(
+        &self,
+        claim_text: &str,
+        sentence_context: &str,
+        chunk_text: &str,
+        chat_model: Option<&str>,
+        correlation_id: Option<String>,
+    ) -> Result<domain::GroundednessVerdict, AppError<E>> {
+        self.app()
+            .judge_citation(
+                claim_text,
+                sentence_context,
+                chunk_text,
+                chat_model,
+                correlation_id,
+            )
+            .await
+    }
+
+    /// Aggregate LLM usage rows over the supplied filter. Powers the
+    /// `GET /brainatlas-be/api/llm/usage` endpoint.
+    pub async fn usage_aggregate(
+        &self,
+        filter: domain::UsageAggregateFilter,
+    ) -> Result<domain::UsageAggregate, AppError<E>> {
+        self.app().usage_aggregate(filter).await
     }
 }

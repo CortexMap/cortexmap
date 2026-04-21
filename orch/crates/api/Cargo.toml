@@ -10,3 +10,14 @@ async-trait.workspace = true
 thiserror.workspace = true
 app.workspace = true
 chrono.workspace = true
+
+[dev-dependencies]
+server = { path = "../server" }
+services.workspace = true
+axum = { version = "0.8", features = ["macros"] }
+tokio = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+serde_json = "1.0"
+serde = { workspace = true }
+

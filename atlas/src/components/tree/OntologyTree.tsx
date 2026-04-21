@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAtlasStore } from '../../store/atlasStore';
+import { useSelectRegion } from '../../hooks/useSelectRegion';
 import { flattenTree, getAncestorPath, searchTree, collectAllNodes } from '../../utils/treeUtils';
 import type { FlatTreeNode } from '../../types';
 import styles from './OntologyTree.module.css';
@@ -10,9 +11,10 @@ const MAX_VISIBLE = 300;
 export function OntologyTree() {
   const {
     ontology, selectedStructureId, hoveredStructureId,
-    setHovered, selectStructure, annotatedStructures,
+    setHovered, annotatedStructures,
     checked3dIds, check3dRegion, uncheck3dRegion, clearAllChecked3d,
   } = useAtlasStore();
+  const selectRegion = useSelectRegion();
 
   const location = useLocation();
   const is3d = location.pathname === '/3d';
@@ -82,11 +84,11 @@ export function OntologyTree() {
   // Allow deselection: clicking the same node deselects it
   const handleSelect = useCallback((id: number) => {
     if (id === selectedStructureId) {
-      selectStructure(null);
+      selectRegion(null);
     } else {
-      selectStructure(id);
+      selectRegion(id);
     }
-  }, [selectedStructureId, selectStructure]);
+  }, [selectedStructureId, selectRegion]);
 
   const handleCheck = useCallback((id: number, checked: boolean) => {
     if (checked) {

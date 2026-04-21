@@ -59,6 +59,13 @@ impl VectorDatabase for BrainAtlasVectorDB {
         database_url: &str,
         embeddings: Vec<NewEmbedding>,
     ) -> Result<(), Self::Error> {
+        // diesel's `.values(&[])` with no rows is not a valid INSERT and will
+        // fail at the SQL layer. The knowledge-only summary path passes an
+        // empty vec (no sources → no chunks to embed), so we short-circuit.
+        if embeddings.is_empty() {
+            return Ok(());
+        }
+
         self.run_blocking(database_url, move |conn| {
             use schema::brain_region_embeddings;
 
@@ -95,6 +102,7 @@ impl VectorDatabase for BrainAtlasVectorDB {
         summary: NewRegionSummary,
     ) -> Result<Uuid, Self::Error> {
         self.run_blocking(database_url, move |conn| {
+            use diesel::Connection;
             use schema::region_summary;
 
             let row = NewRegionSummaryRow {
@@ -106,10 +114,26 @@ impl VectorDatabase for BrainAtlasVectorDB {
                 batch_id: summary.batch_id,
             };
 
-            diesel::insert_into(region_summary::table)
-                .values(&row)
-                .returning(region_summary::id)
-                .get_result::<Uuid>(conn)
+            // Atomically deactivate any prior active summaries for this region
+            // and insert the new one. Without this, region_summary accumulates
+            // one row per pipeline cycle (we observed 2,475 rows across 1,194
+            // regions before the fix). The partial index
+            // `idx_region_summary_active WHERE is_active = true` was always
+            // designed for latest-only access; this enforces it.
+            conn.transaction::<Uuid, diesel::result::Error, _>(|conn| {
+                diesel::update(
+                    region_summary::table
+                        .filter(region_summary::region_id.eq(row.region_id))
+                        .filter(region_summary::is_active.eq(true)),
+                )
+                .set(region_summary::is_active.eq(false))
+                .execute(conn)?;
+
+                diesel::insert_into(region_summary::table)
+                    .values(&row)
+                    .returning(region_summary::id)
+                    .get_result::<Uuid>(conn)
+            })
         })
         .await
     }

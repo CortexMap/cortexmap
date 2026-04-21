@@ -89,6 +89,34 @@ services:
     networks:
       - infra-net
 
+  evals-be:
+    image: 678025036956.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/evals-be:latest
+    container_name: evals-be
+    restart: unless-stopped
+    depends_on:
+      brainatlas-be:
+        condition: service_healthy
+        required: false
+    environment:
+      # evals-be deliberately has no OPENROUTER_API_KEY — all LLM work is
+      # proxied through brainatlas-be.
+      DATABASE_URL: ${DATABASE_URL}
+      BRAINATLAS_BASE_URL: ${EVALS_BRAINATLAS_BASE_URL:-http://brainatlas-be:8081}
+      EVALS_HTTP_ADDR: 0.0.0.0:8083
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    ports:
+      - "8083:8083"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/evals-be/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - infra-net
+
   brainatlas-fe:
     image: 285560394698.dkr.ecr.us-east-1.amazonaws.com/capstone26t217/brainatlas-fe:latest
     container_name: brainatlas-fe

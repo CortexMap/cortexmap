@@ -3,6 +3,13 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
+/// Lightweight region info for pipeline queries
+#[derive(Debug, Clone)]
+pub struct RegionInfo {
+    pub id: Uuid,
+    pub name: String,
+}
+
 pub trait EnvInfra: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
     fn get_env_var(&self, key: &str) -> Result<String, Self::Error>;
@@ -121,6 +128,10 @@ pub trait BatchManagement: Send + Sync {
     /// Delete all queries for a region
     async fn delete_queries(&self, database_url: &str, region_id: Uuid) -> Result<(), Self::Error>;
 
+    /// Wipe every row from region_queries (full pipeline reset).
+    /// Returns the number of rows deleted.
+    async fn delete_all_queries(&self, database_url: &str) -> Result<i64, Self::Error>;
+
     /// Create a new processing batch
     async fn create_batch(
         &self,
@@ -166,6 +177,14 @@ pub trait BatchManagement: Send + Sync {
         task_ids: &[i64],
     ) -> Result<usize, Self::Error>;
 
+    /// Return the subset of `task_ids` whose status is 'completed'.
+    /// Used by `generate_summary` to build a batch from only already-fetched papers.
+    async fn get_completed_task_ids(
+        &self,
+        database_url: &str,
+        task_ids: &[i64],
+    ) -> Result<Vec<i64>, Self::Error>;
+
     /// Get S3 keys for completed fetch tasks
     async fn get_task_s3_keys(
         &self,
@@ -206,6 +225,31 @@ pub trait BatchManagement: Send + Sync {
         database_url: &str,
         region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error>;
+}
+
+/// Raw system stats from DB queries
+#[derive(Debug, Clone, Default)]
+pub struct SystemStatsRaw {
+    pub fetch_tasks_by_status: Vec<(String, i64)>,
+    pub batches_by_status: Vec<(String, i64)>,
+    pub total_queries: i64,
+    pub regions_with_queries: i64,
+    pub query_distribution: Vec<(i64, i64)>,
+    pub total_papers: i64,
+    pub total_summaries: i64,
+}
+
+/// Counts buckets for the summary-freshness dashboard panel.
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
+pub struct SummaryFreshnessCounts {
+    /// Regions whose latest active summary is younger than `staleness_days`.
+    pub fresh: i64,
+    /// Regions whose latest active summary is older than `staleness_days`.
+    pub stale: i64,
+    /// Regions with no usable active summary.
+    pub no_summary: i64,
+    /// Cutoff used to bucket the rows.
+    pub staleness_days: i64,
 }
 
 /// Region mapping information from region_mapping table
@@ -282,6 +326,11 @@ pub trait RegionMappingQueries: Send + Sync {
     /// Count regions that have no batches at all
     async fn count_regions_without_batches(&self, database_url: &str) -> Result<i64, Self::Error>;
 
+    /// Count collecting batches whose fetch tasks include at least one in_progress task.
+    /// These are the regions actively being fetched right now.
+    async fn count_actively_fetching_regions(&self, database_url: &str)
+    -> Result<i64, Self::Error>;
+
     /// Get region summaries by region_id (Int4)
     async fn get_region_summaries(
         &self,
@@ -304,6 +353,42 @@ pub trait RegionMappingQueries: Send + Sync {
         query: &str,
         limit: i64,
     ) -> Result<(Vec<SearchHitRecord>, i64), Self::Error>;
+
+    /// Get regions that have zero queries in region_queries.
+    /// These need query generation (Phase 1 of pipeline).
+    async fn get_regions_without_queries(
+        &self,
+        database_url: &str,
+    ) -> Result<Vec<RegionInfo>, Self::Error>;
+
+    /// Get all regions that have queries (for re-scanning in Phase 2).
+    /// Returns (region_id_uuid, region_name, [query_text, ...]) for each region.
+    async fn get_all_regions_with_queries(
+        &self,
+        database_url: &str,
+    ) -> Result<Vec<(Uuid, String, Vec<String>)>, Self::Error>;
+
+    /// Count fetch_tasks that are pending or in_progress.
+    async fn get_pending_fetch_task_count(&self, database_url: &str) -> Result<i64, Self::Error>;
+
+    /// Get the latest active non-empty summary's `created_at` for a region.
+    /// Returns `None` if the region has never produced a usable summary.
+    async fn get_latest_active_summary_age(
+        &self,
+        database_url: &str,
+        region_id: Uuid,
+    ) -> Result<Option<chrono::NaiveDateTime>, Self::Error>;
+
+    /// Aggregate summary-freshness counts for the dev dashboard.
+    /// `staleness_days` is the cutoff: summaries older than this are "stale".
+    async fn get_summary_freshness_counts(
+        &self,
+        database_url: &str,
+        staleness_days: i64,
+    ) -> Result<SummaryFreshnessCounts, Self::Error>;
+
+    /// Get comprehensive system stats for the dev dashboard (aggregate counts).
+    async fn get_system_stats(&self, database_url: &str) -> Result<SystemStatsRaw, Self::Error>;
 }
 
 /// Cache client for Redis-backed read-through caching and invalidation.
@@ -324,6 +409,11 @@ pub trait CacheClient: Send + Sync {
     /// Delete all keys matching a glob pattern (e.g. `orch:region:*:status`).
     /// Returns the number of keys deleted.
     async fn cache_del_pattern(&self, pattern: &str) -> Result<u64, Self::Error>;
+
+    /// Snapshot of cache health and per-prefix key counts. Always returns `Ok`:
+    /// connection failures populate the `connected: false` / `error` fields
+    /// rather than propagating, so the dashboard can render even when Redis is down.
+    async fn cache_stats(&self) -> Result<domain::RedisStats, Self::Error>;
 }
 
 /// Blanket: any `T: OrchDatabase + EnvInfra + HttpClient + BatchManagement + RegionMappingQueries + CacheClient` automatically satisfies `Infra`.

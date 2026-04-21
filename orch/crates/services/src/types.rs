@@ -57,6 +57,18 @@ pub struct ProcessRegionRequest {
     /// Embedding model to use (e.g., "text-embedding-3-small")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<String>,
+    /// If true, only chunk and embed — skip RAG summarization.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub skip_summarization: bool,
+    /// Opaque correlation id that brainatlas-be persists alongside every
+    /// `llm_call_usage` row produced while processing this batch. Typical
+    /// value is `batch:{batch_uuid}`. See `plans/2026-04-20-llm-cost-tracking-v1.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,10 +77,29 @@ pub struct ProcessRegionResponse {
     pub detail: String,
 }
 
+/// Knowledge-only summary request — used when NCBI returns zero papers for a
+/// region. Brainatlas generates a structured summary from the LLM's own
+/// general knowledge (no chunks, no citations) so every region ends up with
+/// at least one summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessNoPapersRequest {
+    pub region_id: UuidWrapper,
+    pub batch_id: UuidWrapper,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_model: Option<String>,
+    /// Correlation id for cost tracking; typical value is `batch:{batch_uuid}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateQueriesRequest {
     pub region_name: String,
     pub count: u32,
+    /// Correlation id for cost tracking; brainatlas-be persists this
+    /// alongside the `llm_call_usage` row. Typical value is `region:{region_id}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

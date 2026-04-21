@@ -4,7 +4,7 @@ Content-Type: application/json
 
 {
   "worker_count": 5,
-  "task_timeout_secs": 300,
+  "task_timeout_secs": 2,
   "max_retry_attempts": 3
 }
 

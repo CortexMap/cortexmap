@@ -32,6 +32,13 @@ pub struct RetryConfig {
     /// Default: 10 (e.g., 10x timeout means 10 seconds for 1 second timeout)
     pub stale_task_multiplier: u64,
 
+    /// Base delay (in seconds) for the backoff strategy when a task fails.
+    /// This is intentionally separate from `task_timeout_secs` (the inter-task
+    /// polling delay) so that a large polling interval does not penalise workers
+    /// with an equally large failure backoff.
+    /// Default: 5 seconds
+    pub failure_backoff_base_secs: u64,
+
     /// Backoff strategy for retries
     /// Default: Constant (no backoff)
     pub backoff_strategy: BackoffStrategy,
@@ -91,6 +98,7 @@ impl Default for RetryConfig {
         Self {
             empty_queue_sleep_secs: 5,
             stale_task_multiplier: 10,
+            failure_backoff_base_secs: 5,
             backoff_strategy: BackoffStrategy::Constant,
             component_max_retries: None,
         }

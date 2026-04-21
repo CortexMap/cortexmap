@@ -1,7 +1,9 @@
 use domain::{
     AllocateWorkersRequest, BatchStatusResult, ChunkSourceResponse, ConfigEntry, ConfigEntryUpdate,
-    GenerateSummaryResult, PipelineStatsResult, Region, RegionStatusResult, SearchRegionResult,
-    SearchResponse, StopWorkersRequest, WorkerAllocationResponse, WorkerStatus, WorkerStopResponse,
+    GenerateSummaryResult, PipelineHealthStatus, PipelineStatsResult, PipelineTriggerRequest,
+    PipelineTriggerResult, RedisStats, Region, RegionStatusResult, SearchRegionResult,
+    SearchResponse, StopWorkersRequest, SummaryFreshness, SystemStats, WorkerAllocationResponse,
+    WorkerStatus, WorkerStopResponse,
 };
 use uuid::Uuid;
 
@@ -81,4 +83,53 @@ pub trait OrchApi: Send + Sync {
     /// Reverse search: find brain regions by natural language query
     /// Searches across region names, acronyms, and latest summaries
     async fn reverse_search(&self, query: String) -> Result<SearchResponse, Self::Error>;
+
+    /// Lightweight pipeline health snapshot: region/query/task counts + active workers
+    async fn get_pipeline_status(&self) -> Result<PipelineHealthStatus, Self::Error>;
+
+    /// Get comprehensive system statistics for the dev dashboard
+    async fn get_system_stats(&self) -> Result<SystemStats, Self::Error>;
+
+    /// Per-region summary freshness counts (fresh / stale / no_summary).
+    /// Backs `/dev/api/summary-freshness`. Cutoff comes from
+    /// `summary_staleness_days` config (default 30).
+    async fn get_summary_freshness(&self) -> Result<SummaryFreshness, Self::Error>;
+
+    /// Manually trigger pipeline phases on demand. Each phase is opt-in via
+    /// the request body so clients can e.g. only rediscover papers without
+    /// regenerating queries. Phases run sequentially in the fixed order:
+    /// reset -> generate_queries -> discover_papers -> ensure_workers.
+    async fn trigger_pipeline(
+        &self,
+        req: PipelineTriggerRequest,
+    ) -> Result<PipelineTriggerResult, Self::Error>;
+
+    /// Snapshot of the Redis cache used by orch (connection state, key counts
+    /// per prefix, memory usage, hit rate). Always succeeds: a Redis outage
+    /// surfaces as `connected: false` with an `error` string.
+    async fn get_redis_stats(&self) -> Result<RedisStats, Self::Error>;
+
+    /// Aggregate eval status: proxies the latest evals-be `/api/evals/summary`
+    /// for the configured `eval_version`. Powers `/orch/api/evals/status` and
+    /// the dashboard "Evals" panel.
+    async fn get_eval_status(&self) -> Result<app::EvalStatusSummary, Self::Error>;
+
+    /// Worst-offenders for one metric. Proxies `/evals-be/api/evals/worst`.
+    async fn get_eval_worst(
+        &self,
+        metric: String,
+        limit: i64,
+    ) -> Result<app::EvalWorstOffenders, Self::Error>;
+
+    /// Aggregate LLM cost for a single eval run. Proxies brainatlas-be's
+    /// `/api/llm/usage?correlation_id_prefix=eval:{run_id}:`.
+    async fn get_eval_run_cost(&self, run_id: Uuid) -> Result<domain::EvalRunCost, Self::Error>;
+
+    /// Detailed LLM cost aggregate for the dev dashboard. Proxies
+    /// brainatlas-be's `/api/llm/usage`, optionally restricted to the last
+    /// `since_hours` hours (`None` = all time).
+    async fn get_llm_cost_summary(
+        &self,
+        since_hours: Option<u32>,
+    ) -> Result<domain::LlmCostSummary, Self::Error>;
 }

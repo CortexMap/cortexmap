@@ -1,0 +1,13 @@
+[package]
+name = "evals-domain"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+strum.workspace = true
+sha2.workspace = true
+brainatlas-domain.workspace = true

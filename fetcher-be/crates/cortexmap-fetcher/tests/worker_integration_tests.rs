@@ -127,7 +127,7 @@ async fn test_enqueue_query_integration() {
     match result {
         Ok(pmc_ids) => {
             println!("✓ Enqueued {} tasks", pmc_ids.len());
-            assert!(pmc_ids.len() > 0, "Expected at least one PMC ID");
+            assert!(!pmc_ids.is_empty(), "Expected at least one PMC ID");
             assert!(
                 pmc_ids.len() <= blueprint.fetcher.page_size as usize,
                 "Too many PMC IDs"
