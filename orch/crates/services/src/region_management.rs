@@ -1247,13 +1247,6 @@ mod tests {
                 .insert(url_contains.to_string(), body);
             self
         }
-        fn with_http_error(self, url_contains: &str) -> Self {
-            self.http_error_urls
-                .lock()
-                .unwrap()
-                .push(url_contains.to_string());
-            self
-        }
     }
 
     impl EnvInfra for FullInfra {
@@ -1737,8 +1730,6 @@ mod tests {
     }
 
     // ========== ADDITIONAL TESTS (gap-close) ==========
-
-    use app::RegionManagement as _;
 
     fn mk_batch(id: Uuid, region_id: Uuid, status: BatchStatus) -> ProcessingBatch {
         ProcessingBatch {
