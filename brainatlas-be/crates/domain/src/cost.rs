@@ -113,6 +113,29 @@ pub struct UsageByCallerTag {
     pub total_calls: i64,
 }
 
+/// Identifier for the OpenAI-compatible LLM gateway servicing a request.
+///
+/// `brainatlas-be` supports two providers that speak the same wire format:
+/// OpenRouter and Requesty. The selected provider is resolved at the service
+/// layer from env vars (see `services::infra::resolve_llm_provider`) and
+/// threaded through the `UsageContext` so the cost-accounting `llm.call`
+/// event can log which gateway was hit. No DB column change is required.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LlmProvider {
+    OpenRouter,
+    Requesty,
+}
+
+impl LlmProvider {
+    /// Stable, lowercase label for logs and future DB persistence.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LlmProvider::OpenRouter => "openrouter",
+            LlmProvider::Requesty => "requesty",
+        }
+    }
+}
+
 /// Context threaded into the cost accounting helper alongside an
 /// `LlmCallOutcome<T>`. All fields except `caller_tag` are optional: they let
 /// the persisted `llm_call_usage` row link back to the originating region,
@@ -125,6 +148,11 @@ pub struct UsageContext {
     pub batch_id: Option<Uuid>,
     pub caller_tag: Option<String>,
     pub request_id: Option<String>,
+    /// Which OpenAI-compatible gateway served the call. Populated by the
+    /// service layer after `resolve_llm_provider`. `None` when the
+    /// accountant is invoked outside the provider-aware service paths
+    /// (e.g. tests).
+    pub llm_provider: Option<LlmProvider>,
 }
 
 impl UsageContext {
@@ -150,6 +178,11 @@ impl UsageContext {
 
     pub fn with_batch(mut self, batch_id: Option<Uuid>) -> Self {
         self.batch_id = batch_id;
+        self
+    }
+
+    pub fn with_provider(mut self, provider: LlmProvider) -> Self {
+        self.llm_provider = Some(provider);
         self
     }
 }

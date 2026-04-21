@@ -9,7 +9,7 @@
 
 use crate::ServiceError;
 use crate::infra::{LlmPricingRepo, LlmUsageRepo};
-use domain::{LlmCallOutcome, LlmPricing, NewLlmCallUsage, UsageContext};
+use domain::{LlmCallOutcome, LlmPricing, LlmProvider, NewLlmCallUsage, UsageContext};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -112,10 +112,16 @@ where
         let cost_usd: Option<f64> = pricing
             .as_ref()
             .map(|p| p.compute_cost_usd(outcome.usage, outcome.endpoint));
+        let provider_label: &'static str = ctx
+            .llm_provider
+            .as_ref()
+            .map(LlmProvider::as_str)
+            .unwrap_or("unknown");
         if pricing.is_none() {
             warn!(
                 model = %outcome.model,
                 caller_tag = ?ctx.caller_tag,
+                provider = provider_label,
                 "cost-accounting: no pricing row for model; cost_usd will be NULL"
             );
         }
@@ -125,6 +131,7 @@ where
             target: "llm.call",
             endpoint = outcome.endpoint.as_tag(),
             model = %outcome.model,
+            provider = provider_label,
             caller_tag = ?ctx.caller_tag,
             prompt_tokens = outcome.usage.prompt_tokens,
             completion_tokens = outcome.usage.completion_tokens,
@@ -164,6 +171,7 @@ where
             warn!(
                 error = %e,
                 model = %outcome.model,
+                provider = provider_label,
                 "cost-accounting: failed to insert llm_call_usage row"
             );
         }
@@ -437,6 +445,7 @@ mod tests {
             batch_id: Some(batch_id),
             caller_tag: Some("full-ctx-test".to_string()),
             request_id: Some("req-abc".to_string()),
+            llm_provider: None,
         };
 
         let outc = outcome("openai/gpt-4o-mini", 100, 50);

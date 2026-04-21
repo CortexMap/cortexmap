@@ -83,6 +83,15 @@ where
             .map(|m| (m.s3_key.clone(), m))
             .collect();
 
+        tracing::info!(
+            region = %region.name,
+            region_id = region.region_id,
+            batch_id = %batch_id,
+            s3_keys = s3_keys.len(),
+            skip_summarization,
+            "process_region: starting"
+        );
+
         // 1. Download all S3 files and track which S3 key each chunk came from
         //    Also track character offsets within each file for source attribution
         let mut chunks_with_source: Vec<(String, usize, usize)> = Vec::new(); // (s3_key, start_idx, end_idx)
@@ -135,8 +144,24 @@ where
             .await
             .map_err(AppError::ServiceError)?
         {
+            tracing::info!(
+                region = %region.name,
+                region_id = region.region_id,
+                batch_id = %batch_id,
+                existing_summary_id = %existing.summary_id,
+                content_hash = %content_hash,
+                "process_region: content hash matched — reusing existing summary, no LLM call"
+            );
             return Ok(existing.summary_id);
         }
+
+        tracing::info!(
+            region = %region.name,
+            region_id = region.region_id,
+            batch_id = %batch_id,
+            chunks = all_chunks.len(),
+            "process_region: new content, proceeding to embed + summarize"
+        );
 
         // 4. Generate embeddings for all chunks in parallel
         let embedding_futures: Vec<_> = all_chunks
@@ -265,6 +290,13 @@ where
             .await
             .map_err(AppError::ServiceError)?
         {
+            tracing::info!(
+                region = %region.name,
+                region_id = region.region_id,
+                batch_id = %batch_id,
+                existing_summary_id = %existing.summary_id,
+                "process_region_no_papers: knowledge-only hash matched — reusing existing summary, no LLM call"
+            );
             return Ok(existing.summary_id);
         }
 

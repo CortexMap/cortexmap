@@ -1,6 +1,6 @@
 use crate::InfraError;
 use crate::env::BrainAtlasEnvInfra;
-use crate::llm::OpenRouterClient;
+use crate::llm::OpenAiCompatibleClient;
 use crate::llm_usage::BrainAtlasLlmUsage;
 use crate::pg::BrainAtlasPostgresql;
 use crate::s3::BrainAtlasS3;
@@ -18,7 +18,7 @@ pub struct BrainAtlasInfra {
     pg: BrainAtlasPostgresql,
     env: BrainAtlasEnvInfra,
     s3: BrainAtlasS3,
-    llm: OpenRouterClient,
+    llm: OpenAiCompatibleClient,
     vectordb: BrainAtlasVectorDB,
     llm_usage: BrainAtlasLlmUsage,
 }
@@ -41,7 +41,7 @@ impl BrainAtlasInfra {
 
         let pg = BrainAtlasPostgresql::new();
         let s3 = BrainAtlasS3::new(s3_endpoint, s3_access_key, s3_secret_key, s3_bucket);
-        let llm = OpenRouterClient::new();
+        let llm = OpenAiCompatibleClient::new();
         let vectordb = BrainAtlasVectorDB::new();
         let llm_usage = BrainAtlasLlmUsage::new();
 
@@ -90,12 +90,13 @@ impl EmbeddingGenerator for BrainAtlasInfra {
 
     async fn generate_embedding(
         &self,
+        base_url: &str,
         api_key: &str,
         embedding_model: &str,
         text: &str,
     ) -> Result<LlmCallOutcome<Vec<f32>>, Self::Error> {
         self.llm
-            .generate_embedding(api_key, embedding_model, text)
+            .generate_embedding(base_url, api_key, embedding_model, text)
             .await
     }
 }
@@ -106,25 +107,27 @@ impl LlmClient for BrainAtlasInfra {
 
     async fn summarize_with_tools(
         &self,
+        base_url: &str,
         api_key: &str,
         chat_model: &str,
         messages: &[serde_json::Value],
         tools: &[serde_json::Value],
     ) -> Result<LlmCallOutcome<LlmResponse>, Self::Error> {
         self.llm
-            .summarize_with_tools(api_key, chat_model, messages, tools)
+            .summarize_with_tools(base_url, api_key, chat_model, messages, tools)
             .await
     }
 
     async fn generate_queries(
         &self,
+        base_url: &str,
         api_key: &str,
         chat_model: &str,
         region_name: &str,
         count: u32,
     ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error> {
         self.llm
-            .generate_queries(api_key, chat_model, region_name, count)
+            .generate_queries(base_url, api_key, chat_model, region_name, count)
             .await
     }
 }

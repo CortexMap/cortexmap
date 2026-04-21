@@ -35,7 +35,7 @@ impl ConfigKey {
             ConfigKey::EvalConcurrency => "5",
             ConfigKey::EvalJudgeChatModel => "openai/gpt-4o-mini",
             ConfigKey::EvalRubricChatModel => "openai/gpt-4o",
-            ConfigKey::EvalEmbeddingModel => "text-embedding-3-small",
+            ConfigKey::EvalEmbeddingModel => "openai/text-embedding-3-small",
             ConfigKey::EvalTopKChunks => "8",
             // 0.0 = no absolute floor; trust pgvector's ORDER BY similarity LIMIT top_k
             // to return the k best chunks, and let the judge LLM decide support.

@@ -29,15 +29,24 @@ fn render_template(template: &str, vars: &[(&str, &str)]) -> String {
     result
 }
 
-pub struct OpenRouterClient {
-    base_url: String,
+/// Stateless OpenAI-compatible HTTP client shared by OpenRouter and Requesty.
+///
+/// The base URL is NOT stored on the client: it's threaded through the
+/// `EmbeddingGenerator` and `LlmClient` trait methods per call, so the same
+/// instance can serve different providers across requests.
+pub struct OpenAiCompatibleClient {
     client: OnceLock<Client>,
 }
 
-impl OpenRouterClient {
+impl Default for OpenAiCompatibleClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OpenAiCompatibleClient {
     pub fn new() -> Self {
         Self {
-            base_url: "https://openrouter.ai/api/v1".to_string(),
             client: OnceLock::new(),
         }
     }
@@ -47,7 +56,13 @@ impl OpenRouterClient {
     }
 }
 
-// Request/Response types for OpenRouter API
+/// Back-compat alias. Kept for one release cycle so downstream docs / tests
+/// that still reference `OpenRouterClient` keep compiling. Prefer the new
+/// name in fresh code.
+#[allow(dead_code)]
+pub type OpenRouterClient = OpenAiCompatibleClient;
+
+// Request/Response types for OpenAI-compatible APIs (OpenRouter, Requesty, …)
 
 #[derive(Serialize)]
 struct EmbeddingRequest {
@@ -67,8 +82,8 @@ struct EmbeddingData {
     embedding: Vec<f32>,
 }
 
-/// Token usage block returned by OpenRouter. Only the three fields we care
-/// about are deserialized; any extras are ignored.
+/// Token usage block returned by OpenAI-compatible gateways. Only the three
+/// fields we care about are deserialized; any extras are ignored.
 #[derive(Deserialize, Default, Debug, Clone, Copy)]
 struct UsageWire {
     #[serde(default)]
@@ -136,11 +151,12 @@ struct ChatChoice {
 }
 
 #[async_trait::async_trait]
-impl EmbeddingGenerator for OpenRouterClient {
+impl EmbeddingGenerator for OpenAiCompatibleClient {
     type Error = InfraError;
 
     async fn generate_embedding(
         &self,
+        base_url: &str,
         api_key: &str,
         embedding_model: &str,
         text: &str,
@@ -154,7 +170,7 @@ impl EmbeddingGenerator for OpenRouterClient {
 
         let response = self
             .get_client()
-            .post(format!("{}/embeddings", self.base_url))
+            .post(format!("{}/embeddings", base_url))
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .json(&request)
@@ -217,11 +233,12 @@ impl EmbeddingGenerator for OpenRouterClient {
 }
 
 #[async_trait::async_trait]
-impl LlmClient for OpenRouterClient {
+impl LlmClient for OpenAiCompatibleClient {
     type Error = InfraError;
 
     async fn summarize_with_tools(
         &self,
+        base_url: &str,
         api_key: &str,
         chat_model: &str,
         messages: &[serde_json::Value],
@@ -248,7 +265,7 @@ impl LlmClient for OpenRouterClient {
 
         let response = self
             .get_client()
-            .post(format!("{}/chat/completions", self.base_url))
+            .post(format!("{}/chat/completions", base_url))
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .json(&request)
@@ -336,6 +353,7 @@ impl LlmClient for OpenRouterClient {
 
     async fn generate_queries(
         &self,
+        base_url: &str,
         api_key: &str,
         chat_model: &str,
         region_name: &str,
@@ -408,7 +426,7 @@ impl LlmClient for OpenRouterClient {
 
             let response = self
                 .get_client()
-                .post(format!("{}/chat/completions", self.base_url))
+                .post(format!("{}/chat/completions", base_url))
                 .header("Authorization", format!("Bearer {}", api_key))
                 .header("Content-Type", "application/json")
                 .json(&request)
@@ -770,7 +788,7 @@ mod tests {
 
     // ── Gap-fill tests (Plan Task 1.10) ──────────────────────────────────
 
-    /// Tool-calling loop in `OpenRouterClient::generate_queries` aggregates
+    /// Tool-calling loop in `OpenAiCompatibleClient::generate_queries` aggregates
     /// `usage` across iterations via `Usage::saturating_add` (see
     /// `llm.rs:437-449`). Simulate two iterations by parsing two successive
     /// `ChatResponse` wire payloads and summing their usage — the resulting

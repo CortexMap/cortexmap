@@ -54,7 +54,7 @@ pub struct ProcessRegionRequest {
     /// Chat model to use for summarization (e.g., "openai/gpt-4o-mini")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_model: Option<String>,
-    /// Embedding model to use (e.g., "text-embedding-3-small")
+    /// Embedding model to use (e.g., "openai/text-embedding-3-small")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<String>,
     /// If true, only chunk and embed — skip RAG summarization.

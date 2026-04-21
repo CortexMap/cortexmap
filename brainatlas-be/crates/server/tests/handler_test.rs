@@ -640,7 +640,7 @@ async fn embed_endpoint_returns_vector_and_forwards_model_override() {
 
     let body = serde_json::json!({
         "text": "hippocampus memory",
-        "embedding_model": "text-embedding-3-small",
+        "embedding_model": "openai/text-embedding-3-small",
         "correlation_id": "eval:run-4:step-1"
     });
     let req = Request::builder()
@@ -659,7 +659,7 @@ async fn embed_endpoint_returns_vector_and_forwards_model_override() {
     let calls = state.embed_calls.lock().unwrap().clone();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "hippocampus memory");
-    assert_eq!(calls[0].1.as_deref(), Some("text-embedding-3-small"));
+    assert_eq!(calls[0].1.as_deref(), Some("openai/text-embedding-3-small"));
     assert_eq!(calls[0].2.as_deref(), Some("eval:run-4:step-1"));
 }
 

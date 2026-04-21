@@ -53,7 +53,7 @@ CortexMap automates the research workflow for neuroscientists by:
 - PostgreSQL 15+ with pgvector extension
 - Redis 7+
 - S3-compatible storage (AWS S3 or MinIO)
-- OpenRouter API key
+- OpenRouter **or** Requesty API key (both are OpenAI-compatible; if both are set, Requesty takes priority)
 
 ### Production Deployment
 
@@ -208,8 +208,12 @@ S3_ACCESS_KEY=your_access_key
 S3_SECRET_KEY=your_secret_key
 S3_BUCKET=cortexmap-papers
 
-# LLM Provider
+# LLM Provider (set at least one; Requesty wins when both are set)
 OPENROUTER_API_KEY=your_openrouter_key
+# REQUESTY_API_KEY=your_requesty_key
+# Optional overrides (defaults shown):
+# OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+# REQUESTY_BASE_URL=https://router.requesty.ai/v1
 
 # CORS (optional)
 CORS_ORIGIN=*

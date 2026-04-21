@@ -475,7 +475,11 @@ impl EvalsPostgresql {
                             ON er.summary_id = rs.id AND er.eval_version = $1
                      WHERE rs.summary IS NOT NULL
                        AND length(rs.summary) > 0
-                       AND (er.id IS NULL OR er.status = 'failed')
+                       AND (
+                         er.id IS NULL
+                         OR er.status = 'failed'
+                         OR (er.status = 'running' AND er.started_at < NOW() - INTERVAL '30 minutes')
+                       )
                      ORDER BY rs.created_at ASC NULLS FIRST
                      LIMIT $2",
                 )
