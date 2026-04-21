@@ -600,7 +600,12 @@ mod http_llm_usage_tests {
     }
 
     async fn read_body_json(resp: axum::response::Response) -> serde_json::Value {
-        let body_bytes = resp.into_body().collect().await.expect("collect body").to_bytes();
+        let body_bytes = resp
+            .into_body()
+            .collect()
+            .await
+            .expect("collect body")
+            .to_bytes();
         serde_json::from_slice::<serde_json::Value>(&body_bytes).unwrap_or_else(|e| {
             panic!(
                 "response body is not JSON: {e}; raw = {:?}",
@@ -736,7 +741,11 @@ mod http_llm_usage_tests {
         ));
 
         let router = build_router();
-        let resp = get_uri(&router, &format!("/brainatlas-be/api/llm/usage?caller_tag={tag_a}")).await;
+        let resp = get_uri(
+            &router,
+            &format!("/brainatlas-be/api/llm/usage?caller_tag={tag_a}"),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = read_body_json(resp).await;
 
@@ -747,17 +756,18 @@ mod http_llm_usage_tests {
             "filter by caller_tag must return exactly one row"
         );
         assert_eq!(
-            body["total_prompt_tokens"].as_i64().expect("total_prompt_tokens"),
+            body["total_prompt_tokens"]
+                .as_i64()
+                .expect("total_prompt_tokens"),
             100
         );
         assert_eq!(
-            body["total_completion_tokens"].as_i64().expect("total_completion_tokens"),
+            body["total_completion_tokens"]
+                .as_i64()
+                .expect("total_completion_tokens"),
             50
         );
-        assert_eq!(
-            body["total_tokens"].as_i64().expect("total_tokens"),
-            150
-        );
+        assert_eq!(body["total_tokens"].as_i64().expect("total_tokens"), 150);
 
         let by_model = body["by_model"].as_array().expect("by_model");
         assert_eq!(by_model.len(), 1, "only model A under caller_tag=a");
@@ -768,7 +778,11 @@ mod http_llm_usage_tests {
         assert_eq!(by_caller_tag[0]["caller_tag"], tag_a);
 
         // Same but filter by model=B → should find our embedding row.
-        let resp = get_uri(&router, &format!("/brainatlas-be/api/llm/usage?model={model_b}")).await;
+        let resp = get_uri(
+            &router,
+            &format!("/brainatlas-be/api/llm/usage?model={model_b}"),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = read_body_json(resp).await;
         assert_eq!(body["total_calls"].as_i64().unwrap(), 1);
@@ -883,9 +897,8 @@ mod http_llm_usage_tests {
             Some("ci:underscore-b"),
         ));
 
-        let uri2 = format!(
-            "/brainatlas-be/api/llm/usage?model={model}&correlation_id_prefix={us_prefix}"
-        );
+        let uri2 =
+            format!("/brainatlas-be/api/llm/usage?model={model}&correlation_id_prefix={us_prefix}");
         let resp2 = get_uri(&router, &uri2).await;
         assert_eq!(resp2.status(), StatusCode::OK);
         let body2 = read_body_json(resp2).await;
@@ -1018,7 +1031,11 @@ mod http_llm_usage_tests {
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = read_body_json(resp).await;
-        assert_eq!(body["total_calls"].as_i64().unwrap(), 1, "summary_id filter");
+        assert_eq!(
+            body["total_calls"].as_i64().unwrap(),
+            1,
+            "summary_id filter"
+        );
 
         // Filter by batch_id (UUID)
         let resp = get_uri(
@@ -1046,9 +1063,7 @@ mod http_llm_usage_tests {
         let mismatched = Uuid::new_v4();
         let resp = get_uri(
             &router,
-            &format!(
-                "/brainatlas-be/api/llm/usage?region_id={region_id}&summary_id={mismatched}"
-            ),
+            &format!("/brainatlas-be/api/llm/usage?region_id={region_id}&summary_id={mismatched}"),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1114,11 +1129,7 @@ mod http_llm_usage_tests {
             return;
         }
         let router = build_router();
-        let resp = get_uri(
-            &router,
-            "/brainatlas-be/api/chunks/not-a-uuid/source",
-        )
-        .await;
+        let resp = get_uri(&router, "/brainatlas-be/api/chunks/not-a-uuid/source").await;
         assert_eq!(
             resp.status(),
             StatusCode::BAD_REQUEST,
@@ -1155,4 +1166,3 @@ mod http_llm_usage_tests {
         // future trait-impl additions don't re-discover the wiring.
     }
 }
-
