@@ -1,0 +1,51 @@
+[package]
+name = "cortexmap-contract-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone test crate that lives OUTSIDE all four service workspaces
+# (atlas, orch, brainatlas-be, evals-be, fetcher-be) specifically because
+# cross-workspace path dependencies collide: both `orch/crates/domain` and
+# `brainatlas-be/crates/domain` are named `domain` in their Cargo.toml, so
+# Cargo refuses to have `orch` and `evals-app` (which pulls brainatlas-domain)
+# in the same resolve graph.
+#
+# Purpose: wire-protocol contract tests that instantiate both sides of the
+# orch <-> evals-be RPC boundary in a single process. See
+# `tests/eval_loop_contract.rs`.
+
+[[test]]
+name = "eval_loop_contract"
+path = "eval_loop_contract.rs"
+
+[[test]]
+name = "e2e_test"
+path = "e2e_test.rs"
+
+[dev-dependencies]
+# Evals-be crates (canonical wire types + app + axum handlers).
+evals-domain = { package = "evals-domain", path = "../evals-be/crates/domain" }
+evals-services = { package = "evals-services", path = "../evals-be/crates/services" }
+evals-app = { package = "evals-app", path = "../evals-be/crates/app" }
+evals-api = { package = "evals-api", path = "../evals-be/crates/api" }
+evals-rpc-types = { package = "evals-rpc-types", path = "../evals-be/crates/rpc-types" }
+brainatlas-rpc-types = { package = "rpc-types", path = "../brainatlas-be/crates/rpc-types" }
+
+axum = { version = "0.8", features = ["macros"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace"] }
+http-body-util = "0.1"
+bytes = "1"
+
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+async-trait = "0.1"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.11", features = ["serde", "v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+
+# Existing e2e_test.rs dependencies.
+reqwest = { version = "0.12", features = ["json"] }
