@@ -425,7 +425,10 @@ Response: {
 | `S3_ACCESS_KEY` | S3 access key | Required |
 | `S3_SECRET_KEY` | S3 secret key | Required |
 | `S3_BUCKET` | S3 bucket name | Required |
-| `OPENROUTER_API_KEY` | OpenRouter API key | Required |
+| `OPENROUTER_API_KEY` | OpenRouter API key | Required (unless `REQUESTY_API_KEY` is set) |
+| `REQUESTY_API_KEY` | Requesty API key (OpenAI-compatible gateway). **Takes priority over OpenRouter when both are set.** | Optional |
+| `OPENROUTER_BASE_URL` | Override the OpenRouter API base URL | `https://openrouter.ai/api/v1` |
+| `REQUESTY_BASE_URL` | Override the Requesty API base URL | `https://router.requesty.ai/v1` |
 | `BRAINATLAS_HTTP_ADDR` | HTTP bind address | `0.0.0.0:8081` |
 | `CORS_ORIGIN` | CORS allowed origin | `*` |
 | `RUST_LOG` | Logging level | `info` |

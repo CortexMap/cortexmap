@@ -10,6 +10,7 @@
 /// `UsageContext` is provided by the caller (the app layer) and carries the
 /// `caller_tag`, correlation id and any region/summary/batch linkage.
 use crate::cost_accounting::CostAccountant;
+use crate::infra::resolve_llm_provider;
 use crate::{Infra, ServiceError};
 use domain::{ClaimsResponse, GroundednessVerdict, LlmResponse, RubricScores, UsageContext};
 use std::sync::Arc;
@@ -41,10 +42,7 @@ where
         chat_model_override: Option<&str>,
         ctx: UsageContext,
     ) -> Result<LlmResponse, ServiceError<E>> {
-        let api_key = self
-            .infra
-            .get("OPENROUTER_API_KEY")
-            .map_err(ServiceError::InfraError)?;
+        let resolved = resolve_llm_provider(&*self.infra)?;
         let chat_model = match chat_model_override {
             Some(m) => m.to_string(),
             None => self
@@ -62,10 +60,17 @@ where
             } else {
                 "rag_summarize"
             })
-        };
+        }
+        .with_provider(resolved.provider);
         let outcome = self
             .infra
-            .summarize_with_tools(&api_key, &chat_model, messages, tools)
+            .summarize_with_tools(
+                &resolved.base_url,
+                &resolved.api_key,
+                &chat_model,
+                messages,
+                tools,
+            )
             .await
             .map_err(ServiceError::InfraError);
         self.accountant.finish(outcome, ctx, started).await
@@ -78,10 +83,7 @@ where
         count: u32,
         ctx: UsageContext,
     ) -> Result<Vec<String>, ServiceError<E>> {
-        let api_key = self
-            .infra
-            .get("OPENROUTER_API_KEY")
-            .map_err(ServiceError::InfraError)?;
+        let resolved = resolve_llm_provider(&*self.infra)?;
         let chat_model = self
             .infra
             .get("CHAT_MODEL")
@@ -92,10 +94,17 @@ where
             ctx
         } else {
             ctx.with_caller_tag("generate_queries")
-        };
+        }
+        .with_provider(resolved.provider);
         let outcome = self
             .infra
-            .generate_queries(&api_key, &chat_model, region_name, count)
+            .generate_queries(
+                &resolved.base_url,
+                &resolved.api_key,
+                &chat_model,
+                region_name,
+                count,
+            )
             .await
             .map_err(ServiceError::InfraError);
         self.accountant.finish(outcome, ctx, started).await
@@ -313,6 +322,9 @@ mod tests {
         summarize_queue: Mutex<Vec<CannedSummarize>>,
         /// FIFO queue of canned `generate_queries` responses.
         generate_queue: Mutex<Vec<CannedGenerate>>,
+        /// `(base_url, api_key)` captured for each `LlmClient` invocation,
+        /// in call order. Lets tests assert Requesty vs OpenRouter routing.
+        llm_calls: Mutex<Vec<(String, String)>>,
     }
 
     impl MockInfra {
@@ -334,6 +346,7 @@ mod tests {
                 records: Mutex::new(Vec::new()),
                 summarize_queue: Mutex::new(Vec::new()),
                 generate_queue: Mutex::new(Vec::new()),
+                llm_calls: Mutex::new(Vec::new()),
             }
         }
 
@@ -378,6 +391,10 @@ mod tests {
         fn take_records(&self) -> Vec<NewLlmCallUsage> {
             std::mem::take(&mut *self.records.lock().unwrap())
         }
+
+        fn take_llm_calls(&self) -> Vec<(String, String)> {
+            std::mem::take(&mut *self.llm_calls.lock().unwrap())
+        }
     }
 
     impl EnvInfra for MockInfra {
@@ -393,11 +410,16 @@ mod tests {
 
         async fn summarize_with_tools(
             &self,
-            _api_key: &str,
+            base_url: &str,
+            api_key: &str,
             _chat_model: &str,
             _messages: &[serde_json::Value],
             _tools: &[serde_json::Value],
         ) -> Result<LlmCallOutcome<LlmResponse>, Self::Error> {
+            self.llm_calls
+                .lock()
+                .unwrap()
+                .push((base_url.to_string(), api_key.to_string()));
             let mut q = self.summarize_queue.lock().unwrap();
             assert!(
                 !q.is_empty(),
@@ -411,11 +433,16 @@ mod tests {
 
         async fn generate_queries(
             &self,
-            _api_key: &str,
+            base_url: &str,
+            api_key: &str,
             _chat_model: &str,
             _region_name: &str,
             _count: u32,
         ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error> {
+            self.llm_calls
+                .lock()
+                .unwrap()
+                .push((base_url.to_string(), api_key.to_string()));
             let mut q = self.generate_queue.lock().unwrap();
             assert!(!q.is_empty(), "generate_queries called with empty queue");
             match q.remove(0) {
@@ -476,6 +503,7 @@ mod tests {
         type Error = MockErr;
         async fn generate_embedding(
             &self,
+            _base_url: &str,
             _api_key: &str,
             _model: &str,
             _text: &str,
@@ -883,5 +911,92 @@ mod tests {
             .await
             .expect("fenced JSON parses after fence-stripping");
         assert_eq!(resp.claims.len(), 1);
+    }
+
+    // =============================================================
+    // Provider routing: base_url + api_key forwarded to infra based
+    // on `resolve_llm_provider` precedence.
+    // =============================================================
+
+    #[tokio::test]
+    async fn summarize_routes_to_openrouter_by_default() {
+        // Only OPENROUTER_API_KEY is set in MockInfra::new().
+        let infra = Arc::new(MockInfra::new());
+        infra.enqueue_summarize_ok(LlmResponse::Final("ok".into()));
+        let svc = make_service(infra.clone());
+
+        svc.summarize_with_tools(&[], &[], None, UsageContext::default())
+            .await
+            .unwrap();
+
+        let calls = infra.take_llm_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "https://openrouter.ai/api/v1");
+        assert_eq!(calls[0].1, "sk-test");
+    }
+
+    #[tokio::test]
+    async fn summarize_routes_to_requesty_when_key_set() {
+        let mut infra = MockInfra::new();
+        infra
+            .env
+            .insert("REQUESTY_API_KEY".to_string(), "req-key".to_string());
+        let infra = Arc::new(infra);
+        infra.enqueue_summarize_ok(LlmResponse::Final("ok".into()));
+        let svc = make_service(infra.clone());
+
+        svc.summarize_with_tools(&[], &[], None, UsageContext::default())
+            .await
+            .unwrap();
+
+        let calls = infra.take_llm_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].0, "https://router.requesty.ai/v1",
+            "Requesty default base URL"
+        );
+        assert_eq!(calls[0].1, "req-key", "Requesty api key forwarded");
+    }
+
+    #[tokio::test]
+    async fn summarize_honours_explicit_requesty_base_url_override() {
+        let mut infra = MockInfra::new();
+        infra
+            .env
+            .insert("REQUESTY_API_KEY".to_string(), "req-key".to_string());
+        infra.env.insert(
+            "REQUESTY_BASE_URL".to_string(),
+            "https://custom.requesty.example/v1".to_string(),
+        );
+        let infra = Arc::new(infra);
+        infra.enqueue_summarize_ok(LlmResponse::Final("ok".into()));
+        let svc = make_service(infra.clone());
+
+        svc.summarize_with_tools(&[], &[], None, UsageContext::default())
+            .await
+            .unwrap();
+
+        let calls = infra.take_llm_calls();
+        assert_eq!(calls[0].0, "https://custom.requesty.example/v1");
+    }
+
+    #[tokio::test]
+    async fn generate_queries_routes_to_requesty_when_key_set() {
+        let mut infra = MockInfra::new();
+        infra
+            .env
+            .insert("REQUESTY_API_KEY".to_string(), "req-key".to_string());
+        let infra = Arc::new(infra);
+        infra.enqueue_generate_ok(vec!["q".into()]);
+        let svc = make_service(infra.clone());
+
+        svc.generate_queries("hippocampus", 1, UsageContext::default())
+            .await
+            .unwrap();
+
+        let calls = infra.take_llm_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "https://router.requesty.ai/v1");
+        assert_eq!(calls[0].1, "req-key");
     }
 }

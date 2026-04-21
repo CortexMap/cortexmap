@@ -3,6 +3,7 @@
 /// Like `BrainAtlasLlmService`, this owns a `CostAccountant` and records a
 /// `llm_call_usage` row for every successful embedding call.
 use crate::cost_accounting::CostAccountant;
+use crate::infra::resolve_llm_provider;
 use crate::{Infra, ServiceError};
 use domain::UsageContext;
 use std::sync::Arc;
@@ -32,23 +33,27 @@ where
         model_override: Option<&str>,
         ctx: UsageContext,
     ) -> Result<Vec<f32>, ServiceError<E>> {
-        let api_key = self
-            .infra
-            .get("OPENROUTER_API_KEY")
-            .map_err(ServiceError::InfraError)?;
+        let resolved = resolve_llm_provider(&*self.infra)?;
         let embedding_model = match model_override {
             Some(m) => m.to_string(),
             None => self
                 .infra
                 .get("EMBEDDING_MODEL")
-                .unwrap_or_else(|_| "text-embedding-3-small".to_string()),
+                .unwrap_or_else(|_| "openai/text-embedding-3-small".to_string()),
         };
 
         let started = Instant::now();
-        let ctx = ctx.with_caller_tag("embed");
+        let ctx = ctx
+            .with_caller_tag("embed")
+            .with_provider(resolved.provider);
         let outcome = self
             .infra
-            .generate_embedding(&api_key, &embedding_model, text)
+            .generate_embedding(
+                &resolved.base_url,
+                &resolved.api_key,
+                &embedding_model,
+                text,
+            )
             .await
             .map_err(ServiceError::InfraError);
         self.accountant.finish(outcome, ctx, started).await
@@ -88,8 +93,8 @@ mod tests {
         /// Canned `generate_embedding` result. Every call consumes from the
         /// queue; on exhaustion returns a default vector.
         embedding_queue: Mutex<Vec<EmbeddingResult>>,
-        /// Captured `(api_key, embedding_model, text)` tuples.
-        calls: Mutex<Vec<(String, String, String)>>,
+        /// Captured `(base_url, api_key, embedding_model, text)` tuples.
+        calls: Mutex<Vec<(String, String, String, String)>>,
     }
 
     impl MockInfra {
@@ -99,12 +104,12 @@ mod tests {
             env.insert("DATABASE_URL".to_string(), "postgres://mock".to_string());
             env.insert(
                 "EMBEDDING_MODEL".to_string(),
-                "text-embedding-3-small".to_string(),
+                "openai/text-embedding-3-small".to_string(),
             );
             Self {
                 env,
                 pricing: Some(LlmPricing {
-                    model: "text-embedding-3-small".to_string(),
+                    model: "openai/text-embedding-3-small".to_string(),
                     input_price_per_million: 0.10,
                     output_price_per_million: 0.0,
                     embedding_price_per_million: Some(0.02),
@@ -128,7 +133,7 @@ mod tests {
             self.embedding_queue.lock().unwrap().push(Err(msg));
         }
 
-        fn take_calls(&self) -> Vec<(String, String, String)> {
+        fn take_calls(&self) -> Vec<(String, String, String, String)> {
             std::mem::take(&mut *self.calls.lock().unwrap())
         }
 
@@ -149,11 +154,13 @@ mod tests {
         type Error = MockErr;
         async fn generate_embedding(
             &self,
+            base_url: &str,
             api_key: &str,
             embedding_model: &str,
             text: &str,
         ) -> Result<LlmCallOutcome<Vec<f32>>, Self::Error> {
             self.calls.lock().unwrap().push((
+                base_url.to_string(),
                 api_key.to_string(),
                 embedding_model.to_string(),
                 text.to_string(),
@@ -225,6 +232,7 @@ mod tests {
         type Error = MockErr;
         async fn summarize_with_tools(
             &self,
+            _base_url: &str,
             _api_key: &str,
             _chat_model: &str,
             _messages: &[serde_json::Value],
@@ -234,6 +242,7 @@ mod tests {
         }
         async fn generate_queries(
             &self,
+            _base_url: &str,
             _api_key: &str,
             _chat_model: &str,
             _region_name: &str,
@@ -298,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn generate_embedding_uses_env_default_when_no_override() {
         let infra = Arc::new(MockInfra::new());
-        infra.enqueue_ok(vec![1.0, 2.0, 3.0], "text-embedding-3-small");
+        infra.enqueue_ok(vec![1.0, 2.0, 3.0], "openai/text-embedding-3-small");
         let svc = BrainAtlasEmbeddingService::new(infra.clone());
 
         let v = svc
@@ -309,9 +318,13 @@ mod tests {
 
         let calls = infra.take_calls();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, "sk-test", "api key forwarded");
-        assert_eq!(calls[0].1, "text-embedding-3-small", "env model used");
-        assert_eq!(calls[0].2, "hello", "text forwarded unchanged");
+        assert_eq!(
+            calls[0].0, "https://openrouter.ai/api/v1",
+            "default OpenRouter base URL"
+        );
+        assert_eq!(calls[0].1, "sk-test", "api key forwarded");
+        assert_eq!(calls[0].2, "openai/text-embedding-3-small", "env model used");
+        assert_eq!(calls[0].3, "hello", "text forwarded unchanged");
 
         // Caller tag defaults to "embed".
         let rows = infra.take_records();
@@ -332,7 +345,7 @@ mod tests {
             .unwrap();
 
         let calls = infra.take_calls();
-        assert_eq!(calls[0].1, "override-model");
+        assert_eq!(calls[0].2, "override-model");
     }
 
     #[tokio::test]
@@ -341,7 +354,7 @@ mod tests {
         let mut infra = MockInfra::new();
         infra.env.remove("EMBEDDING_MODEL");
         let infra = Arc::new(infra);
-        infra.enqueue_ok(vec![0.0], "text-embedding-3-small");
+        infra.enqueue_ok(vec![0.0], "openai/text-embedding-3-small");
         let svc = BrainAtlasEmbeddingService::new(infra.clone());
 
         let _ = svc
@@ -351,7 +364,7 @@ mod tests {
 
         let calls = infra.take_calls();
         assert_eq!(
-            calls[0].1, "text-embedding-3-small",
+            calls[0].2, "openai/text-embedding-3-small",
             "hardcoded default used"
         );
     }
@@ -368,8 +381,11 @@ mod tests {
             .await
             .expect_err("must fail when API key absent");
         match err {
-            ServiceError::InfraError(_) => {}
-            other => panic!("expected InfraError, got {other:?}"),
+            ServiceError::Other(msg) => assert!(
+                msg.contains("REQUESTY_API_KEY") && msg.contains("OPENROUTER_API_KEY"),
+                "missing-key error should name both env vars: {msg}"
+            ),
+            other => panic!("expected ServiceError::Other, got {other:?}"),
         }
         // No row recorded.
         assert!(infra.take_records().is_empty());
@@ -396,7 +412,7 @@ mod tests {
     #[tokio::test]
     async fn generate_embedding_preserves_upstream_usage_context() {
         let infra = Arc::new(MockInfra::new());
-        infra.enqueue_ok(vec![1.0, 2.0], "text-embedding-3-small");
+        infra.enqueue_ok(vec![1.0, 2.0], "openai/text-embedding-3-small");
         let svc = BrainAtlasEmbeddingService::new(infra.clone());
 
         let region_id: i32 = 99;
@@ -415,5 +431,55 @@ mod tests {
         assert_eq!(rows[0].region_id, Some(region_id));
         // caller_tag is overwritten by the service layer to "embed".
         assert_eq!(rows[0].caller_tag.as_deref(), Some("embed"));
+    }
+
+    // =============================================================
+    // Provider routing: REQUESTY_API_KEY takes precedence and changes
+    // both the base URL and the forwarded api key.
+    // =============================================================
+
+    #[tokio::test]
+    async fn generate_embedding_routes_to_requesty_when_key_set() {
+        let mut infra = MockInfra::new();
+        infra
+            .env
+            .insert("REQUESTY_API_KEY".to_string(), "req-key".to_string());
+        let infra = Arc::new(infra);
+        infra.enqueue_ok(vec![1.0], "openai/text-embedding-3-small");
+        let svc = BrainAtlasEmbeddingService::new(infra.clone());
+
+        svc.generate_embedding("txt", None, UsageContext::default())
+            .await
+            .unwrap();
+
+        let calls = infra.take_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].0, "https://router.requesty.ai/v1",
+            "Requesty default base URL"
+        );
+        assert_eq!(calls[0].1, "req-key", "Requesty api key forwarded");
+    }
+
+    #[tokio::test]
+    async fn generate_embedding_honours_requesty_base_url_override() {
+        let mut infra = MockInfra::new();
+        infra
+            .env
+            .insert("REQUESTY_API_KEY".to_string(), "req-key".to_string());
+        infra.env.insert(
+            "REQUESTY_BASE_URL".to_string(),
+            "https://custom.requesty.example/v1".to_string(),
+        );
+        let infra = Arc::new(infra);
+        infra.enqueue_ok(vec![1.0], "openai/text-embedding-3-small");
+        let svc = BrainAtlasEmbeddingService::new(infra.clone());
+
+        svc.generate_embedding("txt", None, UsageContext::default())
+            .await
+            .unwrap();
+
+        let calls = infra.take_calls();
+        assert_eq!(calls[0].0, "https://custom.requesty.example/v1");
     }
 }

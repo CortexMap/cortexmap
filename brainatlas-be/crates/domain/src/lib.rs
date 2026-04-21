@@ -11,8 +11,8 @@ mod usage;
 
 pub use boolean_query::BooleanQuery;
 pub use cost::{
-    LlmPricing, NewLlmCallUsage, UsageAggregate, UsageAggregateFilter, UsageByCallerTag,
-    UsageByModel, UsageContext,
+    LlmPricing, LlmProvider, NewLlmCallUsage, UsageAggregate, UsageAggregateFilter,
+    UsageByCallerTag, UsageByModel, UsageContext,
 };
 pub use evals::*;
 pub use hash::compute_hash;

@@ -122,12 +122,12 @@ mod tests {
     fn embed_request_roundtrip_full() {
         let r = EmbedRequest {
             text: "hippocampus memory".to_string(),
-            embedding_model: Some("text-embedding-3-small".to_string()),
+            embedding_model: Some("openai/text-embedding-3-small".to_string()),
             correlation_id: Some("eval:run-1:step-2".to_string()),
         };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["text"], "hippocampus memory");
-        assert_eq!(v["embedding_model"], "text-embedding-3-small");
+        assert_eq!(v["embedding_model"], "openai/text-embedding-3-small");
         assert_eq!(v["correlation_id"], "eval:run-1:step-2");
         let back: EmbedRequest = serde_json::from_value(v).unwrap();
         assert_eq!(back.text, r.text);
