@@ -58,6 +58,13 @@ where
             .get_env_var("DATABASE_URL")
             .map_err(ServiceError::InfraError)?;
 
+        // Recover stale batches before the normal collecting-scan so we don't
+        // count zombies against the poll limit and the pipeline stats reflect
+        // reality within one poll cycle of a failure.
+        if let Err(e) = self.recover_stale_batches(&database_url).await {
+            tracing::warn!(error = %e, "Stale-batch recovery failed");
+        }
+
         // Get batches in 'collecting' status
         let collecting_batches = self
             .infra
@@ -260,6 +267,133 @@ where
         + Send
         + Sync,
 {
+    /// Recover batches that the pipeline cannot make progress on.
+    ///
+    /// Two failure modes are handled:
+    ///
+    /// 1. **Zombie `collecting` batches** — `fetch_task_ids` is empty. Phase 2
+    ///    created the batch but every enqueue either hit 0 NCBI results or
+    ///    failed. Without intervention these sit in `collecting` forever because
+    ///    `check_all_tasks_complete` refuses to promote an empty batch.
+    ///
+    /// 2. **Stuck `processing` batches** — a brainatlas-be restart dropped the
+    ///    in-flight RAG call, so the batch never receives a status update.
+    ///    Any batch whose `processing_started_at` is older than
+    ///    `ConfigKey::ProcessingBatchTimeoutSecs` (default 30 min) gets
+    ///    marked `failed` with a clear error message.
+    ///
+    /// Both recoveries invalidate the batch/pipeline caches so the dashboard
+    /// reflects the transition on the next poll.
+    async fn recover_stale_batches(
+        &self,
+        database_url: &str,
+    ) -> Result<(), ServiceError<E>> {
+        // --- 1. Zombie collecting batches (empty fetch_task_ids) ---
+        let collecting = self
+            .infra
+            .get_batches_by_status(database_url, BatchStatus::Collecting)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        for batch in &collecting {
+            if batch.fetch_task_ids.is_empty() {
+                let reason = format!(
+                    "No fetch tasks were created for this batch (expected {}). \
+                     All queries returned 0 NCBI results or the enqueue request failed.",
+                    batch.expected_task_count
+                );
+                if let Err(e) = self
+                    .infra
+                    .update_batch_status(
+                        database_url,
+                        batch.id,
+                        BatchStatus::Failed,
+                        Some(reason.clone()),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        batch_id = %batch.id,
+                        error = %e,
+                        "Failed to mark zombie batch as failed"
+                    );
+                    continue;
+                }
+                invalidate(self.infra.as_ref(), &cache_keys::batch_status(batch.id)).await;
+                invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
+                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern())
+                    .await;
+                tracing::warn!(
+                    batch_id = %batch.id,
+                    region_id = %batch.region_id,
+                    expected_tasks = batch.expected_task_count,
+                    "Recovered zombie batch (no tasks created)"
+                );
+            }
+        }
+
+        // --- 2. Stuck processing batches (timeout) ---
+        let timeout_secs: i64 = self
+            .infra
+            .get_config(database_url, ConfigKey::ProcessingBatchTimeoutSecs)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1800);
+        let cutoff = chrono::Utc::now() - chrono::Duration::seconds(timeout_secs);
+
+        let processing = self
+            .infra
+            .get_batches_by_status(database_url, BatchStatus::Processing)
+            .await
+            .map_err(ServiceError::InfraError)?;
+
+        for batch in &processing {
+            // Use processing_started_at if set, otherwise fall back to created_at.
+            // A batch with no processing_started_at that is still in 'processing'
+            // means it was marked processing without timestamp — treat created_at
+            // as the start for safety.
+            let started = batch.processing_started_at.unwrap_or(batch.created_at);
+            if started < cutoff {
+                let age_mins = (chrono::Utc::now() - started).num_minutes();
+                let reason = format!(
+                    "Brainatlas processing timed out after {} minutes (limit {}s). \
+                     The RAG call was likely dropped by a brainatlas-be restart.",
+                    age_mins, timeout_secs
+                );
+                if let Err(e) = self
+                    .infra
+                    .update_batch_status(
+                        database_url,
+                        batch.id,
+                        BatchStatus::Failed,
+                        Some(reason.clone()),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        batch_id = %batch.id,
+                        error = %e,
+                        "Failed to mark stuck processing batch as failed"
+                    );
+                    continue;
+                }
+                invalidate(self.infra.as_ref(), &cache_keys::batch_status(batch.id)).await;
+                invalidate(self.infra.as_ref(), &cache_keys::pipeline_stats()).await;
+                invalidate_pattern(self.infra.as_ref(), &cache_keys::batches_status_pattern())
+                    .await;
+                tracing::warn!(
+                    batch_id = %batch.id,
+                    region_id = %batch.region_id,
+                    age_mins = age_mins,
+                    "Recovered stuck processing batch (brainatlas timeout)"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     /// Check if all fetch tasks in a batch are complete.
     ///
     /// Returns `false` when `task_ids` is empty — an empty batch must never be
@@ -1002,17 +1136,21 @@ mod tests {
         assert!(infra.recorder.cache_del_patterns.lock().unwrap().is_empty());
     }
 
-    // TEST 4: empty-task-id batch is NOT promoted (guard at
-    // check_all_tasks_complete).
+    // TEST 4: empty-task-id batch is recovered as Failed by the stale-batch
+    // watcher (not promoted to Ready, but actively marked Failed with a reason).
     #[tokio::test]
-    async fn poll_does_not_promote_empty_task_id_batch() {
+    async fn poll_recovers_empty_task_id_batch_as_failed() {
         let batch_id = Uuid::new_v4();
         let batch = mk_batch(batch_id, BatchStatus::Collecting, vec![]);
         let infra = Arc::new(MockInfra::new().with_batch(batch));
         let cw = CompletionWatcher::new(infra.clone());
 
         let _ = cw.poll().await.expect("poll ok");
-        assert!(infra.recorder.status_updates.lock().unwrap().is_empty());
+        let updates = infra.recorder.status_updates.lock().unwrap();
+        // Exactly one transition: the zombie batch -> Failed
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].0, batch_id);
+        assert_eq!(updates[0].1, BatchStatus::Failed);
     }
 
     // TEST 5: duplicate task_ids dedupe against the distinct count.

@@ -30,6 +30,52 @@ diesel::table! {
 }
 
 diesel::table! {
+    eval_run_state (run_id) {
+        run_id -> Uuid,
+        summary_id -> Uuid,
+        eval_version -> Text,
+        state -> Jsonb,
+        pending_step_id -> Nullable<Uuid>,
+        pending_endpoint -> Nullable<Text>,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    eval_runs (id) {
+        id -> Uuid,
+        summary_id -> Uuid,
+        #[max_length = 16]
+        eval_version -> Varchar,
+        #[max_length = 16]
+        status -> Varchar,
+        error_message -> Nullable<Text>,
+        started_at -> Nullable<Timestamp>,
+        completed_at -> Nullable<Timestamp>,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    eval_scores (id) {
+        id -> Uuid,
+        summary_id -> Uuid,
+        #[max_length = 64]
+        summary_hash -> Varchar,
+        #[max_length = 64]
+        metric -> Varchar,
+        score -> Float4,
+        #[max_length = 128]
+        judge_model -> Nullable<Varchar>,
+        details -> Nullable<Jsonb>,
+        #[max_length = 16]
+        eval_version -> Varchar,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
     fetch_task_components (id) {
         id -> Int8,
         task_id -> Int8,
@@ -95,6 +141,45 @@ diesel::table! {
         cmetadata -> Nullable<Json>,
         custom_id -> Nullable<Varchar>,
         uuid -> Uuid,
+    }
+}
+
+diesel::table! {
+    llm_call_usage (id) {
+        id -> Uuid,
+        created_at -> Timestamptz,
+        #[max_length = 32]
+        endpoint -> Varchar,
+        #[max_length = 256]
+        model -> Varchar,
+        prompt_tokens -> Int4,
+        completion_tokens -> Int4,
+        total_tokens -> Int4,
+        cost_usd -> Nullable<Numeric>,
+        #[max_length = 128]
+        correlation_id -> Nullable<Varchar>,
+        region_id -> Nullable<Int4>,
+        summary_id -> Nullable<Uuid>,
+        batch_id -> Nullable<Uuid>,
+        #[max_length = 64]
+        caller_tag -> Nullable<Varchar>,
+        #[max_length = 128]
+        request_id -> Nullable<Varchar>,
+    }
+}
+
+diesel::table! {
+    llm_pricing (id) {
+        id -> Uuid,
+        #[max_length = 256]
+        model -> Varchar,
+        input_price_per_million -> Numeric,
+        output_price_per_million -> Numeric,
+        embedding_price_per_million -> Nullable<Numeric>,
+        #[max_length = 8]
+        currency -> Varchar,
+        effective_from -> Timestamptz,
+        created_at -> Timestamptz,
     }
 }
 
@@ -199,6 +284,8 @@ diesel::table! {
 }
 
 diesel::joinable!(brain_region_embeddings -> region_summary (summary_id));
+diesel::joinable!(eval_runs -> region_summary (summary_id));
+diesel::joinable!(eval_scores -> region_summary (summary_id));
 diesel::joinable!(fetch_task_components -> fetch_tasks (task_id));
 diesel::joinable!(fetch_task_logs -> fetch_tasks (task_id));
 diesel::joinable!(langchain_pg_embedding -> langchain_pg_collection (collection_id));
@@ -207,11 +294,16 @@ diesel::joinable!(region_queries -> region_mapping (region_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     brain_region_embeddings,
+    eval_run_state,
+    eval_runs,
+    eval_scores,
     fetch_task_components,
     fetch_task_logs,
     fetch_tasks,
     langchain_pg_collection,
     langchain_pg_embedding,
+    llm_call_usage,
+    llm_pricing,
     orch_config,
     papers,
     processed_fetch_tasks,

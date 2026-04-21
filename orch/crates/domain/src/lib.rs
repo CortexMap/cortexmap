@@ -76,6 +76,10 @@ pub enum ConfigKey {
     CostGuardrailEnabled,
     /// Poll interval (seconds) for the cost guardrail loop.
     CostGuardrailPollIntervalSecs,
+    /// Max time in seconds a batch may stay in 'processing' before the
+    /// stale-batch watcher marks it `failed` (default 1800 = 30 minutes).
+    /// Recovers batches abandoned by a brainatlas-be crash/restart.
+    ProcessingBatchTimeoutSecs,
 }
 
 /// Result of polling for completed fetch tasks
@@ -170,6 +174,7 @@ mod tests {
             SummaryStalenessDays,
             CostGuardrailEnabled,
             CostGuardrailPollIntervalSecs,
+            ProcessingBatchTimeoutSecs,
         ];
         all.into_iter()
             .map(|k| {
@@ -204,6 +209,7 @@ mod tests {
                     SummaryStalenessDays => "summary_staleness_days",
                     CostGuardrailEnabled => "cost_guardrail_enabled",
                     CostGuardrailPollIntervalSecs => "cost_guardrail_poll_interval_secs",
+                    ProcessingBatchTimeoutSecs => "processing_batch_timeout_secs",
                 };
                 (k, s)
             })
