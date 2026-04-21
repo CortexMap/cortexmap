@@ -3,7 +3,7 @@
 #
 # Run-time env vars:
 #   DATABASE_URL=postgres://...
-#   EVAL_VERSION=v0.2.0        (optional; defaults from domain::ConfigKey)
+#   EVAL_VERSION=v0.3.0        (optional; defaults from domain::ConfigKey)
 #   EVAL_JUDGE_CHAT_MODEL=...  (optional)
 #   EVAL_RUBRIC_CHAT_MODEL=... (optional)
 #   EVAL_EMBEDDING_MODEL=...   (optional)

@@ -5,6 +5,7 @@
 //! HTTP client here).
 
 mod cache;
+pub mod citations;
 mod error;
 mod infra;
 pub mod state_machine;

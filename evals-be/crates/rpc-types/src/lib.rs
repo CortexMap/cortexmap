@@ -72,6 +72,7 @@ pub enum LlmEndpoint {
     Embed,
     JudgeGroundedness,
     JudgeRubric,
+    JudgeCitation,
 }
 
 impl LlmEndpoint {
@@ -82,11 +83,12 @@ impl LlmEndpoint {
             LlmEndpoint::Embed => "/brainatlas-be/api/llm/embed",
             LlmEndpoint::JudgeGroundedness => "/brainatlas-be/api/llm/judge-groundedness",
             LlmEndpoint::JudgeRubric => "/brainatlas-be/api/llm/judge-rubric",
+            LlmEndpoint::JudgeCitation => "/brainatlas-be/api/llm/judge-citation",
         }
     }
 }
 
-/// One of the four possible LLM response shapes orch can feed back to evals.
+/// One of the five possible LLM response shapes orch can feed back to evals.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LlmResponsePayload {
@@ -94,6 +96,9 @@ pub enum LlmResponsePayload {
     Embed(brainatlas_rpc_types::evals::EmbedResponse),
     Groundedness(domain::GroundednessVerdict),
     Rubric(domain::RubricScores),
+    /// Reuses `GroundednessVerdict`; the citation judge returns the same
+    /// verdict shape but with an empty `supporting_chunks` list.
+    CitationSupport(domain::GroundednessVerdict),
 }
 
 // ---- MetricResult (unchanged) ----

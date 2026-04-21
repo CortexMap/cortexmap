@@ -186,3 +186,42 @@ where
     }
     Ok(true)
 }
+
+/// Probe the `eval_scores` cache for any already-computed citation metrics
+/// and push them to `out`. Unlike groundedness/rubric, this probe is
+/// additive — it does not gate the state machine; citations always ride on
+/// the same run as a fresh groundedness pass. Rows that are not cached yet
+/// will simply be (re-)computed by the state machine and written via
+/// `score_with_cache`.
+pub async fn probe_citation_cache<DB, E>(
+    db: &DB,
+    database_url: &str,
+    summary_hash: &str,
+    eval_version: &str,
+    out: &mut Vec<MetricResult>,
+) -> Result<(), AppError<E>>
+where
+    DB: EvalsDatabase<Error = E>,
+    E: Error + Send + Sync + 'static,
+{
+    for m in [
+        EvalMetric::CitationPresence,
+        EvalMetric::CitationValidity,
+        EvalMetric::CitationScope,
+        EvalMetric::CitationSupport,
+    ] {
+        let row = db
+            .lookup_score_by_hash(database_url, summary_hash, m.as_str(), eval_version)
+            .await
+            .map_err(ServiceError::InfraError)?;
+        if let Some(r) = row {
+            out.push(MetricResult {
+                metric: r.metric,
+                score: r.score,
+                cached: true,
+                judge_model: r.judge_model,
+            });
+        }
+    }
+    Ok(())
+}

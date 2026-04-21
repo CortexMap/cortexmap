@@ -6,6 +6,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 // -------- Claim extraction --------
 
@@ -19,6 +20,12 @@ pub struct Claim {
     pub section: String,
     /// The claim text, in plain English, without `[chunk:...]` citation markers.
     pub text: String,
+    /// UUIDs extracted from `[chunk:<uuid>]` markers that appeared alongside
+    /// this claim in the original summary text. Empty if the claim was not
+    /// cited. Optional for backward compatibility with old cached payloads.
+    #[serde(default)]
+    #[schemars(with = "Vec<String>")]
+    pub cited_chunks: Vec<Uuid>,
 }
 
 /// Top-level response from the claim-extraction prompt.
@@ -86,12 +93,24 @@ mod tests {
                 id: 1,
                 section: "Overview".to_string(),
                 text: "The hippocampus supports declarative memory.".to_string(),
+                cited_chunks: vec![Uuid::nil()],
             }],
         };
         let json = serde_json::to_string(&resp).unwrap();
         let back: ClaimsResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back.claims.len(), 1);
         assert_eq!(back.claims[0].text, resp.claims[0].text);
+        assert_eq!(back.claims[0].cited_chunks, resp.claims[0].cited_chunks);
+    }
+
+    /// Legacy payloads (pre-citation-evals) must still deserialize as claims
+    /// with an empty `cited_chunks` list.
+    #[test]
+    fn claims_response_tolerates_missing_cited_chunks() {
+        let json = r#"{"claims":[{"id":1,"section":"Overview","text":"The hippocampus supports declarative memory."}]}"#;
+        let parsed: ClaimsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.claims.len(), 1);
+        assert!(parsed.claims[0].cited_chunks.is_empty());
     }
 
     #[test]

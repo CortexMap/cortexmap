@@ -83,6 +83,7 @@ enum LlmEndpoint {
     Embed,
     JudgeGroundedness,
     JudgeRubric,
+    JudgeCitation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +93,7 @@ enum LlmResponsePayload {
     Embed(serde_json::Value),
     Groundedness(serde_json::Value),
     Rubric(serde_json::Value),
+    CitationSupport(serde_json::Value),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -472,6 +474,9 @@ where
                         LlmResponsePayload::Groundedness(llm_resp_json)
                     }
                     LlmEndpoint::JudgeRubric => LlmResponsePayload::Rubric(llm_resp_json),
+                    LlmEndpoint::JudgeCitation => {
+                        LlmResponsePayload::CitationSupport(llm_resp_json)
+                    }
                 };
 
                 let step_req = StepRequest {

@@ -180,6 +180,18 @@ where
             .await
     }
 
+    pub async fn judge_citation(
+        &self,
+        claim_text: &str,
+        sentence_context: &str,
+        chunk_text: &str,
+        chat_model: Option<&str>,
+    ) -> Result<domain::GroundednessVerdict, AppError<E>> {
+        self.app()
+            .judge_citation(claim_text, sentence_context, chunk_text, chat_model)
+            .await
+    }
+
     /// Aggregate LLM usage rows over the supplied filter. Powers the
     /// `GET /brainatlas-be/api/llm/usage` endpoint.
     pub async fn usage_aggregate(

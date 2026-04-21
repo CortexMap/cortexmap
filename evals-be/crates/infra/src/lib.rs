@@ -139,6 +139,14 @@ impl EvalsDatabase for EvalsInfra {
             .await
     }
 
+    async fn load_chunks_by_ids(
+        &self,
+        database_url: &str,
+        chunk_ids: &[uuid::Uuid],
+    ) -> Result<Vec<services::ChunkRow>, Self::Error> {
+        self.pg.load_chunks_by_ids(database_url, chunk_ids).await
+    }
+
     async fn insert_run_state(
         &self,
         database_url: &str,

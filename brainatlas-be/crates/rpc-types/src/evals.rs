@@ -92,3 +92,20 @@ pub struct UsageAggregateQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caller_tag: Option<String>,
 }
+
+// ---- /api/llm/judge-citation ----
+//
+// Stateless "did the author cite the right chunk?" judge. Distinct from
+// `judge-groundedness`: the caller passes exactly ONE chunk (the one the
+// author cited for this claim) plus the enclosing sentence as context.
+//
+// Response reuses `GroundednessVerdict` (from brainatlas-be domain) so
+// wire shape stays uniform. `supporting_chunks` is always empty.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeCitationRequest {
+    pub claim_text: String,
+    pub sentence_context: String,
+    pub chunk_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_model: Option<String>,
+}

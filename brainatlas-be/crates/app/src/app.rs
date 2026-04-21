@@ -487,4 +487,18 @@ where
             .await
             .map_err(AppError::ServiceError)
     }
+
+    /// Judge whether a single cited chunk actually supports the attached claim.
+    pub async fn judge_citation(
+        &self,
+        claim_text: &str,
+        sentence_context: &str,
+        chunk_text: &str,
+        chat_model: Option<&str>,
+    ) -> Result<domain::GroundednessVerdict, AppError<E>> {
+        self.services
+            .judge_citation(claim_text, sentence_context, chunk_text, chat_model)
+            .await
+            .map_err(AppError::ServiceError)
+    }
 }
