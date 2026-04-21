@@ -477,10 +477,11 @@ mod workflow_tests {
         println!("✅ Step 2: Papers uploaded to S3");
 
         // Step 3: Simulate processing (in real workflow, this would call LLM)
-        let generated_summary = "The hippocampus is a critical brain region for memory formation and consolidation. \
+        let generated_summary =
+            "The hippocampus is a critical brain region for memory formation and consolidation. \
              Research demonstrates its role in neuroplasticity and learning processes, \
              particularly during sleep when memory consolidation occurs through neural replay."
-            .to_string();
+                .to_string();
 
         println!("✅ Step 3: Summary generated (simulated)");
 
