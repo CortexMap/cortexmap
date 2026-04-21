@@ -474,6 +474,7 @@ impl EvalsPostgresql {
                      LEFT JOIN eval_runs er
                             ON er.summary_id = rs.id AND er.eval_version = $1
                      WHERE rs.summary IS NOT NULL
+                       AND length(rs.summary) > 0
                        AND (er.id IS NULL OR er.status = 'failed')
                      ORDER BY rs.created_at ASC NULLS FIRST
                      LIMIT $2",
