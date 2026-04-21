@@ -16,7 +16,8 @@ fn main() {
                     "include": [
                         {"workspace": "fetcher-be", "lcov_name": "lcov-fetcher"},
                         {"workspace": "brainatlas-be", "lcov_name": "lcov-brainatlas"},
-                        {"workspace": "orch", "lcov_name": "lcov-orch"}
+                        {"workspace": "orch", "lcov_name": "lcov-orch"},
+                        {"workspace": "evals-be", "lcov_name": "lcov-evals"}
                     ]
                 })),
         )
@@ -100,6 +101,7 @@ fn main() {
 --add-tracefile lcov-fetcher.info \
 --add-tracefile lcov-brainatlas.info \
 --add-tracefile lcov-orch.info \
+--add-tracefile lcov-evals.info \
 --output-file lcov.info",
         ))
         .add_step(
@@ -161,19 +163,21 @@ fn autofix_workflow() {
                         .add("cache", "true")
                         .add(
                             "cache-workspaces",
-                            "fetcher-be -> fetcher-be/target\nbrainatlas-be -> brainatlas-be/target\norch -> orch/target",
+                            "fetcher-be -> fetcher-be/target\nbrainatlas-be -> brainatlas-be/target\norch -> orch/target\nevals-be -> evals-be/target",
                         ),
                 ),
         )
         .add_step(Step::new("Cargo Fmt").run(
             "(cd fetcher-be && cargo +nightly fmt --all) && \
 (cd brainatlas-be && cargo +nightly fmt --all) && \
-(cd orch && cargo +nightly fmt --all)",
+(cd orch && cargo +nightly fmt --all) && \
+(cd evals-be && cargo +nightly fmt --all)",
         ))
         .add_step(Step::new("Cargo Clippy").run(
             "(cd fetcher-be && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings) && \
 (cd brainatlas-be && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings) && \
-(cd orch && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings)",
+(cd orch && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings) && \
+(cd evals-be && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings)",
         ))
         .add_step(Step::new("Autofix").uses(
             "autofix-ci",
@@ -257,6 +261,10 @@ for f in orch/migrations/*/up.sql; do
   $PSQL -f "$f" || true
 done
 for f in brainatlas-be/migrations/*/up.sql; do
+  echo "Running migration: $f"
+  $PSQL -f "$f" || true
+done
+for f in evals-be/migrations/*/up.sql; do
   echo "Running migration: $f"
   $PSQL -f "$f" || true
 done"#)

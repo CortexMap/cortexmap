@@ -369,4 +369,174 @@ mod tests {
         }
         accountant.invalidate_pricing_cache().await;
     }
+
+    // ---------- Gap-fill tests (Plan Task 1.9) ----------
+
+    /// Helper to build an embedding-endpoint outcome.
+    fn embedding_outcome(model: &str, total: u32) -> LlmCallOutcome<String> {
+        LlmCallOutcome {
+            value: "ok".to_string(),
+            usage: Usage::new(total, 0, total),
+            endpoint: LlmEndpointKind::Embedding,
+            model: model.to_string(),
+        }
+    }
+
+    /// Pricing row that includes an explicit embedding price.
+    fn embedding_pricing() -> LlmPricing {
+        LlmPricing {
+            model: "openai/text-embedding-3-small".to_string(),
+            input_price_per_million: 0.15,
+            output_price_per_million: 0.60,
+            embedding_price_per_million: Some(0.02),
+            currency: "USD".to_string(),
+            effective_from: chrono::Utc::now(),
+        }
+    }
+
+    /// Embedding endpoint cost math: the recorded row's `cost_usd` uses the
+    /// embedding price, not the chat input/output prices.
+    #[tokio::test]
+    async fn record_computes_cost_for_embedding_endpoint() {
+        let infra = Arc::new(MockInfra::new(Some(embedding_pricing())));
+        let accountant = CostAccountant::new(infra.clone());
+        // 5M tokens * $0.02 / 1M = $0.10
+        let outc = embedding_outcome("openai/text-embedding-3-small", 5_000_000);
+        let ctx = UsageContext::default().with_caller_tag("embed-test");
+
+        accountant.record(&outc, &ctx, 7).await;
+
+        let rows = infra.take_records();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.endpoint, "embedding");
+        assert_eq!(row.model, "openai/text-embedding-3-small");
+        assert_eq!(row.total_tokens, 5_000_000);
+        let cost = row.cost_usd.expect("cost_usd set");
+        assert!(
+            (cost - 0.10).abs() < 1e-9,
+            "expected embedding cost 0.10, got {}",
+            cost
+        );
+    }
+
+    /// Full `UsageContext` round-trip: every optional field survives the
+    /// `record` call into the persisted row unchanged.
+    #[tokio::test]
+    async fn record_preserves_full_usage_context() {
+        let infra = Arc::new(MockInfra::new(Some(pricing())));
+        let accountant = CostAccountant::new(infra.clone());
+
+        let correlation = "eval:run-42:step-3".to_string();
+        let summary_id = uuid::Uuid::new_v4();
+        let batch_id = uuid::Uuid::new_v4();
+        let ctx = UsageContext {
+            correlation_id: Some(correlation.clone()),
+            region_id: Some(7),
+            summary_id: Some(summary_id),
+            batch_id: Some(batch_id),
+            caller_tag: Some("full-ctx-test".to_string()),
+            request_id: Some("req-abc".to_string()),
+        };
+
+        let outc = outcome("openai/gpt-4o-mini", 100, 50);
+        let started = Instant::now();
+        let r: Result<String, ServiceError<MockErr>> = accountant
+            .finish::<String>(Ok(outc), ctx.clone(), started)
+            .await;
+        assert_eq!(r.ok(), Some("ok".to_string()));
+
+        let rows = infra.take_records();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.correlation_id.as_deref(), Some(correlation.as_str()));
+        assert_eq!(row.region_id, Some(7));
+        assert_eq!(row.summary_id, Some(summary_id));
+        assert_eq!(row.batch_id, Some(batch_id));
+        assert_eq!(row.caller_tag.as_deref(), Some("full-ctx-test"));
+        assert_eq!(row.request_id.as_deref(), Some("req-abc"));
+    }
+
+    /// A `MakeWriter` that captures log output into a shared `Vec<u8>` so
+    /// tests can assert on the serialised tracing event.
+    #[derive(Clone)]
+    struct BufWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for BufWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for BufWriter {
+        type Writer = BufWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Contract test for the `tracing::info!(target: "llm.call", ...)` event:
+    /// every documented field NAME must appear in the captured log output.
+    /// These field names are consumed by the downstream log-aggregation
+    /// pipeline and MUST NOT be renamed without a coordinated change.
+    #[tokio::test]
+    async fn tracing_event_contains_all_contract_field_names() {
+        use tracing_subscriber::fmt;
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let writer = BufWriter(buf.clone());
+
+        let subscriber = tracing_subscriber::registry().with(
+            fmt::layer()
+                .with_writer(writer)
+                .with_ansi(false)
+                .with_target(true),
+        );
+
+        let captured = {
+            let _guard = subscriber.set_default();
+
+            let infra = Arc::new(MockInfra::new(Some(pricing())));
+            let accountant = CostAccountant::new(infra.clone());
+            let outc = outcome("openai/gpt-4o-mini", 123, 45);
+            let ctx = UsageContext::default().with_caller_tag("contract-test");
+            accountant.record(&outc, &ctx, 99).await;
+
+            String::from_utf8(buf.lock().unwrap().clone()).unwrap()
+        };
+
+        // The event itself must have been emitted to target "llm.call".
+        assert!(
+            captured.contains("llm.call"),
+            "missing llm.call target in captured output: {captured}"
+        );
+
+        // These are the contract field names — downstream log pipelines pivot
+        // on these exact spellings.
+        for field in [
+            "prompt_tokens",
+            "completion_tokens",
+            "cost_usd",
+            "model",
+            "caller_tag",
+        ] {
+            assert!(
+                captured.contains(field),
+                "missing contract field `{field}` in captured llm.call event: {captured}"
+            );
+        }
+    }
+
+    // NOTE: The pricing-cache TTL expiry test is intentionally NOT implemented
+    // here. Production code at `cost_accounting.rs:100` calls `Instant::now()`
+    // directly; exercising TTL expiry would require introducing a `Clock`
+    // trait seam, which is an out-of-scope production refactor (see plan
+    // Task 3.8 and the risk note at lines 238-239 of
+    // `plans/2026-04-20-pr69-max-test-coverage-v1.md`).
 }

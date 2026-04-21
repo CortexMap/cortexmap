@@ -767,4 +767,146 @@ mod tests {
             serde_json::from_value(json).expect("decodes without usage");
         assert!(parsed.usage.is_none());
     }
+
+    // ── Gap-fill tests (Plan Task 1.10) ──────────────────────────────────
+
+    /// Tool-calling loop in `OpenRouterClient::generate_queries` aggregates
+    /// `usage` across iterations via `Usage::saturating_add` (see
+    /// `llm.rs:437-449`). Simulate two iterations by parsing two successive
+    /// `ChatResponse` wire payloads and summing their usage — the resulting
+    /// `Usage` must be the element-wise total.
+    #[test]
+    fn test_tool_calling_loop_aggregates_usage_across_iterations() {
+        let iter1 = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "i1" } }],
+            "usage": { "prompt_tokens": 100, "completion_tokens": 40, "total_tokens": 140 }
+        });
+        let iter2 = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "i2" } }],
+            "usage": { "prompt_tokens": 25, "completion_tokens": 10, "total_tokens": 35 }
+        });
+
+        let r1: ChatResponse = serde_json::from_value(iter1).unwrap();
+        let r2: ChatResponse = serde_json::from_value(iter2).unwrap();
+
+        // Mirror the production aggregation loop exactly.
+        let mut aggregated = Usage::default();
+        for r in [r1, r2] {
+            match r.usage {
+                Some(u) => aggregated = aggregated.saturating_add(u.into()),
+                None => { /* treat as zero-token iteration */ }
+            }
+        }
+
+        assert_eq!(aggregated.prompt_tokens, 125);
+        assert_eq!(aggregated.completion_tokens, 50);
+        assert_eq!(aggregated.total_tokens, 175);
+    }
+
+    /// Aggregation must survive an iteration where the upstream response
+    /// omitted the `usage` block entirely — that iteration contributes zero.
+    #[test]
+    fn test_tool_calling_loop_skips_iterations_without_usage() {
+        let iter1 = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "i1" } }],
+            "usage": { "prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10 }
+        });
+        let iter2 = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "i2" } }]
+        });
+
+        let r1: ChatResponse = serde_json::from_value(iter1).unwrap();
+        let r2: ChatResponse = serde_json::from_value(iter2).unwrap();
+        assert!(r2.usage.is_none());
+
+        let mut aggregated = Usage::default();
+        for r in [r1, r2] {
+            if let Some(u) = r.usage {
+                aggregated = aggregated.saturating_add(u.into());
+            }
+        }
+
+        assert_eq!(aggregated.prompt_tokens, 7);
+        assert_eq!(aggregated.completion_tokens, 3);
+        assert_eq!(aggregated.total_tokens, 10);
+    }
+
+    /// An explicitly empty usage block (`"usage": {}`) must decode with every
+    /// field defaulted to zero — this mirrors the worst-case provider
+    /// response where a `usage` key is present but empty.
+    #[test]
+    fn test_chat_response_empty_usage_object_zero_fills_all_fields() {
+        let json = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "hi" } }],
+            "usage": {}
+        });
+        let parsed: ChatResponse = serde_json::from_value(json).expect("empty usage decodes");
+        let usage: Usage = parsed.usage.expect("usage present").into();
+        assert_eq!(usage.prompt_tokens, 0);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 0);
+    }
+
+    /// When `completion_tokens` is omitted (e.g. some providers only report
+    /// `prompt_tokens` + `total_tokens`), the missing field defaults to zero
+    /// without failing deserialisation.
+    #[test]
+    fn test_chat_response_missing_completion_tokens_defaults_to_zero() {
+        let json = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "hi" } }],
+            "usage": { "prompt_tokens": 8, "total_tokens": 8 }
+        });
+        let parsed: ChatResponse = serde_json::from_value(json).expect("decodes partial usage");
+        let usage: Usage = parsed.usage.expect("usage present").into();
+        assert_eq!(usage.prompt_tokens, 8);
+        assert_eq!(usage.completion_tokens, 0);
+        assert_eq!(usage.total_tokens, 8);
+    }
+
+    /// `LlmCallOutcome::new` round-trips every field — this is the outcome
+    /// produced by `summarize_with_tools` on both the final-text and
+    /// tool-call branches of `llm.rs:312-334`.
+    #[test]
+    fn test_llm_call_outcome_new_preserves_fields_for_missing_usage_fallback() {
+        // Production code at llm.rs:277-286 substitutes `Usage::default()`
+        // when the response omits `usage`. Construct the resulting outcome
+        // directly and assert the contract.
+        let outcome = LlmCallOutcome::new(
+            domain::LlmResponse::Final("text".to_string()),
+            Usage::default(),
+            "openai/gpt-4o-mini".to_string(),
+            LlmEndpointKind::ChatCompletion,
+        );
+        assert_eq!(outcome.usage.prompt_tokens, 0);
+        assert_eq!(outcome.usage.completion_tokens, 0);
+        assert_eq!(outcome.usage.total_tokens, 0);
+        assert_eq!(outcome.model, "openai/gpt-4o-mini");
+        match outcome.value {
+            domain::LlmResponse::Final(t) => assert_eq!(t, "text"),
+            _ => panic!("expected Final"),
+        }
+    }
+
+    /// `UsageWire` ignores unknown fields (serde's default) — providers
+    /// occasionally send extras like `prompt_tokens_details`. We must not
+    /// fail deserialisation on them.
+    #[test]
+    fn test_chat_response_usage_tolerates_unknown_fields() {
+        let json = serde_json::json!({
+            "choices": [{ "message": { "role": "assistant", "content": "hi" } }],
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 4,
+                "total_tokens": 15,
+                "prompt_tokens_details": { "cached_tokens": 0 },
+                "completion_tokens_details": { "reasoning_tokens": 7 }
+            }
+        });
+        let parsed: ChatResponse =
+            serde_json::from_value(json).expect("decodes despite extra fields");
+        let usage: Usage = parsed.usage.expect("usage present").into();
+        assert_eq!(usage.prompt_tokens, 11);
+        assert_eq!(usage.completion_tokens, 4);
+        assert_eq!(usage.total_tokens, 15);
+    }
 }

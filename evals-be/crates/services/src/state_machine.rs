@@ -1384,3 +1384,1210 @@ mod tests {
         assert!(!raw.contains("call_llm"));
     }
 }
+
+// =============================================================================
+// Direct unit tests for every `advance_*` function in the state machine.
+//
+// Strategy: each test constructs a minimal `InMemoryDb` fake (copied from the
+// integration test at `evals-be/crates/app/tests/cache_hit.rs`), drives a
+// single `advance_*` call, and asserts the resulting (RunState, NextAction)
+// pair plus any rows the persistence helpers wrote into the accumulator.
+//
+// We deliberately do NOT use `app.init_score` / `app.step_score` here — the
+// goal is to exercise each branch of the state machine in isolation, not to
+// re-run the integration test.
+// =============================================================================
+#[cfg(test)]
+mod advance_tests {
+    use super::*;
+    use crate::citations::CitationIssueKind;
+    use crate::infra::{ChunkRow, RetrievedChunk, SummaryRow};
+    use async_trait::async_trait;
+    use brainatlas_rpc_types::evals::EmbedResponse;
+    use chrono::NaiveDateTime;
+    use domain::{
+        Claim, ClaimsResponse, EvalRun, EvalRunStatus, EvalScore, GroundednessLabel,
+        GroundednessVerdict, NewEvalScore, RubricCriterion, RubricScores,
+    };
+    use rpc_types::LlmResponsePayload;
+    use std::sync::Mutex;
+    use uuid::Uuid;
+
+    // ---- Mock infra error + InMemoryDb (inlined from cache_hit.rs) ----
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("mock infra error: {0}")]
+    struct MockError(String);
+
+    #[derive(Default)]
+    struct InMemoryDb {
+        summary: Mutex<Option<SummaryRow>>,
+        scores: Mutex<Vec<EvalScore>>,
+        /// Optional override: chunks returned by `retrieve_chunks_for_summary`.
+        retrieval_chunks: Mutex<Vec<RetrievedChunk>>,
+        /// Optional override: rows returned by `load_chunks_by_ids` for any
+        /// requested UUIDs (intersection is computed before returning).
+        chunk_rows: Mutex<Vec<ChunkRow>>,
+    }
+
+    impl InMemoryDb {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn with_retrieval(self, chunks: Vec<RetrievedChunk>) -> Self {
+            *self.retrieval_chunks.lock().unwrap() = chunks;
+            self
+        }
+    }
+
+    #[async_trait]
+    impl EvalsDatabase for InMemoryDb {
+        type Error = MockError;
+
+        async fn lookup_score_by_hash(
+            &self,
+            _database_url: &str,
+            summary_hash: &str,
+            metric: &str,
+            eval_version: &str,
+        ) -> Result<Option<EvalScore>, Self::Error> {
+            let scores = self.scores.lock().unwrap();
+            Ok(scores
+                .iter()
+                .find(|s| {
+                    s.summary_hash == summary_hash
+                        && s.metric == metric
+                        && s.eval_version == eval_version
+                })
+                .cloned())
+        }
+
+        async fn insert_score(
+            &self,
+            _database_url: &str,
+            new: NewEvalScore,
+        ) -> Result<EvalScore, Self::Error> {
+            let mut scores = self.scores.lock().unwrap();
+            if let Some(existing) = scores.iter().find(|s| {
+                s.summary_hash == new.summary_hash
+                    && s.metric == new.metric
+                    && s.eval_version == new.eval_version
+            }) {
+                return Ok(existing.clone());
+            }
+            let row = EvalScore {
+                id: Uuid::new_v4(),
+                summary_id: new.summary_id,
+                summary_hash: new.summary_hash,
+                metric: new.metric,
+                score: new.score,
+                judge_model: new.judge_model,
+                details: new.details,
+                eval_version: new.eval_version,
+                created_at: NaiveDateTime::default(),
+            };
+            scores.push(row.clone());
+            Ok(row)
+        }
+
+        async fn get_summary(
+            &self,
+            _database_url: &str,
+            summary_id: Uuid,
+        ) -> Result<Option<SummaryRow>, Self::Error> {
+            let s = self.summary.lock().unwrap();
+            Ok(s.as_ref().filter(|r| r.id == summary_id).cloned())
+        }
+
+        async fn get_scores_for_summary(
+            &self,
+            _database_url: &str,
+            summary_id: Uuid,
+        ) -> Result<Vec<EvalScore>, Self::Error> {
+            Ok(self
+                .scores
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| s.summary_id == summary_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn get_eval_aggregate(
+            &self,
+            _database_url: &str,
+            _eval_version: &str,
+        ) -> Result<crate::infra::EvalAggregate, Self::Error> {
+            Ok(crate::infra::EvalAggregate::default())
+        }
+
+        async fn get_worst_offenders(
+            &self,
+            _database_url: &str,
+            _metric: &str,
+            _eval_version: &str,
+            _limit: i64,
+        ) -> Result<Vec<crate::infra::WorstOffenderRow>, Self::Error> {
+            Ok(Vec::new())
+        }
+
+        async fn upsert_run(
+            &self,
+            _database_url: &str,
+            summary_id: Uuid,
+            eval_version: &str,
+            status: EvalRunStatus,
+            error_message: Option<String>,
+        ) -> Result<EvalRun, Self::Error> {
+            Ok(EvalRun {
+                id: Uuid::new_v4(),
+                summary_id,
+                eval_version: eval_version.to_string(),
+                status,
+                error_message,
+                started_at: None,
+                completed_at: None,
+                created_at: NaiveDateTime::default(),
+            })
+        }
+
+        async fn list_unscored_summary_ids(
+            &self,
+            _database_url: &str,
+            _eval_version: &str,
+            _limit: i64,
+        ) -> Result<Vec<Uuid>, Self::Error> {
+            Ok(Vec::new())
+        }
+
+        async fn retrieve_chunks_for_summary(
+            &self,
+            _database_url: &str,
+            _summary_id: Uuid,
+            _embedding: &[f32],
+            _top_k: i64,
+            _min_similarity: f32,
+        ) -> Result<Vec<RetrievedChunk>, Self::Error> {
+            Ok(self.retrieval_chunks.lock().unwrap().clone())
+        }
+
+        async fn load_chunks_by_ids(
+            &self,
+            _database_url: &str,
+            chunk_ids: &[Uuid],
+        ) -> Result<Vec<ChunkRow>, Self::Error> {
+            let rows = self.chunk_rows.lock().unwrap();
+            let wanted: HashSet<Uuid> = chunk_ids.iter().copied().collect();
+            Ok(rows.iter().filter(|r| wanted.contains(&r.id)).cloned().collect())
+        }
+
+        async fn insert_run_state(
+            &self,
+            _database_url: &str,
+            _summary_id: Uuid,
+            _eval_version: &str,
+            _state: &serde_json::Value,
+            _pending_step_id: Option<Uuid>,
+            _pending_endpoint: Option<&str>,
+        ) -> Result<Uuid, Self::Error> {
+            Ok(Uuid::new_v4())
+        }
+
+        async fn load_run_state(
+            &self,
+            _database_url: &str,
+            _run_id: Uuid,
+        ) -> Result<Option<crate::infra::LoadedRunState>, Self::Error> {
+            Ok(None)
+        }
+
+        async fn save_run_state(
+            &self,
+            _database_url: &str,
+            _run_id: Uuid,
+            _state: &serde_json::Value,
+            _pending_step_id: Option<Uuid>,
+            _pending_endpoint: Option<&str>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn delete_run_state(
+            &self,
+            _database_url: &str,
+            _run_id: Uuid,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        async fn delete_run_states_for_summary(
+            &self,
+            _database_url: &str,
+            _summary_id: Uuid,
+            _eval_version: &str,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    // ---- Test fixtures ----
+
+    fn fixture_summary() -> SummaryRow {
+        SummaryRow {
+            id: Uuid::new_v4(),
+            region_id: 1,
+            name: "Hippocampus".to_string(),
+            acronym: Some("HIP".to_string()),
+            summary: "The hippocampus supports memory.".to_string(),
+        }
+    }
+
+    fn ctx_for<'a>(summary: &'a SummaryRow, summary_hash: &'a str) -> RunContext<'a> {
+        RunContext {
+            summary,
+            summary_hash,
+            eval_version: "v0.0.0-test",
+            judge_chat_model: "mock-judge",
+            rubric_chat_model: "mock-rubric",
+            embedding_model: "mock-embed",
+            top_k_chunks: 3,
+            similarity_threshold: 0.5,
+            citation_support_enabled: false,
+            citation_support_max_calls: 30,
+        }
+    }
+
+    fn sample_claim(id: u32, text: &str, cited_chunks: Vec<Uuid>) -> Claim {
+        Claim {
+            id,
+            section: "Overview".to_string(),
+            text: text.to_string(),
+            cited_chunks,
+        }
+    }
+
+    // =========================================================================
+    // advance_claims
+    // =========================================================================
+
+    /// Empty claims list short-circuits to rubric with (groundedness=1.0,
+    /// hallucination=0.0) persisted.
+    #[tokio::test]
+    async fn advance_claims_empty_short_circuits_to_rubric() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-empty");
+        let mut acc = Vec::new();
+
+        let response = LlmResponsePayload::Claims(ClaimsResponse { claims: vec![] });
+        let (state, next) = advance_claims(&db, "memory://", &ctx, response, &mut acc)
+            .await
+            .expect("advance");
+
+        // Two groundedness metrics persisted even with no claims.
+        assert!(acc.iter().any(|m| m.metric == "claim_groundedness"));
+        assert!(acc.iter().any(|m| m.metric == "hallucination_rate"));
+        let g = acc.iter().find(|m| m.metric == "claim_groundedness").unwrap();
+        assert!((g.score - 1.0).abs() < 1e-6);
+        let h = acc.iter().find(|m| m.metric == "hallucination_rate").unwrap();
+        assert!((h.score - 0.0).abs() < 1e-6);
+
+        // Empty-claims path hands off to rubric (groundedness has claims=Some(empty)).
+        match (state, next) {
+            (RunState::AwaitingRubric { claims }, NextAction::CallLlm { endpoint, .. }) => {
+                assert!(matches!(claims, Some(v) if v.is_empty()));
+                assert_eq!(endpoint, LlmEndpoint::JudgeRubric);
+            }
+            other => panic!("unexpected transition: {:?}", other),
+        }
+    }
+
+    /// Response-type mismatch at AwaitingClaims returns InvalidRequest.
+    #[tokio::test]
+    async fn advance_claims_wrong_response_type_errors() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-wrong");
+        let mut acc = Vec::new();
+
+        // Feed Embed when Claims expected.
+        let response = LlmResponsePayload::Embed(EmbedResponse {
+            embedding: vec![0.1],
+        });
+        let err = advance_claims(&db, "memory://", &ctx, response, &mut acc)
+            .await
+            .expect_err("type mismatch");
+        match err {
+            ServiceError::InvalidRequest(msg) => assert!(
+                msg.contains("Claims"),
+                "error msg should mention expected type: {msg}"
+            ),
+            other => panic!("wrong error variant: {other:?}"),
+        }
+    }
+
+    /// Valid non-empty claims → AwaitingClaimEmbed + CallLlm(Embed).
+    #[tokio::test]
+    async fn advance_claims_non_empty_starts_embed() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-claims");
+        let mut acc = Vec::new();
+
+        let response = LlmResponsePayload::Claims(ClaimsResponse {
+            claims: vec![
+                sample_claim(1, "claim A", vec![]),
+                sample_claim(2, "claim B", vec![]),
+            ],
+        });
+        let (state, next) = advance_claims(&db, "memory://", &ctx, response, &mut acc)
+            .await
+            .expect("advance");
+
+        // No metrics persisted yet — we still need to go through the embed loop.
+        assert!(acc.is_empty(), "expected no accumulated metrics at embed step");
+
+        match state {
+            RunState::AwaitingClaimEmbed { claims, idx, reports } => {
+                assert_eq!(claims.len(), 2);
+                assert_eq!(idx, 0);
+                assert!(reports.is_empty());
+            }
+            other => panic!("expected AwaitingClaimEmbed, got {:?}", other),
+        }
+        match next {
+            NextAction::CallLlm { endpoint, .. } => assert_eq!(endpoint, LlmEndpoint::Embed),
+            other => panic!("expected CallLlm(Embed), got {:?}", other),
+        }
+    }
+
+    // =========================================================================
+    // advance_embed
+    // =========================================================================
+
+    /// retrieve_chunks_for_summary returns empty → claim goes to "unsupported",
+    /// no judge call, advance to next claim (or finalize for a single claim).
+    #[tokio::test]
+    async fn advance_embed_empty_chunks_marks_unsupported_and_finalizes() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new(); // default = no retrieval chunks
+        let ctx = ctx_for(&summary, "hash-embed-empty");
+        let mut acc = Vec::new();
+
+        let claims = vec![sample_claim(1, "only claim", vec![])];
+        let response = LlmResponsePayload::Embed(EmbedResponse {
+            embedding: vec![0.1; 4],
+        });
+        let (state, next) =
+            advance_embed(&db, "memory://", &ctx, response, claims, 0, Vec::new(), &mut acc)
+                .await
+                .expect("advance_embed");
+
+        // Only one claim → finalize: groundedness 0.0 (0 supported / 1),
+        // hallucination 1.0 (1 unsupported / 1).
+        let g = acc
+            .iter()
+            .find(|m| m.metric == "claim_groundedness")
+            .expect("groundedness persisted");
+        assert!((g.score - 0.0).abs() < 1e-6);
+        let h = acc
+            .iter()
+            .find(|m| m.metric == "hallucination_rate")
+            .expect("hallucination persisted");
+        assert!((h.score - 1.0).abs() < 1e-6);
+
+        // With claims Some(..), we go to rubric.
+        assert!(matches!(state, RunState::AwaitingRubric { claims: Some(_) }));
+        assert!(matches!(next, NextAction::CallLlm { endpoint: LlmEndpoint::JudgeRubric, .. }));
+    }
+
+    /// Non-empty retrieval → CallLlm(JudgeGroundedness) + AwaitingClaimJudge.
+    #[tokio::test]
+    async fn advance_embed_nonempty_chunks_issues_judge_call() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new().with_retrieval(vec![RetrievedChunk {
+            chunk_index: 1,
+            chunk_text: "evidence".to_string(),
+            similarity: 0.9,
+        }]);
+        let ctx = ctx_for(&summary, "hash-embed-ok");
+        let mut acc = Vec::new();
+
+        let claims = vec![sample_claim(1, "c1", vec![])];
+        let response = LlmResponsePayload::Embed(EmbedResponse {
+            embedding: vec![0.1; 4],
+        });
+        let (state, next) =
+            advance_embed(&db, "memory://", &ctx, response, claims, 0, Vec::new(), &mut acc)
+                .await
+                .expect("advance_embed");
+
+        assert!(acc.is_empty(), "no metrics persisted at judge step");
+        match state {
+            RunState::AwaitingClaimJudge { idx, retrieved, .. } => {
+                assert_eq!(idx, 0);
+                assert_eq!(retrieved.len(), 1);
+            }
+            other => panic!("expected AwaitingClaimJudge, got {:?}", other),
+        }
+        match next {
+            NextAction::CallLlm { endpoint, .. } => {
+                assert_eq!(endpoint, LlmEndpoint::JudgeGroundedness)
+            }
+            other => panic!("expected CallLlm(JudgeGroundedness), got {:?}", other),
+        }
+    }
+
+    /// idx out of bounds → InvalidRequest.
+    #[tokio::test]
+    async fn advance_embed_idx_out_of_bounds_errors() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-embed-oob");
+        let mut acc = Vec::new();
+
+        let response = LlmResponsePayload::Embed(EmbedResponse { embedding: vec![] });
+        let err = advance_embed(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            vec![sample_claim(1, "c", vec![])],
+            5,
+            Vec::new(),
+            &mut acc,
+        )
+        .await
+        .expect_err("idx oob");
+        assert!(matches!(err, ServiceError::InvalidRequest(_)));
+    }
+
+    /// Wrong response type at AwaitingClaimEmbed.
+    #[tokio::test]
+    async fn advance_embed_wrong_response_type_errors() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-embed-wrong");
+        let mut acc = Vec::new();
+
+        let response = LlmResponsePayload::Claims(ClaimsResponse { claims: vec![] });
+        let err = advance_embed(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            vec![sample_claim(1, "c", vec![])],
+            0,
+            Vec::new(),
+            &mut acc,
+        )
+        .await
+        .expect_err("wrong type");
+        match err {
+            ServiceError::InvalidRequest(msg) => assert!(msg.contains("Embed"), "{msg}"),
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    // =========================================================================
+    // advance_judge (groundedness)
+    // =========================================================================
+
+    /// Each GroundednessLabel variant maps to a distinct label string in the
+    /// accumulated report and in turn drives the final aggregate score.
+    #[tokio::test]
+    async fn advance_judge_supported_finalizes_with_groundedness_one() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-judge-s");
+        let mut acc = Vec::new();
+
+        let response = LlmResponsePayload::Groundedness(GroundednessVerdict {
+            verdict: GroundednessLabel::Supported,
+            confidence: 0.9,
+            supporting_chunks: vec![1],
+            rationale: "matches".into(),
+        });
+        let (state, _next) = advance_judge(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            vec![sample_claim(1, "c", vec![])],
+            0,
+            Vec::new(),
+            &mut acc,
+        )
+        .await
+        .expect("judge");
+
+        let g = acc.iter().find(|m| m.metric == "claim_groundedness").unwrap();
+        assert!((g.score - 1.0).abs() < 1e-6);
+        assert!(matches!(state, RunState::AwaitingRubric { .. }));
+    }
+
+    #[tokio::test]
+    async fn advance_judge_unsupported_finalizes_with_hallucination_one() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-judge-u");
+        let mut acc = Vec::new();
+
+        let response = LlmResponsePayload::Groundedness(GroundednessVerdict {
+            verdict: GroundednessLabel::Unsupported,
+            confidence: 0.9,
+            supporting_chunks: vec![],
+            rationale: "no match".into(),
+        });
+        let (_state, _next) = advance_judge(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            vec![sample_claim(1, "c", vec![])],
+            0,
+            Vec::new(),
+            &mut acc,
+        )
+        .await
+        .expect("judge");
+
+        let g = acc.iter().find(|m| m.metric == "claim_groundedness").unwrap();
+        assert!((g.score - 0.0).abs() < 1e-6);
+        let h = acc.iter().find(|m| m.metric == "hallucination_rate").unwrap();
+        assert!((h.score - 1.0).abs() < 1e-6);
+    }
+
+    /// Partial and Contradicted count toward the denominator but not as
+    /// supported or unsupported: 1 supported / 4 total = 0.25 groundedness,
+    /// 1 unsupported / 4 = 0.25 hallucination.
+    #[tokio::test]
+    async fn advance_judge_partial_contradicted_counted_in_denominator() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-judge-mix");
+        let mut acc = Vec::new();
+
+        let claims = vec![
+            sample_claim(1, "a", vec![]),
+            sample_claim(2, "b", vec![]),
+            sample_claim(3, "c", vec![]),
+            sample_claim(4, "d", vec![]),
+        ];
+        // Pre-build the first three reports by hand (simulating prior iterations).
+        let prior_reports = vec![
+            ClaimReport {
+                claim: claims[0].clone(),
+                verdict: "supported".into(),
+                confidence: 0.9,
+                supporting_chunks: vec![1],
+                rationale: "ok".into(),
+                retrieved: vec![],
+            },
+            ClaimReport {
+                claim: claims[1].clone(),
+                verdict: "partial".into(),
+                confidence: 0.5,
+                supporting_chunks: vec![],
+                rationale: "meh".into(),
+                retrieved: vec![],
+            },
+            ClaimReport {
+                claim: claims[2].clone(),
+                verdict: "contradicted".into(),
+                confidence: 0.9,
+                supporting_chunks: vec![],
+                rationale: "opposite".into(),
+                retrieved: vec![],
+            },
+        ];
+        // Feed the 4th (unsupported) via advance_judge.
+        let response = LlmResponsePayload::Groundedness(GroundednessVerdict {
+            verdict: GroundednessLabel::Unsupported,
+            confidence: 1.0,
+            supporting_chunks: vec![],
+            rationale: "none".into(),
+        });
+        let (_state, _next) =
+            advance_judge(&db, "memory://", &ctx, response, claims, 3, prior_reports, &mut acc)
+                .await
+                .expect("judge");
+
+        let g = acc.iter().find(|m| m.metric == "claim_groundedness").unwrap();
+        assert!((g.score - 0.25).abs() < 1e-6);
+        let h = acc.iter().find(|m| m.metric == "hallucination_rate").unwrap();
+        assert!((h.score - 0.25).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn advance_judge_contradicted_label_recorded() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-judge-contra");
+        let mut acc = Vec::new();
+
+        let response = LlmResponsePayload::Groundedness(GroundednessVerdict {
+            verdict: GroundednessLabel::Contradicted,
+            confidence: 1.0,
+            supporting_chunks: vec![],
+            rationale: "contradicts".into(),
+        });
+        let (_state, _next) = advance_judge(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            vec![sample_claim(1, "c", vec![])],
+            0,
+            Vec::new(),
+            &mut acc,
+        )
+        .await
+        .expect("judge");
+
+        // Contradicted neither counts as supported nor unsupported.
+        let g = acc.iter().find(|m| m.metric == "claim_groundedness").unwrap();
+        assert!((g.score - 0.0).abs() < 1e-6);
+        let h = acc.iter().find(|m| m.metric == "hallucination_rate").unwrap();
+        assert!((h.score - 0.0).abs() < 1e-6);
+    }
+
+    /// Wrong response type at AwaitingClaimJudge.
+    #[tokio::test]
+    async fn advance_judge_wrong_response_type_errors() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-judge-wrong");
+        let mut acc = Vec::new();
+
+        let response = LlmResponsePayload::Claims(ClaimsResponse { claims: vec![] });
+        let err = advance_judge(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            vec![sample_claim(1, "c", vec![])],
+            0,
+            Vec::new(),
+            &mut acc,
+        )
+        .await
+        .expect_err("wrong type");
+        match err {
+            ServiceError::InvalidRequest(msg) => assert!(msg.contains("Groundedness"), "{msg}"),
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    // =========================================================================
+    // advance_rubric
+    // =========================================================================
+
+    /// Rubric response → 5 persisted rubric metrics + transition to Done
+    /// (no claims carried forward means no citation phase).
+    #[tokio::test]
+    async fn advance_rubric_no_claims_emits_five_metrics_and_done() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-rubric-nc");
+        let mut acc = Vec::new();
+
+        let c = |s: u8| RubricCriterion { score: s, rationale: "r".into() };
+        let response = LlmResponsePayload::Rubric(RubricScores {
+            relevance: c(5),
+            coherence: c(4),
+            specificity: c(3),
+            clinical_utility: c(2),
+            terminology: c(1),
+        });
+        let (state, next) =
+            advance_rubric(&db, "memory://", &ctx, response, None, &mut acc)
+                .await
+                .expect("rubric");
+
+        // Five new rubric_* rows.
+        let rubric_count = acc
+            .iter()
+            .filter(|m| m.metric.starts_with("rubric_"))
+            .count();
+        assert_eq!(rubric_count, 5);
+        // 5 → 1.0, 1 → 0.0, 3 → 0.5 (locking the normalise path).
+        let rel = acc.iter().find(|m| m.metric == "rubric_relevance").unwrap();
+        assert!((rel.score - 1.0).abs() < 1e-6);
+        let term = acc.iter().find(|m| m.metric == "rubric_terminology").unwrap();
+        assert!((term.score - 0.0).abs() < 1e-6);
+
+        // No claims → citations skipped, Done.
+        assert!(matches!(state, RunState::Done));
+        assert!(matches!(next, NextAction::Done { .. }));
+    }
+
+    /// Cached-rubric-but-fresh-groundedness path (TODO at :622-644): when all
+    /// five rubric_* rows are *already* in `accumulated` (because groundedness
+    /// was fresh but rubric was cached upstream), `next_rubric_or_done` should
+    /// emit Done instead of re-requesting rubric.
+    #[tokio::test]
+    async fn next_rubric_or_done_skips_when_rubric_already_cached() {
+        let summary = fixture_summary();
+        let ctx = ctx_for(&summary, "hash-rubric-cached");
+
+        let cached = |m: &str| rpc_types::MetricResult {
+            metric: m.to_string(),
+            score: 0.5,
+            cached: true,
+            judge_model: None,
+        };
+        let mut acc = vec![
+            cached("rubric_relevance"),
+            cached("rubric_coherence"),
+            cached("rubric_specificity"),
+            cached("rubric_clinical_utility"),
+            cached("rubric_terminology"),
+        ];
+
+        let (state, next) = next_rubric_or_done(&ctx, Some(vec![]), &mut acc);
+        assert!(matches!(state, RunState::Done));
+        assert!(matches!(next, NextAction::Done { .. }));
+    }
+
+    /// Fewer than 5 rubric_* rows → must still issue the rubric call.
+    #[tokio::test]
+    async fn next_rubric_or_done_issues_call_when_rubric_not_cached() {
+        let summary = fixture_summary();
+        let ctx = ctx_for(&summary, "hash-rubric-fresh");
+        let mut acc = Vec::new();
+
+        let (state, next) = next_rubric_or_done(&ctx, Some(vec![]), &mut acc);
+        assert!(matches!(state, RunState::AwaitingRubric { .. }));
+        match next {
+            NextAction::CallLlm { endpoint, .. } => {
+                assert_eq!(endpoint, LlmEndpoint::JudgeRubric)
+            }
+            other => panic!("expected CallLlm(JudgeRubric), got {:?}", other),
+        }
+    }
+
+    /// Wrong response type at AwaitingRubric.
+    #[tokio::test]
+    async fn advance_rubric_wrong_response_type_errors() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-rubric-wrong");
+        let mut acc = Vec::new();
+
+        let response = LlmResponsePayload::Claims(ClaimsResponse { claims: vec![] });
+        let err = advance_rubric(&db, "memory://", &ctx, response, None, &mut acc)
+            .await
+            .expect_err("wrong type");
+        match err {
+            ServiceError::InvalidRequest(msg) => assert!(msg.contains("Rubric"), "{msg}"),
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    // =========================================================================
+    // advance_citation_support + helpers
+    // =========================================================================
+
+    /// Wrong response type at AwaitingCitationSupport.
+    #[tokio::test]
+    async fn advance_citation_support_wrong_response_type_errors() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-cit-wrong");
+        let mut acc = Vec::new();
+
+        let claims = vec![sample_claim(1, "c", vec![Uuid::new_v4()])];
+        let response = LlmResponsePayload::Claims(ClaimsResponse { claims: vec![] });
+        let err = advance_citation_support(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            claims,
+            0,
+            0,
+            HashMap::new(),
+            Vec::new(),
+            0,
+            0,
+            0,
+            0,
+            CitationTotals::default(),
+            1,
+            false,
+            &mut acc,
+        )
+        .await
+        .expect_err("wrong type");
+        match err {
+            ServiceError::InvalidRequest(msg) => assert!(msg.contains("CitationSupport"), "{msg}"),
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    /// Truncation branch (:1139-1164): when `support_calls_issued` has already
+    /// hit `citation_support_max_calls`, the next unseen pair is ignored and
+    /// `truncated` flips to true on the persisted row.
+    #[tokio::test]
+    async fn advance_citation_support_truncates_at_budget() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        // Very low budget so the single call we feed already exceeds it.
+        let mut ctx = ctx_for(&summary, "hash-cit-trunc");
+        ctx.citation_support_enabled = true;
+        ctx.citation_support_max_calls = 1;
+        let mut acc = Vec::new();
+
+        // Two cited chunks on one claim → after judging the first there's still
+        // a "next" pair, but we're at budget.
+        let u1 = Uuid::new_v4();
+        let u2 = Uuid::new_v4();
+        let claims = vec![sample_claim(1, "c", vec![u1, u2])];
+        let mut cited_chunks = HashMap::new();
+        for u in [u1, u2] {
+            cited_chunks.insert(
+                u,
+                ChunkRow {
+                    id: u,
+                    summary_id: summary.id,
+                    chunk_index: 0,
+                    chunk_text: "chunk".into(),
+                },
+            );
+        }
+
+        let response = LlmResponsePayload::CitationSupport(GroundednessVerdict {
+            verdict: GroundednessLabel::Supported,
+            confidence: 0.9,
+            supporting_chunks: vec![],
+            rationale: "".into(),
+        });
+        let (state, next) = advance_citation_support(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            claims,
+            0,
+            0,
+            cited_chunks,
+            Vec::new(),
+            0,
+            0,
+            0,
+            0,
+            CitationTotals::default(),
+            /* support_calls_issued */ 1,
+            /* truncated */ false,
+            &mut acc,
+        )
+        .await
+        .expect("advance");
+
+        assert!(matches!(state, RunState::Done));
+        assert!(matches!(next, NextAction::Done { .. }));
+
+        // The persisted support row should have `truncated: true` in its details.
+        let score_row = db
+            .scores
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.metric == "citation_support")
+            .cloned()
+            .expect("support row persisted");
+        let details = score_row.details.expect("details present");
+        assert_eq!(details["truncated"], serde_json::Value::Bool(true));
+    }
+
+    /// Completion branch: only one cited chunk, single support verdict →
+    /// `Done` with support = 1.0 (1 supported / 1 judged).
+    #[tokio::test]
+    async fn advance_citation_support_single_judgement_finalizes() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let mut ctx = ctx_for(&summary, "hash-cit-one");
+        ctx.citation_support_enabled = true;
+        let mut acc = Vec::new();
+
+        let u = Uuid::new_v4();
+        let claims = vec![sample_claim(1, "c", vec![u])];
+        let mut cited_chunks = HashMap::new();
+        cited_chunks.insert(
+            u,
+            ChunkRow {
+                id: u,
+                summary_id: summary.id,
+                chunk_index: 0,
+                chunk_text: "chunk".into(),
+            },
+        );
+
+        let response = LlmResponsePayload::CitationSupport(GroundednessVerdict {
+            verdict: GroundednessLabel::Supported,
+            confidence: 0.9,
+            supporting_chunks: vec![],
+            rationale: "supports".into(),
+        });
+        let (state, _next) = advance_citation_support(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            claims,
+            0,
+            0,
+            cited_chunks,
+            Vec::new(),
+            0,
+            0,
+            0,
+            0,
+            CitationTotals::default(),
+            1,
+            false,
+            &mut acc,
+        )
+        .await
+        .expect("advance");
+
+        assert!(matches!(state, RunState::Done));
+        let m = acc
+            .iter()
+            .find(|m| m.metric == "citation_support")
+            .expect("support persisted");
+        assert!((m.score - 1.0).abs() < 1e-6);
+    }
+
+    /// An Unsupported verdict appends a CitationIssue of the right kind and
+    /// lowers the support score.
+    #[tokio::test]
+    async fn advance_citation_support_unsupported_records_issue() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let mut ctx = ctx_for(&summary, "hash-cit-unsup");
+        ctx.citation_support_enabled = true;
+        let mut acc = Vec::new();
+
+        let u = Uuid::new_v4();
+        let claims = vec![sample_claim(7, "c", vec![u])];
+        let mut cited_chunks = HashMap::new();
+        cited_chunks.insert(
+            u,
+            ChunkRow {
+                id: u,
+                summary_id: summary.id,
+                chunk_index: 0,
+                chunk_text: "chunk".into(),
+            },
+        );
+
+        let response = LlmResponsePayload::CitationSupport(GroundednessVerdict {
+            verdict: GroundednessLabel::Unsupported,
+            confidence: 0.9,
+            supporting_chunks: vec![],
+            rationale: "nope".into(),
+        });
+        let (_state, _next) = advance_citation_support(
+            &db,
+            "memory://",
+            &ctx,
+            response,
+            claims,
+            0,
+            0,
+            cited_chunks,
+            Vec::new(),
+            0,
+            0,
+            0,
+            0,
+            CitationTotals::default(),
+            1,
+            false,
+            &mut acc,
+        )
+        .await
+        .expect("advance");
+
+        let m = acc
+            .iter()
+            .find(|m| m.metric == "citation_support")
+            .expect("support persisted");
+        // 0 supported + 0.5 * 0 partial / 1 judged = 0.0.
+        assert!((m.score - 0.0).abs() < 1e-6);
+
+        // Verify issues recorded in the persisted details.
+        let score_row = db
+            .scores
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.metric == "citation_support")
+            .cloned()
+            .expect("support row persisted");
+        let details = score_row.details.expect("details");
+        let issues = details["issues"].as_array().expect("issues array");
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0]["kind"], "unsupported");
+        assert_eq!(issues[0]["claim_id"], 7);
+    }
+
+    // ---- find_next_support_step iteration ----
+
+    #[test]
+    fn find_next_support_step_finds_first_in_scope() {
+        let in_scope_uuid = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let claims = vec![
+            sample_claim(1, "a", vec![other]),
+            sample_claim(2, "b", vec![other, in_scope_uuid]),
+            sample_claim(3, "c", vec![in_scope_uuid]),
+        ];
+        let mut scope = HashSet::new();
+        scope.insert(in_scope_uuid);
+        let found = find_next_support_step(&claims, 0, 0, &scope);
+        assert_eq!(found, Some((1, 1)));
+    }
+
+    #[test]
+    fn find_next_support_step_respects_start_indices() {
+        let u = Uuid::new_v4();
+        let claims = vec![
+            sample_claim(1, "a", vec![u, u]),
+            sample_claim(2, "b", vec![u]),
+        ];
+        let mut scope = HashSet::new();
+        scope.insert(u);
+        // Start at (0, 1) → skips first pair, picks (0, 1).
+        assert_eq!(find_next_support_step(&claims, 0, 1, &scope), Some((0, 1)));
+        // Start at (1, 0) → skips all of claim 0, finds (1, 0).
+        assert_eq!(find_next_support_step(&claims, 1, 0, &scope), Some((1, 0)));
+        // Start past the end → None.
+        assert_eq!(find_next_support_step(&claims, 2, 0, &scope), None);
+    }
+
+    #[test]
+    fn find_next_support_step_returns_none_when_no_in_scope() {
+        let u = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let claims = vec![sample_claim(1, "a", vec![other, other])];
+        let mut scope = HashSet::new();
+        scope.insert(u);
+        assert_eq!(find_next_support_step(&claims, 0, 0, &scope), None);
+    }
+
+    // ---- enclosing_sentence_for_uuid UTF-8 handling ----
+
+    #[test]
+    fn enclosing_sentence_for_uuid_handles_ascii() {
+        let u = Uuid::new_v4();
+        let summary = format!("First sentence. Second [chunk:{}] here. Third.", u);
+        let got = enclosing_sentence_for_uuid(&summary, u).expect("found");
+        assert!(got.contains("Second"));
+        assert!(got.contains(&u.to_string()));
+        assert!(!got.contains("First"));
+        assert!(!got.contains("Third"));
+    }
+
+    #[test]
+    fn enclosing_sentence_for_uuid_missing_returns_none() {
+        let u = Uuid::new_v4();
+        let summary = "No citations here.";
+        assert!(enclosing_sentence_for_uuid(summary, u).is_none());
+    }
+
+    /// UTF-8 safety: the scanner walks backward over raw bytes but only stops
+    /// on ASCII sentence terminators. Because UTF-8 continuation bytes never
+    /// match any of `.`, `!`, `?`, `\n`, the function can't land mid-codepoint
+    /// at a terminator. We still probe that a summary with multibyte chars
+    /// neither panics nor truncates into an invalid boundary.
+    #[test]
+    fn enclosing_sentence_for_uuid_handles_multibyte_chars() {
+        let u = Uuid::new_v4();
+        // "café" (e-acute is two bytes) and "naïve" (i-diaeresis is two bytes).
+        let summary = format!("Un café. Le naïve [chunk:{}] chose. Fin.", u);
+        let got = enclosing_sentence_for_uuid(&summary, u).expect("found");
+        // Must start at the 'L' of "Le naïve" — the previous '.' sentence
+        // boundary, NOT inside "café" or mid-codepoint.
+        assert!(got.starts_with("Le na"), "got: {got}");
+        assert!(got.contains(&u.to_string()));
+        // Sanity: the returned String slice must be valid UTF-8 (implicit via
+        // Rust's &str invariant — if the byte indices were bad we'd have panicked).
+        assert!(got.chars().count() > 0);
+    }
+
+    #[test]
+    fn enclosing_sentence_for_uuid_is_case_insensitive() {
+        let u = Uuid::new_v4();
+        // Upper-case UUID in summary; function must still locate it.
+        let upper = u.to_string().to_uppercase();
+        let summary = format!("Only one [CHUNK:{}] sentence.", upper);
+        let got = enclosing_sentence_for_uuid(&summary, u).expect("found case-insensitive");
+        assert!(got.contains("Only one"));
+    }
+
+    // ---- RunState::AwaitingCitationSupport JSON round-trip ----
+
+    /// Exercise the serde round-trip on the largest variant — with a non-empty
+    /// `cited_chunks` map and a realistic issue list — to guard the JSONB
+    /// column against silent field-rename breakage.
+    #[test]
+    fn awaiting_citation_support_round_trips_with_cited_chunks() {
+        let u = Uuid::new_v4();
+        let mut cited_chunks = HashMap::new();
+        cited_chunks.insert(
+            u,
+            ChunkRow {
+                id: u,
+                summary_id: Uuid::new_v4(),
+                chunk_index: 42,
+                chunk_text: "some evidence".into(),
+            },
+        );
+        let issues = vec![CitationIssue {
+            kind: CitationIssueKind::Unsupported,
+            claim_id: 1,
+            claim_text: "claim".into(),
+            offending_chunk_id: Some(u),
+            rationale: "nope".into(),
+        }];
+        let state = RunState::AwaitingCitationSupport {
+            claims: vec![sample_claim(1, "c", vec![u])],
+            claim_idx: 0,
+            cite_idx: 0,
+            cited_chunks,
+            issues,
+            support_supported: 2,
+            support_partial: 1,
+            support_unsupported: 3,
+            support_contradicted: 1,
+            totals: CitationTotals {
+                total_claims: 5,
+                claims_with_citation: 4,
+                total_citations: 6,
+                existing_citations: 5,
+                in_scope_citations: 4,
+            },
+            support_calls_issued: 7,
+            truncated: true,
+        };
+        let v = serde_json::to_value(&state).expect("to_value");
+        let back: RunState = serde_json::from_value(v.clone()).expect("from_value");
+        // Re-serialize and compare the JSON — structural equality is the
+        // contract; field-by-field PartialEq is not derived.
+        let v2 = serde_json::to_value(&back).expect("to_value 2");
+        assert_eq!(v, v2);
+        // Spot-check a couple of nested fields came through.
+        assert_eq!(v["phase"], "awaiting_citation_support");
+        assert_eq!(v["support_calls_issued"], 7);
+        assert_eq!(v["truncated"], true);
+        assert_eq!(v["totals"]["total_claims"], 5);
+        // The cited_chunks map is keyed by UUID (serde serializes as string keys).
+        assert!(v["cited_chunks"][u.to_string()].is_object());
+        assert_eq!(v["cited_chunks"][u.to_string()]["chunk_index"], 42);
+    }
+}

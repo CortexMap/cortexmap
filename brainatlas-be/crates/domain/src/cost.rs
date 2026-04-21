@@ -196,4 +196,98 @@ mod tests {
         let cost = p.compute_cost_usd(usage, LlmEndpointKind::Embedding);
         assert!((cost - 0.10).abs() < 1e-9);
     }
+
+    // ---------- Gap-fill tests (Plan Task 1.12: cost.rs) ----------
+
+    /// Zero-token usage must produce a zero-cost result for both endpoint
+    /// kinds, regardless of whether an embedding price is configured.
+    #[test]
+    fn compute_cost_is_zero_for_zero_token_usage() {
+        let mut p = pricing();
+        let zero = Usage::new(0, 0, 0);
+
+        let chat = p.compute_cost_usd(zero, LlmEndpointKind::ChatCompletion);
+        assert_eq!(chat, 0.0);
+
+        let chat_tools = p.compute_cost_usd(zero, LlmEndpointKind::ChatCompletionWithTools);
+        assert_eq!(chat_tools, 0.0);
+
+        // Without an explicit embedding price (falls back to input price).
+        let embed_fallback = p.compute_cost_usd(zero, LlmEndpointKind::Embedding);
+        assert_eq!(embed_fallback, 0.0);
+
+        // With an explicit embedding price.
+        p.embedding_price_per_million = Some(0.02);
+        let embed_explicit = p.compute_cost_usd(zero, LlmEndpointKind::Embedding);
+        assert_eq!(embed_explicit, 0.0);
+    }
+
+    /// ChatCompletionWithTools must be priced identically to ChatCompletion.
+    #[test]
+    fn chat_with_tools_costs_same_as_chat() {
+        let p = pricing();
+        let usage = Usage::new(500_000, 250_000, 750_000);
+        let chat = p.compute_cost_usd(usage, LlmEndpointKind::ChatCompletion);
+        let tools = p.compute_cost_usd(usage, LlmEndpointKind::ChatCompletionWithTools);
+        assert_eq!(chat, tools);
+    }
+
+    /// When the embedding price is missing, the fallback to `input_price_per_million`
+    /// kicks in — there is no `Option`/`None` return in the current contract; the
+    /// function returns the input-priced cost. This test pins that fallback
+    /// behaviour (plan called this the "None or equivalent" branch).
+    #[test]
+    fn embedding_cost_falls_back_when_embedding_price_missing() {
+        let mut p = pricing();
+        p.input_price_per_million = 0.25;
+        p.embedding_price_per_million = None;
+
+        let usage = Usage::new(1_000_000, 0, 1_000_000);
+        let cost = p.compute_cost_usd(usage, LlmEndpointKind::Embedding);
+        // 1M * 0.25 / 1M = 0.25
+        assert!((cost - 0.25).abs() < 1e-9, "expected 0.25, got {}", cost);
+    }
+
+    /// Precision edge case: very small prices on small token counts. The
+    /// current `f64` contract should not collapse to zero for sub-cent costs.
+    #[test]
+    fn compute_cost_handles_very_small_values() {
+        let mut p = pricing();
+        p.input_price_per_million = 0.000_001;
+        p.output_price_per_million = 0.000_002;
+
+        // 100 prompt + 50 completion tokens at these prices
+        // = (100 * 1e-6 + 50 * 2e-6) / 1e6
+        // = (1e-4 + 1e-4) / 1e6  = 2e-10
+        let usage = Usage::new(100, 50, 150);
+        let cost = p.compute_cost_usd(usage, LlmEndpointKind::ChatCompletion);
+        assert!(cost > 0.0, "very small cost must not collapse to 0");
+        assert!(
+            (cost - 2.0e-10).abs() < 1e-18,
+            "expected ~2e-10, got {}",
+            cost
+        );
+    }
+
+    /// Precision edge case: very large token counts with realistic prices.
+    /// Must stay finite and match the algebraic expectation within f64
+    /// tolerance.
+    #[test]
+    fn compute_cost_handles_very_large_values() {
+        let p = pricing(); // 0.15 / 0.60 per million
+        // u32::MAX prompt + completion tokens
+        let big = u32::MAX;
+        let usage = Usage::new(big, big, big as u32);
+        let cost = p.compute_cost_usd(usage, LlmEndpointKind::ChatCompletion);
+        let expected = (big as f64) * 0.15 / 1_000_000.0
+            + (big as f64) * 0.60 / 1_000_000.0;
+        assert!(cost.is_finite(), "cost overflowed to non-finite: {cost}");
+        // Relative tolerance: large magnitudes can drift a bit in the last bits.
+        assert!(
+            ((cost - expected) / expected).abs() < 1e-12,
+            "expected ~{}, got {}",
+            expected,
+            cost
+        );
+    }
 }

@@ -122,6 +122,10 @@ impl EvalMetric {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // These types are re-exported at the crate root (see lib.rs) from
+    // `brainatlas_domain`; we import them here so the round-trip tests
+    // below don't need to qualify them every time.
+    use crate::{GroundednessLabel, RubricCriterion, RubricScores};
 
     #[test]
     fn metric_string_round_trip() {
@@ -155,5 +159,175 @@ mod tests {
         assert_eq!(s, "\"complete\"");
         let parsed: EvalRunStatus = serde_json::from_str("\"failed\"").unwrap();
         assert_eq!(parsed, EvalRunStatus::Failed);
+    }
+
+    /// Every `EvalRunStatus` variant round-trips through serde_json. If
+    /// someone adds a variant and forgets `serde(rename_all = snake_case)`,
+    /// the DB column value stops matching the enum wire name and this
+    /// test catches it.
+    #[test]
+    fn run_status_round_trips_all_variants() {
+        for status in [
+            EvalRunStatus::Queued,
+            EvalRunStatus::Running,
+            EvalRunStatus::Complete,
+            EvalRunStatus::Failed,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: EvalRunStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, status, "round-trip failed for {:?}", status);
+            // strum Display must also match the serde wire form.
+            let display = format!("{}", status);
+            assert_eq!(
+                json.trim_matches('"'),
+                display,
+                "serde form diverged from Display for {:?}",
+                status
+            );
+        }
+    }
+
+    /// Every `EvalMetric` variant must round-trip via its static string.
+    /// (`EvalMetric` is not Serde-serialised — it's written as a string
+    /// into `eval_scores.metric` — so the round-trip goes through the
+    /// `IntoStaticStr` / `EnumString` pair.) Also covers every Citation*
+    /// variant that was added in the evals-v0.3 work.
+    #[test]
+    fn every_eval_metric_round_trips_via_static_str() {
+        for &m in EvalMetric::all() {
+            let s = m.as_str();
+            let back: EvalMetric = s.parse().unwrap();
+            assert_eq!(back, m, "round-trip failed for {:?}", m);
+            // Display must match the DB-side static form too.
+            assert_eq!(format!("{}", m), s);
+        }
+    }
+
+    /// `EvalMetric::all()` must be deduplicated — duplicate variants would
+    /// produce duplicate score rows and break the per-metric aggregate math.
+    #[test]
+    fn eval_metric_all_has_no_duplicates() {
+        // EvalMetric is `Eq` but not `Hash`, so compare via the static str
+        // (which is stable under `EnumString` / `IntoStaticStr`).
+        let mut seen: Vec<&'static str> = Vec::new();
+        for &m in EvalMetric::all() {
+            let s = m.as_str();
+            assert!(
+                !seen.contains(&s),
+                "duplicate variant in EvalMetric::all(): {}",
+                s
+            );
+            seen.push(s);
+        }
+    }
+
+    /// Unknown metric strings must fail to parse — never silently alias to
+    /// a known variant.
+    #[test]
+    fn unknown_metric_string_errors() {
+        assert!("not_a_metric".parse::<EvalMetric>().is_err());
+        assert!("".parse::<EvalMetric>().is_err());
+        assert!("SectionCompleteness".parse::<EvalMetric>().is_err());
+    }
+
+    /// Every `GroundednessLabel` variant must round-trip through serde_json,
+    /// and the serialised form must be bare lowercase (the `serde(rename_all
+    /// = "lowercase")` contract — the brainatlas judge prompt expects
+    /// exactly these spellings).
+    #[test]
+    fn groundedness_label_round_trips_every_variant() {
+        use GroundednessLabel::*;
+        let cases = [
+            (Supported, "\"supported\""),
+            (Partial, "\"partial\""),
+            (Contradicted, "\"contradicted\""),
+            (Unsupported, "\"unsupported\""),
+        ];
+        for (label, expected_json) in cases {
+            let json = serde_json::to_string(&label).unwrap();
+            assert_eq!(json, expected_json, "bad serialisation for {:?}", label);
+            let back: GroundednessLabel = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, label);
+        }
+    }
+
+    /// A `RubricCriterion` must survive serde round-trip with its score
+    /// and rationale intact — and the default `rationale = ""` fallback
+    /// must kick in when the field is absent in the incoming JSON.
+    #[test]
+    fn rubric_criterion_round_trips() {
+        let original = RubricCriterion {
+            score: 4,
+            rationale: "mostly clear, some rough edges".to_string(),
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let back: RubricCriterion = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.score, original.score);
+        assert_eq!(back.rationale, original.rationale);
+
+        // Missing rationale should default to empty string.
+        let sparse: RubricCriterion = serde_json::from_str(r#"{"score": 3}"#)
+            .expect("rationale is #[serde(default)]");
+        assert_eq!(sparse.score, 3);
+        assert!(sparse.rationale.is_empty());
+    }
+
+    /// A full `RubricScores` payload round-trips — all 5 criteria names
+    /// must deserialise to the documented fields.
+    #[test]
+    fn rubric_scores_round_trip_full_payload() {
+        let scores = RubricScores {
+            relevance: RubricCriterion { score: 5, rationale: "r".to_string() },
+            coherence: RubricCriterion { score: 4, rationale: "c".to_string() },
+            specificity: RubricCriterion { score: 3, rationale: "s".to_string() },
+            clinical_utility: RubricCriterion { score: 2, rationale: "u".to_string() },
+            terminology: RubricCriterion { score: 1, rationale: "t".to_string() },
+        };
+        let json = serde_json::to_string(&scores).unwrap();
+        // Wire keys must be snake_case to match the brainatlas contract.
+        assert!(json.contains("\"clinical_utility\""));
+        let back: RubricScores = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.relevance.score, 5);
+        assert_eq!(back.coherence.rationale, "c");
+        assert_eq!(back.terminology.score, 1);
+    }
+
+    /// `EvalScore` persists to `eval_scores` with `details: Option<Value>`
+    /// and must round-trip losslessly — including a `null` details column
+    /// and a structured JSON object.
+    #[test]
+    fn eval_score_round_trips_with_and_without_details() {
+        let id = Uuid::new_v4();
+        let summary_id = Uuid::new_v4();
+        let row_with = EvalScore {
+            id,
+            summary_id,
+            summary_hash: "abc".to_string(),
+            metric: EvalMetric::ClaimGroundedness.as_str().to_string(),
+            score: 0.87,
+            judge_model: Some("openai/gpt-4o-mini".to_string()),
+            details: Some(serde_json::json!({"n_claims": 5, "supported": 4})),
+            eval_version: "v0.3.0".to_string(),
+            created_at: NaiveDateTime::default(),
+        };
+        let json = serde_json::to_string(&row_with).unwrap();
+        let back: EvalScore = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, id);
+        assert_eq!(back.metric, "claim_groundedness");
+        assert_eq!(back.judge_model.as_deref(), Some("openai/gpt-4o-mini"));
+        assert_eq!(
+            back.details.as_ref().and_then(|v| v.get("n_claims").and_then(|n| n.as_u64())),
+            Some(5)
+        );
+
+        let row_without = EvalScore {
+            details: None,
+            judge_model: None,
+            ..row_with
+        };
+        let json2 = serde_json::to_string(&row_without).unwrap();
+        let back2: EvalScore = serde_json::from_str(&json2).unwrap();
+        assert!(back2.details.is_none());
+        assert!(back2.judge_model.is_none());
     }
 }

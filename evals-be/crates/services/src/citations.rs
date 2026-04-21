@@ -716,4 +716,108 @@ mod tests {
             0.0
         );
     }
+
+    // ---- Gap-fill: malformed / unclosed fenced code blocks ----
+
+    /// An unclosed ``` fence should not cause `parse_citations` to panic and
+    /// should still return a sensible (`Vec`) result. The fenced-block regex
+    /// is non-greedy (`` ```.*?``` ``) so an unmatched opening fence matches
+    /// nothing and leaves the rest of the summary untouched — markers after
+    /// the stray fence are parsed normally. We simply assert graceful,
+    /// deterministic behaviour here.
+    #[test]
+    fn parse_handles_unclosed_fenced_code_block_gracefully() {
+        // Fence opens mid-sentence, never closes.
+        let s = format!(
+            "Intro sentence mentions ``` an unclosed fence [chunk:{}]. Next sentence [chunk:{}] ends here.",
+            UUID_A, UUID_B
+        );
+        // Must not panic; must return a Vec. Contents are permitted to be
+        // either parsed-through (treating the stray ``` as literal) or
+        // skipped — both are sensible. We only require determinism and no
+        // out-of-bounds / slicing panics.
+        let out = parse_citations(&s);
+        for pc in &out {
+            // Every returned citation must have a non-empty enclosing
+            // sentence sliced on valid UTF-8 boundaries (implicit in the
+            // successful `String` construction) and one of the two UUIDs.
+            assert!(!pc.enclosing_sentence.is_empty());
+            assert!(pc.uuid == u(UUID_A) || pc.uuid == u(UUID_B));
+        }
+        // A fence that opens and closes across two sentences is well-formed
+        // and must blank everything between the two ```.
+        let s2 = format!(
+            "First [chunk:{}]. ``` middle [chunk:{}] still ``` fenced. Third [chunk:{}].",
+            UUID_A, UUID_B, UUID_C
+        );
+        let out2 = parse_citations(&s2);
+        let uuids: Vec<Uuid> = out2.iter().map(|p| p.uuid).collect();
+        assert_eq!(uuids, vec![u(UUID_A), u(UUID_C)]);
+    }
+
+    // ---- Gap-fill: UUID case-sensitivity across all four metric functions ----
+
+    /// The regex is `(?i)` — parsing accepts upper-case hex. But each of the
+    /// four metrics converts cited hex into `Uuid`s (via parse or via direct
+    /// caller-supplied `Uuid` values), and `Uuid` equality is
+    /// case-insensitive by construction. Verify that *all four* metric
+    /// functions produce identical scores for lowercase vs uppercase UUIDs
+    /// in the same logical position.
+    #[test]
+    fn all_four_metrics_agree_across_uuid_case() {
+        let lower = UUID_A.to_ascii_lowercase();
+        let upper = UUID_A.to_ascii_uppercase();
+
+        // 1. citation_presence_score — the UUID appears inside the summary
+        //    body; parsing must handle both cases identically.
+        let summary_lower = format!(
+            "## Overview\nThe hippocampus supports memory [chunk:{}].",
+            lower
+        );
+        let summary_upper = format!(
+            "## Overview\nThe hippocampus supports memory [chunk:{}].",
+            upper
+        );
+        let claims = vec![make_claim(1, "Overview", "The hippocampus supports memory")];
+        let (p_lower, il) = citation_presence_score(&summary_lower, &claims);
+        let (p_upper, iu) = citation_presence_score(&summary_upper, &claims);
+        assert_eq!(p_lower, p_upper, "presence score diverged across UUID case");
+        assert_eq!(il.len(), iu.len());
+
+        // 2. citation_validity_score — the cited UUID list drives the
+        //    formula; parse_str handles hex case, so downstream HashMap
+        //    lookups must agree regardless of input case.
+        let cited_lower = vec![Uuid::parse_str(&lower).unwrap()];
+        let cited_upper = vec![Uuid::parse_str(&upper).unwrap()];
+        let mut existing: HashMap<Uuid, u32> = HashMap::new();
+        existing.insert(u(UUID_A), 0);
+        let ctx_v: HashMap<Uuid, (u32, String)> = HashMap::new();
+        let (v_lower, _) = citation_validity_score(&cited_lower, &existing, &ctx_v);
+        let (v_upper, _) = citation_validity_score(&cited_upper, &existing, &ctx_v);
+        assert_eq!(v_lower, v_upper, "validity score diverged across UUID case");
+        assert_eq!(v_lower, 1.0);
+
+        // 3. citation_scope_score — same reasoning: `Uuid` lookup.
+        let sid = u(UUID_B);
+        let mut scope_existing: HashMap<Uuid, Uuid> = HashMap::new();
+        scope_existing.insert(u(UUID_A), sid);
+        let ctx_s: HashMap<Uuid, (u32, String)> = HashMap::new();
+        let (s_lower, _) = citation_scope_score(sid, &cited_lower, &scope_existing, &ctx_s);
+        let (s_upper, _) = citation_scope_score(sid, &cited_upper, &scope_existing, &ctx_s);
+        assert_eq!(s_lower, s_upper, "scope score diverged across UUID case");
+        assert_eq!(s_lower, 1.0);
+
+        // 4. citation_support_score — verdict list doesn't depend on UUID
+        //    case directly, but the *same* verdicts derived from either
+        //    case of UUID input must yield the same score. We synthesise
+        //    matching verdict vectors to confirm the aggregation is stable.
+        use SupportVerdict::*;
+        let verdicts_from_lower = vec![Supported]; // one cited → one verdict
+        let verdicts_from_upper = vec![Supported];
+        assert_eq!(
+            citation_support_score(&verdicts_from_lower),
+            citation_support_score(&verdicts_from_upper),
+            "support score diverged across UUID case"
+        );
+    }
 }

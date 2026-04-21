@@ -707,3 +707,894 @@ where
             .map_err(ServiceError::InfraError)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for `OrchPipelineRunner`.
+    //!
+    //! Scope notes / deliberately skipped branches:
+    //!
+    //! * The task plan mentions a `skip_summarization` flag and an
+    //!   `AtomicBool` cancellation toggle. Neither lives in this file:
+    //!   `skip_summarization` is a field of `ProcessRegionRequest` in
+    //!   `types.rs` and is set by `completion_watcher.rs`; the only
+    //!   `AtomicBool` here is the per-cycle `circuit_broken` flag, which
+    //!   we exercise below via `generate_queries_circuit_breaker_trips_after_5_failures`.
+    //! * `normalize_url` in `pipeline_runner.rs:70-78` and the twin in
+    //!   `pipeline_runner.rs:256-263` are nested functions defined inside
+    //!   `generate_queries_for_new_regions` / `discover_new_papers`. They
+    //!   are unreachable from an external test module. We test their
+    //!   behaviour indirectly by inspecting the URL the runner POSTs to
+    //!   (`http_passthrough_*`, `rewrites_0_0_0_0_*`, `trailing_slash_*`).
+    //! * `discover_new_papers`, `ensure_fetcher_running`, `get_system_stats`,
+    //!   and `get_redis_stats` are out of scope for Task 1.4 (which is
+    //!   specifically the pipeline-runner loop / query-generation phase).
+    //!   Only the Phase-1 code path plus the lightweight count accessors
+    //!   are covered here.
+
+    use super::*;
+    use crate::infra::{NewProcessedFetchTask, OrchConfig, ProcessedFetchTask};
+    use crate::{
+        ChunkSourceRecord, PaperMetadataRecord, RegionInfo, RegionMapping, RegionSummaryRecord,
+        SearchHitRecord, SummaryFreshnessCounts, SystemStatsRaw,
+    };
+    use ::app::PipelineRunner as PipelineRunnerTrait;
+    use async_trait::async_trait;
+    use domain::{BatchStatus, ConfigKey, ProcessingBatch, RedisStats, RegionQuery};
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use uuid::Uuid;
+
+    // ---- Error type ----
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("mock error: {0}")]
+    struct MockErr(String);
+
+    // ---- Recorded HTTP call ----
+
+    #[derive(Debug, Clone)]
+    struct PostCall {
+        url: String,
+        body: serde_json::Value,
+    }
+
+    /// Per-call behaviour: given (call_index, url, body_json), produce a
+    /// result. The counter lets a test make the same region fail on the
+    /// first attempt and succeed on the retry.
+    type PostResponder = Box<
+        dyn Fn(usize, &str, &serde_json::Value) -> Result<serde_json::Value, MockErr>
+            + Send
+            + Sync,
+    >;
+
+    // ---- Mock infra ----
+
+    struct MockInfra {
+        env: HashMap<String, String>,
+        config: Mutex<HashMap<String, String>>,
+        regions_without_queries: Mutex<Vec<RegionInfo>>,
+        /// Populated when `insert_queries` is called: (region_id, queries).
+        inserted_queries: Mutex<Vec<(Uuid, Vec<String>)>>,
+        post_calls: Mutex<Vec<PostCall>>,
+        post_responder: Mutex<Option<PostResponder>>,
+        /// Value returned by `get_pending_fetch_task_count`.
+        pending_fetch_task_count: Mutex<i64>,
+        /// Optional DB-level error for `get_regions_without_queries`.
+        regions_without_queries_err: Mutex<Option<String>>,
+    }
+
+    impl MockInfra {
+        fn new() -> Self {
+            Self {
+                env: HashMap::new(),
+                config: Mutex::new(HashMap::new()),
+                regions_without_queries: Mutex::new(Vec::new()),
+                inserted_queries: Mutex::new(Vec::new()),
+                post_calls: Mutex::new(Vec::new()),
+                post_responder: Mutex::new(None),
+                pending_fetch_task_count: Mutex::new(0),
+                regions_without_queries_err: Mutex::new(None),
+            }
+        }
+        fn with_env(mut self, k: &str, v: &str) -> Self {
+            self.env.insert(k.to_string(), v.to_string());
+            self
+        }
+        fn with_config(self, k: ConfigKey, v: &str) -> Self {
+            self.config.lock().unwrap().insert(k.to_string(), v.to_string());
+            self
+        }
+        fn with_regions(self, regions: Vec<RegionInfo>) -> Self {
+            *self.regions_without_queries.lock().unwrap() = regions;
+            self
+        }
+        fn with_post_responder(self, f: PostResponder) -> Self {
+            *self.post_responder.lock().unwrap() = Some(f);
+            self
+        }
+        fn with_pending_count(self, n: i64) -> Self {
+            *self.pending_fetch_task_count.lock().unwrap() = n;
+            self
+        }
+        fn with_regions_without_queries_err(self, msg: &str) -> Self {
+            *self.regions_without_queries_err.lock().unwrap() = Some(msg.to_string());
+            self
+        }
+    }
+
+    fn region(name: &str) -> RegionInfo {
+        RegionInfo {
+            id: Uuid::new_v4(),
+            name: name.to_string(),
+        }
+    }
+
+    // ---- Trait impls ----
+
+    impl EnvInfra for MockInfra {
+        type Error = MockErr;
+        fn get_env_var(&self, key: &str) -> Result<String, Self::Error> {
+            self.env
+                .get(key)
+                .cloned()
+                .ok_or_else(|| MockErr(format!("no env {}", key)))
+        }
+    }
+
+    #[async_trait]
+    impl OrchDatabase for MockInfra {
+        type Error = MockErr;
+
+        async fn get_config(
+            &self,
+            _database_url: &str,
+            key: ConfigKey,
+        ) -> Result<Option<String>, Self::Error> {
+            Ok(self.config.lock().unwrap().get(&key.to_string()).cloned())
+        }
+
+        async fn get_processed_task(
+            &self,
+            _database_url: &str,
+            _fetch_task_id: i64,
+        ) -> Result<Option<ProcessedFetchTask>, Self::Error> {
+            unimplemented!("not used by pipeline_runner tests")
+        }
+        async fn insert_processed_task(
+            &self,
+            _database_url: &str,
+            _task: NewProcessedFetchTask,
+        ) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner tests")
+        }
+        async fn update_brainatlas_status(
+            &self,
+            _database_url: &str,
+            _fetch_task_id: i64,
+            _status: &str,
+            _error: Option<String>,
+        ) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner tests")
+        }
+        async fn get_all_config(
+            &self,
+            _database_url: &str,
+        ) -> Result<Vec<OrchConfig>, Self::Error> {
+            unimplemented!("not used by pipeline_runner tests")
+        }
+        async fn update_config(
+            &self,
+            _database_url: &str,
+            _key: ConfigKey,
+            _value: &str,
+        ) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner tests")
+        }
+    }
+
+    #[async_trait]
+    impl HttpClient for MockInfra {
+        type Error = MockErr;
+
+        async fn get<T: DeserializeOwned + Send>(&self, _url: &str) -> Result<T, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+
+        async fn post<Req: Serialize + Send + Sync, Res: DeserializeOwned + Send + Sync>(
+            &self,
+            url: &str,
+            body: &Req,
+        ) -> Result<Res, Self::Error> {
+            let body_json = serde_json::to_value(body)
+                .map_err(|e| MockErr(format!("serialize body: {}", e)))?;
+            let mut calls = self.post_calls.lock().unwrap();
+            let idx = calls.len();
+            calls.push(PostCall {
+                url: url.to_string(),
+                body: body_json.clone(),
+            });
+            drop(calls);
+
+            let guard = self.post_responder.lock().unwrap();
+            let responder = guard
+                .as_ref()
+                .expect("test did not stage a post responder");
+            let value = responder(idx, url, &body_json)?;
+            serde_json::from_value(value).map_err(|e| MockErr(format!("deserialize: {}", e)))
+        }
+
+        async fn check_health(
+            &self,
+            _base_url: &str,
+            _service_name: &str,
+        ) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner tests")
+        }
+    }
+
+    #[async_trait]
+    impl BatchManagement for MockInfra {
+        type Error = MockErr;
+
+        async fn insert_queries(
+            &self,
+            _database_url: &str,
+            region_id: Uuid,
+            queries: Vec<String>,
+        ) -> Result<Vec<Uuid>, Self::Error> {
+            self.inserted_queries
+                .lock()
+                .unwrap()
+                .push((region_id, queries.clone()));
+            Ok(queries.iter().map(|_| Uuid::new_v4()).collect())
+        }
+
+        async fn get_active_batch(
+            &self,
+            _database_url: &str,
+            _region_id: Uuid,
+        ) -> Result<Option<ProcessingBatch>, Self::Error> {
+            // Phase-1 code path never calls this; Phase-2 does. Returning
+            // `Ok(None)` keeps the surface safe if a future test wires in
+            // `discover_new_papers` without staging batch state.
+            Ok(None)
+        }
+
+        async fn get_queries(
+            &self,
+            _database_url: &str,
+            _region_id: Uuid,
+        ) -> Result<Vec<RegionQuery>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn delete_queries(
+            &self,
+            _database_url: &str,
+            _region_id: Uuid,
+        ) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn delete_all_queries(&self, _database_url: &str) -> Result<i64, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn create_batch(
+            &self,
+            _database_url: &str,
+            _region_id: Uuid,
+            _expected_count: i32,
+        ) -> Result<Uuid, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn add_tasks_to_batch(
+            &self,
+            _database_url: &str,
+            _batch_id: Uuid,
+            _task_ids: Vec<i64>,
+        ) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn update_batch_expected_count(
+            &self,
+            _database_url: &str,
+            _batch_id: Uuid,
+            _count: i32,
+        ) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_batch_by_id(
+            &self,
+            _database_url: &str,
+            _batch_id: Uuid,
+        ) -> Result<Option<ProcessingBatch>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_batches_by_status(
+            &self,
+            _database_url: &str,
+            _status: BatchStatus,
+        ) -> Result<Vec<ProcessingBatch>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn count_completed_tasks(
+            &self,
+            _database_url: &str,
+            _task_ids: &[i64],
+        ) -> Result<usize, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_completed_task_ids(
+            &self,
+            _database_url: &str,
+            _task_ids: &[i64],
+        ) -> Result<Vec<i64>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_task_s3_keys(
+            &self,
+            _database_url: &str,
+            _task_ids: &[i64],
+        ) -> Result<Vec<String>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_task_paper_metadata(
+            &self,
+            _database_url: &str,
+            _task_ids: &[i64],
+        ) -> Result<Vec<PaperMetadataRecord>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn update_batch_status(
+            &self,
+            _database_url: &str,
+            _batch_id: Uuid,
+            _status: BatchStatus,
+            _error: Option<String>,
+        ) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn complete_batch(
+            &self,
+            _database_url: &str,
+            _batch_id: Uuid,
+        ) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_recent_batch(
+            &self,
+            _database_url: &str,
+            _region_id: Uuid,
+        ) -> Result<Option<ProcessingBatch>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+    }
+
+    #[async_trait]
+    impl RegionMappingQueries for MockInfra {
+        type Error = MockErr;
+
+        async fn get_regions_without_queries(
+            &self,
+            _database_url: &str,
+        ) -> Result<Vec<RegionInfo>, Self::Error> {
+            if let Some(msg) = self.regions_without_queries_err.lock().unwrap().as_ref() {
+                return Err(MockErr(msg.clone()));
+            }
+            Ok(self.regions_without_queries.lock().unwrap().clone())
+        }
+
+        async fn get_pending_fetch_task_count(
+            &self,
+            _database_url: &str,
+        ) -> Result<i64, Self::Error> {
+            Ok(*self.pending_fetch_task_count.lock().unwrap())
+        }
+
+        async fn get_region_mapping(
+            &self,
+            _database_url: &str,
+            _region_uuid: Uuid,
+        ) -> Result<Option<RegionMapping>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_all_regions(
+            &self,
+            _database_url: &str,
+        ) -> Result<Vec<RegionMapping>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_total_region_count(&self, _database_url: &str) -> Result<i64, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn count_regions_without_batches(
+            &self,
+            _database_url: &str,
+        ) -> Result<i64, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn count_actively_fetching_regions(
+            &self,
+            _database_url: &str,
+        ) -> Result<i64, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_region_summaries(
+            &self,
+            _database_url: &str,
+            _region_id: i32,
+        ) -> Result<Vec<RegionSummaryRecord>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_summary_sources(
+            &self,
+            _database_url: &str,
+            _summary_id: Uuid,
+        ) -> Result<Vec<ChunkSourceRecord>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn search_regions(
+            &self,
+            _database_url: &str,
+            _query: &str,
+            _limit: i64,
+        ) -> Result<(Vec<SearchHitRecord>, i64), Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_all_regions_with_queries(
+            &self,
+            _database_url: &str,
+        ) -> Result<Vec<(Uuid, String, Vec<String>)>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_latest_active_summary_age(
+            &self,
+            _database_url: &str,
+            _region_id: Uuid,
+        ) -> Result<Option<chrono::NaiveDateTime>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_summary_freshness_counts(
+            &self,
+            _database_url: &str,
+            _staleness_days: i64,
+        ) -> Result<SummaryFreshnessCounts, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_system_stats(
+            &self,
+            _database_url: &str,
+        ) -> Result<SystemStatsRaw, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+    }
+
+    #[async_trait]
+    impl CacheClient for MockInfra {
+        type Error = MockErr;
+
+        async fn cache_get(&self, _key: &str) -> Result<Option<String>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn cache_set(
+            &self,
+            _key: &str,
+            _value: &str,
+            _ttl_secs: u64,
+        ) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn cache_del(&self, _key: &str) -> Result<(), Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn cache_del_pattern(&self, _pattern: &str) -> Result<u64, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn cache_stats(&self) -> Result<RedisStats, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+    }
+
+    fn base_infra() -> MockInfra {
+        MockInfra::new().with_env("DATABASE_URL", "postgres://mock")
+    }
+
+    /// Default responder that returns 2 queries for any region.
+    fn ok_two_queries() -> PostResponder {
+        Box::new(|_idx, _url, _body| {
+            Ok(serde_json::json!({
+                "queries": ["q1", "q2"],
+            }))
+        })
+    }
+
+    // ======================================================================
+    //  generate_queries_for_new_regions
+    // ======================================================================
+
+    #[tokio::test]
+    async fn generate_queries_empty_regions_short_circuits() {
+        // No regions -> return early with (0, 0), never touch HTTP / config keys.
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_regions(vec![]),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        let (regions_processed, total_queries) =
+            runner.generate_queries_for_new_regions().await.expect("ok");
+        assert_eq!(regions_processed, 0);
+        assert_eq!(total_queries, 0);
+        // No HTTP POSTs must have been attempted.
+        assert!(infra.post_calls.lock().unwrap().is_empty());
+        // No queries were inserted.
+        assert!(infra.inserted_queries.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn generate_queries_uses_config_query_limit() {
+        // When the config has a valid integer, `count` in the request body
+        // should equal it.
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_config(ConfigKey::QueryGenerationLimit, "7")
+                .with_regions(vec![region("R1")])
+                .with_post_responder(ok_two_queries()),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        runner.generate_queries_for_new_regions().await.expect("ok");
+
+        let calls = infra.post_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].body["count"], serde_json::json!(7));
+    }
+
+    #[tokio::test]
+    async fn generate_queries_defaults_query_limit_when_missing() {
+        // No config -> default 3.
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_regions(vec![region("R1")])
+                .with_post_responder(ok_two_queries()),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        runner.generate_queries_for_new_regions().await.expect("ok");
+
+        let calls = infra.post_calls.lock().unwrap();
+        assert_eq!(calls[0].body["count"], serde_json::json!(3));
+    }
+
+    #[tokio::test]
+    async fn generate_queries_defaults_query_limit_when_invalid_string() {
+        // Unparseable config -> .parse().ok() is None -> default 3.
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_config(ConfigKey::QueryGenerationLimit, "not-a-number")
+                .with_regions(vec![region("R1")])
+                .with_post_responder(ok_two_queries()),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        runner.generate_queries_for_new_regions().await.expect("ok");
+
+        let calls = infra.post_calls.lock().unwrap();
+        assert_eq!(calls[0].body["count"], serde_json::json!(3));
+    }
+
+    #[tokio::test]
+    async fn generate_queries_honours_zero_query_limit() {
+        // "0" parses fine; the request still goes out with count=0 and the
+        // code path continues — the LLM can legitimately return [] or the
+        // default. This documents the current behaviour (no lower-bound
+        // clamp on QueryGenerationLimit).
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_config(ConfigKey::QueryGenerationLimit, "0")
+                .with_regions(vec![region("R1")])
+                .with_post_responder(ok_two_queries()),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        runner.generate_queries_for_new_regions().await.expect("ok");
+
+        let calls = infra.post_calls.lock().unwrap();
+        assert_eq!(calls[0].body["count"], serde_json::json!(0));
+    }
+
+    #[tokio::test]
+    async fn generate_queries_http_passthrough_url() {
+        // The env var already has an http:// scheme -> passthrough to the
+        // brainatlas endpoint.
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://brain.local:9000")
+                .with_regions(vec![region("R1")])
+                .with_post_responder(ok_two_queries()),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        runner.generate_queries_for_new_regions().await.expect("ok");
+
+        let calls = infra.post_calls.lock().unwrap();
+        assert_eq!(
+            calls[0].url,
+            "http://brain.local:9000/brainatlas-be/api/generate-queries"
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_queries_rewrites_0_0_0_0_to_localhost() {
+        // No scheme + 0.0.0.0 -> normalized to http://localhost:PORT.
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "0.0.0.0:8082")
+                .with_regions(vec![region("R1")])
+                .with_post_responder(ok_two_queries()),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        runner.generate_queries_for_new_regions().await.expect("ok");
+
+        let calls = infra.post_calls.lock().unwrap();
+        assert_eq!(
+            calls[0].url,
+            "http://localhost:8082/brainatlas-be/api/generate-queries"
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_queries_strips_trailing_slash_from_base_url() {
+        // Base URL from config has trailing slash; final URL must not have
+        // a double slash before /brainatlas-be/...
+        let infra = Arc::new(
+            base_infra()
+                .with_config(ConfigKey::BrainatlasBaseUrl, "http://brain.local:9000/")
+                .with_regions(vec![region("R1")])
+                .with_post_responder(ok_two_queries()),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        runner.generate_queries_for_new_regions().await.expect("ok");
+
+        let calls = infra.post_calls.lock().unwrap();
+        assert_eq!(
+            calls[0].url,
+            "http://brain.local:9000/brainatlas-be/api/generate-queries"
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_queries_errors_when_brainatlas_url_missing() {
+        // Env var unset AND config unset -> ConfigNotFound surfaces.
+        let infra = Arc::new(
+            base_infra().with_regions(vec![region("R1")]),
+        );
+        let runner = OrchPipelineRunner::new(infra);
+        match runner.generate_queries_for_new_regions().await {
+            Err(ServiceError::ConfigNotFound { key }) => {
+                assert_eq!(key, "brainatlas_base_url");
+            }
+            other => panic!(
+                "expected ConfigNotFound, got {:?}",
+                other.as_ref().err().map(|e| e.to_string())
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_queries_propagates_db_error_getting_regions() {
+        // DB layer failing on the very first call surfaces as InfraError.
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_regions_without_queries_err("boom"),
+        );
+        let runner = OrchPipelineRunner::new(infra);
+        match runner.generate_queries_for_new_regions().await {
+            Err(ServiceError::InfraError(e)) => {
+                assert!(e.to_string().contains("boom"), "got: {}", e);
+            }
+            other => panic!(
+                "expected InfraError, got {:?}",
+                other.as_ref().err().map(|e| e.to_string())
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_queries_processes_all_regions_via_parallel_stream() {
+        // Three regions -> three POSTs -> three insert_queries calls -> the
+        // aggregate counters reflect every region.
+        let r1 = region("R1");
+        let r2 = region("R2");
+        let r3 = region("R3");
+        let ids = [r1.id, r2.id, r3.id];
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_config(ConfigKey::MaxParallelProcessCalls, "3")
+                .with_regions(vec![r1, r2, r3])
+                .with_post_responder(ok_two_queries()),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        let (regions_processed, total_queries) =
+            runner.generate_queries_for_new_regions().await.expect("ok");
+
+        assert_eq!(regions_processed, 3);
+        assert_eq!(total_queries, 6); // 2 queries per region * 3 regions
+
+        let calls = infra.post_calls.lock().unwrap();
+        assert_eq!(calls.len(), 3);
+
+        let inserted = infra.inserted_queries.lock().unwrap();
+        assert_eq!(inserted.len(), 3);
+        let inserted_ids: std::collections::HashSet<_> =
+            inserted.iter().map(|(id, _)| *id).collect();
+        let expected_ids: std::collections::HashSet<_> = ids.into_iter().collect();
+        assert_eq!(inserted_ids, expected_ids);
+    }
+
+    #[tokio::test]
+    async fn generate_queries_swallows_per_region_failure() {
+        // Region "BAD" always fails (all 3 retry attempts); other regions
+        // succeed. The good regions still get their queries stored.
+        let good = region("GOOD");
+        let bad = region("BAD");
+        let good_id = good.id;
+        let bad_id = bad.id;
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_config(ConfigKey::MaxParallelProcessCalls, "2")
+                .with_regions(vec![good, bad])
+                .with_post_responder(Box::new(move |_idx, _url, body| {
+                    let name = body["region_name"].as_str().unwrap_or("");
+                    if name == "BAD" {
+                        Err(MockErr("llm exploded".into()))
+                    } else {
+                        Ok(serde_json::json!({ "queries": ["q1", "q2"] }))
+                    }
+                })),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        let (regions_processed, total_queries) =
+            runner.generate_queries_for_new_regions().await.expect("ok");
+
+        assert_eq!(regions_processed, 1);
+        assert_eq!(total_queries, 2);
+
+        let inserted = infra.inserted_queries.lock().unwrap();
+        assert_eq!(inserted.len(), 1);
+        assert_eq!(inserted[0].0, good_id);
+        assert_ne!(inserted[0].0, bad_id);
+    }
+
+    #[tokio::test]
+    async fn generate_queries_empty_llm_response_is_swallowed() {
+        // LLM returns an empty queries array -> no insert_queries call,
+        // no increment of processed counter.
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_regions(vec![region("R1")])
+                .with_post_responder(Box::new(|_idx, _url, _body| {
+                    Ok(serde_json::json!({ "queries": [] }))
+                })),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        let (regions_processed, total_queries) =
+            runner.generate_queries_for_new_regions().await.expect("ok");
+
+        assert_eq!(regions_processed, 0);
+        assert_eq!(total_queries, 0);
+        assert!(infra.inserted_queries.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn generate_queries_retries_transient_failure_then_succeeds() {
+        // backon::ExponentialBuilder with with_max_times(2) permits up to
+        // 3 total attempts. Fail on the first call, succeed on the second.
+        // Sleeps at least min_delay=1s between attempts, so this is a
+        // ~1s test — still well within any sane CI budget.
+        let attempts = Arc::new(Mutex::new(0usize));
+        let attempts_clone = attempts.clone();
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_regions(vec![region("R1")])
+                .with_post_responder(Box::new(move |_idx, _url, _body| {
+                    let mut n = attempts_clone.lock().unwrap();
+                    *n += 1;
+                    if *n == 1 {
+                        Err(MockErr("transient".into()))
+                    } else {
+                        Ok(serde_json::json!({ "queries": ["q1"] }))
+                    }
+                })),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        let (regions_processed, total_queries) =
+            runner.generate_queries_for_new_regions().await.expect("ok");
+
+        assert_eq!(regions_processed, 1);
+        assert_eq!(total_queries, 1);
+        // Two HTTP attempts were recorded — the first failed, the retry
+        // succeeded.
+        assert_eq!(*attempts.lock().unwrap(), 2);
+        let calls = infra.post_calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn generate_queries_circuit_breaker_trips_after_5_failures() {
+        // Every region fails. After 5 consecutive failures, `circuit_broken`
+        // (AtomicBool) flips and remaining regions return early. With 7
+        // regions and concurrency=1, the last 2 must be short-circuited
+        // and never hit the HTTP client.
+        //
+        // Note: backon retries 3 times per region (1 + 2 retries), so each
+        // *failed region* burns 3 http attempts. We set up so only the
+        // initial Err counts toward `consecutive_failures` (which is how
+        // the code is written — cf. `pipeline_runner.rs:205`).
+        let regions: Vec<RegionInfo> = (0..7).map(|i| region(&format!("R{}", i))).collect();
+        let attempts = Arc::new(Mutex::new(0usize));
+        let attempts_clone = attempts.clone();
+        let infra = Arc::new(
+            base_infra()
+                .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
+                .with_config(ConfigKey::MaxParallelProcessCalls, "1")
+                .with_regions(regions)
+                .with_post_responder(Box::new(move |_idx, _url, _body| {
+                    *attempts_clone.lock().unwrap() += 1;
+                    Err(MockErr("always fails".into()))
+                })),
+        );
+        let runner = OrchPipelineRunner::new(infra.clone());
+        let (regions_processed, total_queries) =
+            runner.generate_queries_for_new_regions().await.expect("ok");
+
+        assert_eq!(regions_processed, 0);
+        assert_eq!(total_queries, 0);
+
+        // After 5 failures the circuit breaker trips. The remaining 2
+        // regions skip the HTTP call entirely, so the recorded POST count
+        // corresponds to the first 5 regions only.
+        // Each of the 5 failed regions burns 3 retry attempts = 15 POSTs.
+        let calls = infra.post_calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            5 * 3,
+            "expected 5 regions * 3 retries = 15 POSTs before the breaker trips"
+        );
+    }
+
+    // ======================================================================
+    //  get_pending_fetch_task_count (lightweight accessor)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn get_pending_fetch_task_count_returns_db_value() {
+        let infra = Arc::new(base_infra().with_pending_count(42));
+        let runner = OrchPipelineRunner::new(infra);
+        let n = runner.get_pending_fetch_task_count().await.expect("ok");
+        assert_eq!(n, 42);
+    }
+
+    // ======================================================================
+    //  generate_queries_for_new_regions_count
+    // ======================================================================
+
+    #[tokio::test]
+    async fn generate_queries_for_new_regions_count_matches_region_list() {
+        let infra = Arc::new(
+            base_infra().with_regions(vec![region("A"), region("B"), region("C")]),
+        );
+        let runner = OrchPipelineRunner::new(infra);
+        let n = runner
+            .generate_queries_for_new_regions_count()
+            .await
+            .expect("ok");
+        assert_eq!(n, 3);
+    }
+}
+

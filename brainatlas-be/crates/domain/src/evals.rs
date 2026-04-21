@@ -138,4 +138,51 @@ mod tests {
         assert_eq!(parsed.relevance.score, 5);
         assert_eq!(parsed.terminology.rationale, "modern usage");
     }
+
+    // ---------- Gap-fill tests (Plan Task 1.12: evals.rs) ----------
+
+    /// Every `GroundednessLabel` variant must survive a serde round-trip
+    /// against its documented lowercase wire spelling. The enum has no
+    /// `Display`/`FromStr`, so this is the only string contract we need to
+    /// pin.
+    #[test]
+    fn groundedness_label_every_variant_roundtrips() {
+        let cases: &[(GroundednessLabel, &str)] = &[
+            (GroundednessLabel::Supported, "\"supported\""),
+            (GroundednessLabel::Partial, "\"partial\""),
+            (GroundednessLabel::Contradicted, "\"contradicted\""),
+            (GroundednessLabel::Unsupported, "\"unsupported\""),
+        ];
+        for (label, wire) in cases {
+            let serialised = serde_json::to_string(label).unwrap();
+            assert_eq!(serialised, *wire, "wire form for {:?}", label);
+            let back: GroundednessLabel = serde_json::from_str(&serialised).unwrap();
+            assert_eq!(back, *label, "round-trip for {:?}", label);
+        }
+    }
+
+    /// A full `GroundednessVerdict` with each label variant must survive a
+    /// `to_value -> from_value` round-trip with all fields preserved.
+    #[test]
+    fn groundedness_verdict_roundtrips_for_every_label() {
+        for label in [
+            GroundednessLabel::Supported,
+            GroundednessLabel::Partial,
+            GroundednessLabel::Contradicted,
+            GroundednessLabel::Unsupported,
+        ] {
+            let v = GroundednessVerdict {
+                verdict: label,
+                confidence: 0.75,
+                supporting_chunks: vec![1, 2, 4],
+                rationale: "because reasons".to_string(),
+            };
+            let value = serde_json::to_value(&v).unwrap();
+            let back: GroundednessVerdict = serde_json::from_value(value).unwrap();
+            assert_eq!(back.verdict, v.verdict);
+            assert!((back.confidence - v.confidence).abs() < 1e-6);
+            assert_eq!(back.supporting_chunks, v.supporting_chunks);
+            assert_eq!(back.rationale, v.rationale);
+        }
+    }
 }

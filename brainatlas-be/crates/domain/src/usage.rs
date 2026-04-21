@@ -138,4 +138,94 @@ mod tests {
         assert_eq!(mapped.model, "openai/gpt-4o-mini");
         assert_eq!(mapped.endpoint, LlmEndpointKind::ChatCompletion);
     }
+
+    // ---------- Gap-fill tests (Plan Task 1.12: usage.rs) ----------
+
+    /// Mixed-endpoint usage sum: a chat call plus an embedding call on the
+    /// same correlation id. The aggregator adds field-wise, with the
+    /// embedding row's `completion_tokens` (typically zero) preserved.
+    #[test]
+    fn saturating_add_combines_chat_and_embedding_rows() {
+        // Chat: 100 prompt, 200 completion, 300 total.
+        let chat = Usage::new(100, 200, 300);
+        // Embedding: 500 "prompt" tokens, zero completion, 500 total.
+        let embed = Usage::new(500, 0, 500);
+
+        let sum = chat.saturating_add(embed);
+        assert_eq!(sum.prompt_tokens, 600);
+        assert_eq!(sum.completion_tokens, 200);
+        assert_eq!(sum.total_tokens, 800);
+
+        // Addition is commutative for the combined row.
+        assert_eq!(sum, embed.saturating_add(chat));
+    }
+
+    /// Zero-usage is the additive identity.
+    #[test]
+    fn saturating_add_with_zero_is_identity() {
+        let zero = Usage::default();
+        let u = Usage::new(10, 20, 30);
+        assert_eq!(zero.saturating_add(u), u);
+        assert_eq!(u.saturating_add(zero), u);
+
+        // zero + zero = zero.
+        let z2 = Usage::new(0, 0, 0);
+        let sum = zero.saturating_add(z2);
+        assert_eq!(sum.prompt_tokens, 0);
+        assert_eq!(sum.completion_tokens, 0);
+        assert_eq!(sum.total_tokens, 0);
+    }
+
+    /// Overflow safety: summing two `u32::MAX`-valued usages must saturate
+    /// rather than wrap. This is critical because aggregation is performed
+    /// over potentially millions of rows in `llm_call_usage`.
+    #[test]
+    fn saturating_add_saturates_on_overflow() {
+        let max = Usage::new(u32::MAX, u32::MAX, u32::MAX);
+        let one = Usage::new(1, 1, 1);
+
+        let sum = max.saturating_add(one);
+        assert_eq!(sum.prompt_tokens, u32::MAX);
+        assert_eq!(sum.completion_tokens, u32::MAX);
+        assert_eq!(sum.total_tokens, u32::MAX);
+
+        // max + max still saturates, never wraps.
+        let double = max.saturating_add(max);
+        assert_eq!(double.prompt_tokens, u32::MAX);
+        assert_eq!(double.completion_tokens, u32::MAX);
+        assert_eq!(double.total_tokens, u32::MAX);
+    }
+
+    /// Serde round-trip for `Usage` pins the on-wire field spelling which
+    /// the rpc layer depends on.
+    #[test]
+    fn usage_serde_roundtrip_preserves_fields() {
+        let u = Usage::new(11, 22, 33);
+        let json = serde_json::to_string(&u).unwrap();
+        assert!(json.contains("\"prompt_tokens\":11"));
+        assert!(json.contains("\"completion_tokens\":22"));
+        assert!(json.contains("\"total_tokens\":33"));
+        let back: Usage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, u);
+    }
+
+    /// Serde round-trip for every `LlmEndpointKind` variant in its
+    /// documented `snake_case` wire form.
+    #[test]
+    fn endpoint_kind_serde_roundtrips_for_every_variant() {
+        let cases: &[(LlmEndpointKind, &str)] = &[
+            (LlmEndpointKind::Embedding, "\"embedding\""),
+            (LlmEndpointKind::ChatCompletion, "\"chat_completion\""),
+            (
+                LlmEndpointKind::ChatCompletionWithTools,
+                "\"chat_completion_with_tools\"",
+            ),
+        ];
+        for (kind, wire) in cases {
+            let s = serde_json::to_string(kind).unwrap();
+            assert_eq!(s, *wire, "wire form for {:?}", kind);
+            let back: LlmEndpointKind = serde_json::from_str(&s).unwrap();
+            assert_eq!(back, *kind);
+        }
+    }
 }

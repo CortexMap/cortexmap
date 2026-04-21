@@ -50,10 +50,11 @@ jobs:
           fetcher-be -> fetcher-be/target
           brainatlas-be -> brainatlas-be/target
           orch -> orch/target
+          evals-be -> evals-be/target
     - name: Cargo Fmt
-      run: (cd fetcher-be && cargo +nightly fmt --all) && (cd brainatlas-be && cargo +nightly fmt --all) && (cd orch && cargo +nightly fmt --all)
+      run: (cd fetcher-be && cargo +nightly fmt --all) && (cd brainatlas-be && cargo +nightly fmt --all) && (cd orch && cargo +nightly fmt --all) && (cd evals-be && cargo +nightly fmt --all)
     - name: Cargo Clippy
-      run: (cd fetcher-be && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings) && (cd brainatlas-be && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings) && (cd orch && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings)
+      run: (cd fetcher-be && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings) && (cd brainatlas-be && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings) && (cd orch && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings) && (cd evals-be && cargo +nightly clippy --all-features --workspace --fix --allow-dirty -- -D warnings)
     - name: Autofix
       uses: autofix-ci/action@7a166d7532b277f34e16238930461bf77f9d7ed8
 concurrency:
