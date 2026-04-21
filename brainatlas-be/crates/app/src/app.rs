@@ -495,9 +495,11 @@ where
         sentence_context: &str,
         chunk_text: &str,
         chat_model: Option<&str>,
+        correlation_id: Option<String>,
     ) -> Result<domain::GroundednessVerdict, AppError<E>> {
+        let ctx = UsageContext::default().with_correlation(correlation_id);
         self.services
-            .judge_citation(claim_text, sentence_context, chunk_text, chat_model)
+            .judge_citation(claim_text, sentence_context, chunk_text, chat_model, ctx)
             .await
             .map_err(AppError::ServiceError)
     }

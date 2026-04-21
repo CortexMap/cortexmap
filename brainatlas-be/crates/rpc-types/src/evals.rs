@@ -108,4 +108,6 @@ pub struct JudgeCitationRequest {
     pub chunk_text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
 }

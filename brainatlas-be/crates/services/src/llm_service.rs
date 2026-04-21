@@ -209,13 +209,15 @@ where
         sentence_context: &str,
         chunk_text: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<GroundednessVerdict, ServiceError<E>> {
         let user = format!(
             "Claim:\n{}\n\nSentence as written in summary:\n{}\n\nCited chunk:\n{}\n",
             claim_text, sentence_context, chunk_text
         );
+        let ctx = ctx.with_caller_tag("judge_citation");
         let raw = self
-            .structured_chat(JUDGE_CITATION_SYSTEM, &user, chat_model_override)
+            .structured_chat(JUDGE_CITATION_SYSTEM, &user, chat_model_override, ctx)
             .await?;
         parse_json_loose::<GroundednessVerdict>(&raw)
             .map_err(|e| ServiceError::Other(format!("judge_citation parse error: {e}")))

@@ -92,6 +92,7 @@ pub trait LlmService: Send + Sync {
         sentence_context: &str,
         chunk_text: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<GroundednessVerdict, Self::Error>;
 }
 

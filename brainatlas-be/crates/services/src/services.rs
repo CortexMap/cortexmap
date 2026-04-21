@@ -123,6 +123,7 @@ where
         sentence_context: &str,
         chunk_text: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<GroundednessVerdict, Self::Error> {
         self.llm_service
             .judge_citation(
@@ -130,6 +131,7 @@ where
                 sentence_context,
                 chunk_text,
                 chat_model_override,
+                ctx,
             )
             .await
     }

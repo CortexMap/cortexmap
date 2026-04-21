@@ -297,6 +297,7 @@ async fn llm_judge_citation_handler(
             &body.sentence_context,
             &body.chunk_text,
             body.chat_model.as_deref(),
+            body.correlation_id,
         )
         .await
         .map_err(from_app_error)?;

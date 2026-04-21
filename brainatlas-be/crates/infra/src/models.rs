@@ -154,9 +154,15 @@ impl From<EmbeddingRow> for domain::SimilarChunk {
 }
 
 /// Diesel row for the `llm_pricing` table.
+///
+/// All columns are declared to match the table shape so Diesel's
+/// `Selectable`/`as_select()` can generate a type-checked SELECT. Not every
+/// field is read by the application (e.g., `id`, `created_at`) but they must
+/// exist on the struct for the Diesel macros to compile.
 #[derive(Queryable, Selectable, Debug, Clone)]
 #[diesel(table_name = llm_pricing)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
+#[allow(dead_code)]
 pub struct LlmPricingRow {
     pub id: Uuid,
     pub model: String,
@@ -187,9 +193,17 @@ pub struct NewLlmCallUsageRow {
 }
 
 /// Diesel queryable row for the `llm_call_usage` table.
+///
+/// All columns are declared to match the table shape so Diesel's
+/// `Selectable`/`as_select()` can generate a type-checked SELECT. The
+/// aggregation in `llm_usage::usage_aggregate` reads `model`, `cost_usd`,
+/// `prompt_tokens`, `completion_tokens`, `total_tokens`, and `caller_tag`;
+/// the remaining columns are kept on the struct to make the SELECT complete
+/// and to preserve flexibility for future per-row queries.
 #[derive(Queryable, Selectable, Debug, Clone)]
 #[diesel(table_name = llm_call_usage)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
+#[allow(dead_code)]
 pub struct LlmCallUsageRow {
     pub id: Uuid,
     pub created_at: DateTime<Utc>,

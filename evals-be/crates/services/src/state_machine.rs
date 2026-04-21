@@ -1028,6 +1028,7 @@ fn build_citation_support_action(
         sentence_context: sentence,
         chunk_text,
         chat_model: Some(ctx.judge_chat_model.to_string()),
+        correlation_id: None,
     })
     .expect("JudgeCitationRequest serializable");
 
