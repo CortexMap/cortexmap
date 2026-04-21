@@ -923,34 +923,63 @@ mod http_handler_tests {
         println!("✅ /dev/api/redis-stats happy path returns connected: true");
     }
 
-    /// Redis-down degraded path: point `REDIS_URL` at an unreachable port
-    /// and build a NEW router (fresh `OrchInfra`, so `OnceCell` is empty
-    /// and the connection attempt will use the bad URL). The production
-    /// `cache_stats` impl is documented to return Ok(RedisStats {
-    /// connected: false, error: Some(...), .. }) when it can't connect,
-    /// so the HTTP layer must surface 200 + `connected: false`.
+    /// Redis-down degraded path: point `REDIS_URL` at an unreachable host so
+    /// DNS resolution fails fast. Build a NEW router (fresh `OrchInfra`,
+    /// so `OnceCell` is empty and the connection attempt will use the bad
+    /// URL). The production `cache_stats` impl is documented to return
+    /// `Ok(RedisStats { connected: false, error: Some(...), .. })` when it
+    /// can't connect, so the HTTP layer must surface 200 + `connected:
+    /// false`.
     ///
     /// This mutates process-global env and MUST run under
     /// `--test-threads=1` (already enforced by the outer test config).
+    /// The test is wrapped in a `tokio::time::timeout` as a guardrail so
+    /// a misconfigured redis-crate retry policy can't hang CI.
     #[tokio::test]
     async fn redis_stats_degraded_when_unreachable() {
         if !should_run() {
             eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
             return;
         }
-        // Save original and point at an unreachable Redis. Port 1 is reserved
-        // ("tcpmux") and almost always rejects on localhost.
+        // Save original and point at a malformed URL so `redis::Client::open`
+        // fails synchronously during URL parsing — avoids the slow
+        // `ConnectionManager::new` retry path (which, at the default 6
+        // retries × backoff × TCP connect timeout, can run into minutes
+        // on a host that can't resolve).
         let original = env::var("REDIS_URL").ok();
         // SAFETY: edition 2024 marks `set_var` as unsafe; we manipulate
         // process-global env in a serialised test run (--test-threads=1).
         unsafe {
-            env::set_var("REDIS_URL", "redis://127.0.0.1:1");
+            env::set_var("REDIS_URL", "not-a-valid-redis-url");
         }
 
         // Build a FRESH router so its OrchInfra's OnceCell picks up the new
         // URL on first connect.
         let router = build_router();
-        let resp = get(&router, "/orch/dev/api/redis-stats").await;
+
+        // 10s guardrail. With a malformed URL `redis::Client::open` fails
+        // synchronously, so this should complete in well under a second.
+        // If we ever exceed this bound, fail loudly rather than hang CI.
+        let resp = match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            get(&router, "/orch/dev/api/redis-stats"),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => {
+                unsafe {
+                    match original {
+                        Some(v) => env::set_var("REDIS_URL", v),
+                        None => env::remove_var("REDIS_URL"),
+                    }
+                }
+                panic!(
+                    "redis-stats handler blocked for >30s when Redis was unreachable — \
+                     the `Ok(degraded)` contract on `cache_stats` is broken"
+                );
+            }
+        };
 
         // Restore env before any assertion so a failure doesn't poison
         // downstream tests.
@@ -1014,7 +1043,7 @@ mod http_handler_tests {
                 "INSERT INTO region_queries (id, region_id, query_text) VALUES ($1, $2, $3)",
             )
             .bind::<diesel::sql_types::Uuid, _>(*q_id)
-            .bind::<diesel::sql_types::Int4, _>(region_id)
+            .bind::<diesel::sql_types::Uuid, _>(region_uuid)
             .bind::<diesel::sql_types::Text, _>(&format!("test query {}", q_id))
             .execute(&mut conn)
             .expect("insert region_queries row");
