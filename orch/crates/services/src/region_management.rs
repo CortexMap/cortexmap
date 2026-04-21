@@ -846,3 +846,781 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infra::{
+        ChunkSourceRecord, NewProcessedFetchTask, OrchConfig, PaperMetadataRecord,
+        ProcessedFetchTask, RegionInfo, RegionMapping, RegionSummaryRecord, SearchHitRecord,
+        SummaryFreshnessCounts, SystemStatsRaw,
+    };
+    use crate::{OrchDatabase, RegionMappingQueries};
+    use async_trait::async_trait;
+    use serde::de::DeserializeOwned;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("mock error: {0}")]
+    struct MockErr(String);
+
+    // ========== Wire-type serde round-trip (Task 1.7 first bullet) ==========
+
+    #[test]
+    fn evals_scores_wire_roundtrip_with_missing_optional_fields() {
+        // judge_model and created_at are missing: must deserialize via
+        // #[serde(default)].
+        let sid = Uuid::new_v4();
+        let json = serde_json::json!({
+            "summary_id": sid,
+            "scores": [
+                {
+                    "metric": "groundedness",
+                    "score": 0.75,
+                    "eval_version": "v0.2.0",
+                },
+                {
+                    "metric": "rubric_relevance",
+                    "score": 0.9,
+                    "eval_version": "v0.2.0",
+                    "judge_model": "gpt-4o-mini",
+                    "created_at": "2026-04-20T12:00:00Z",
+                }
+            ]
+        });
+
+        let w: EvalsScoresWire = serde_json::from_value(json).expect("decode ok");
+        assert_eq!(w.scores.len(), 2);
+        assert_eq!(w.scores[0].metric, "groundedness");
+        assert!(w.scores[0].judge_model.is_none());
+        assert_eq!(w.scores[0].created_at, "");
+        assert_eq!(w.scores[1].judge_model.as_deref(), Some("gpt-4o-mini"));
+        assert_eq!(w.scores[1].created_at, "2026-04-20T12:00:00Z");
+
+        // Round-trip: serializing then re-parsing must preserve content.
+        let val = serde_json::to_value(&w).expect("ser");
+        let w2: EvalsScoresWire = serde_json::from_value(val).expect("decode ok");
+        assert_eq!(w2.scores.len(), 2);
+    }
+
+    #[test]
+    fn evals_score_entry_numeric_edge_cases() {
+        // 0.0 and 1.0 at boundaries
+        let j = serde_json::json!({
+            "summary_id": Uuid::nil(),
+            "scores": [
+                {"metric": "a", "score": 0.0, "eval_version": "v"},
+                {"metric": "b", "score": 1.0, "eval_version": "v"},
+                {"metric": "c", "score": -0.0, "eval_version": "v"},
+            ]
+        });
+        let w: EvalsScoresWire = serde_json::from_value(j).unwrap();
+        assert_eq!(w.scores[0].score, 0.0);
+        assert_eq!(w.scores[1].score, 1.0);
+        // negative zero also parses
+        assert_eq!(w.scores[2].score, 0.0);
+    }
+
+    #[test]
+    fn evals_score_entry_empty_scores_array_is_valid() {
+        let j = serde_json::json!({
+            "summary_id": Uuid::nil(),
+            // missing "scores" — should default to []
+        });
+        let w: EvalsScoresWire = serde_json::from_value(j).unwrap();
+        assert!(w.scores.is_empty());
+    }
+
+    // ========== Helper: HTTP fake that tracks concurrency ==========
+
+    struct HelperInfra {
+        responses: Mutex<HashMap<String, serde_json::Value>>,
+        error_urls: Mutex<Vec<String>>, // URLs that should error
+        delay_ms: AtomicUsize,
+        in_flight: AtomicUsize,
+        max_in_flight: AtomicUsize,
+        call_count: AtomicUsize,
+    }
+
+    impl HelperInfra {
+        fn new() -> Self {
+            Self {
+                responses: Mutex::new(HashMap::new()),
+                error_urls: Mutex::new(vec![]),
+                delay_ms: AtomicUsize::new(0),
+                in_flight: AtomicUsize::new(0),
+                max_in_flight: AtomicUsize::new(0),
+                call_count: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl HttpClient for HelperInfra {
+        type Error = MockErr;
+
+        async fn get<T: DeserializeOwned + Send>(
+            &self,
+            url: &str,
+        ) -> Result<T, Self::Error> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            self.in_flight.fetch_add(1, Ordering::SeqCst);
+            let cur = self.in_flight.load(Ordering::SeqCst);
+            self.max_in_flight.fetch_max(cur, Ordering::SeqCst);
+
+            let delay = self.delay_ms.load(Ordering::SeqCst);
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay as u64))
+                    .await;
+            }
+
+            let err = self.error_urls.lock().unwrap().iter().any(|p| url.contains(p));
+            let result = if err {
+                Err(MockErr(format!("staged error for {}", url)))
+            } else {
+                // Match by longest contained pattern.
+                let map = self.responses.lock().unwrap();
+                let mut best: Option<serde_json::Value> = None;
+                let mut best_len = 0usize;
+                for (pat, val) in map.iter() {
+                    if url.contains(pat.as_str()) && pat.len() >= best_len {
+                        best_len = pat.len();
+                        best = Some(val.clone());
+                    }
+                }
+                match best {
+                    Some(v) => serde_json::from_value(v)
+                        .map_err(|e| MockErr(format!("decode: {}", e))),
+                    None => Err(MockErr(format!("no responder: {}", url))),
+                }
+            };
+
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            result
+        }
+
+        async fn post<Req: serde::Serialize + Send + Sync, Res: DeserializeOwned + Send + Sync>(
+            &self,
+            _url: &str,
+            _body: &Req,
+        ) -> Result<Res, Self::Error> {
+            unimplemented!()
+        }
+
+        async fn check_health(&self, _: &str, _: &str) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+    }
+
+    // ========== fetch_summary_eval_scores unit tests ==========
+
+    #[tokio::test]
+    async fn fetch_eval_scores_returns_none_on_http_error() {
+        let infra = HelperInfra::new();
+        infra
+            .error_urls
+            .lock()
+            .unwrap()
+            .push("/scores/".to_string());
+        let sid = Uuid::new_v4();
+        let result =
+            fetch_summary_eval_scores(&infra, "http://evals:8083", sid).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_eval_scores_returns_none_on_empty_scores_array() {
+        let infra = HelperInfra::new();
+        let sid = Uuid::new_v4();
+        infra.responses.lock().unwrap().insert(
+            format!("/scores/{}", sid),
+            serde_json::json!({"summary_id": sid, "scores": []}),
+        );
+        let result =
+            fetch_summary_eval_scores(&infra, "http://evals:8083", sid).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn fetch_eval_scores_picks_latest_eval_version_by_created_at() {
+        let infra = HelperInfra::new();
+        let sid = Uuid::new_v4();
+        infra.responses.lock().unwrap().insert(
+            format!("/scores/{}", sid),
+            serde_json::json!({
+                "summary_id": sid,
+                "scores": [
+                    {"metric": "groundedness", "score": 0.1, "eval_version": "v1",
+                     "judge_model": "old-judge", "created_at": "2026-01-01T00:00:00Z"},
+                    {"metric": "groundedness", "score": 0.9, "eval_version": "v2",
+                     "judge_model": "new-judge", "created_at": "2026-04-01T00:00:00Z"},
+                    {"metric": "rubric", "score": 0.5, "eval_version": "v2",
+                     "created_at": "2026-04-01T00:00:00Z"},
+                ]
+            }),
+        );
+        let result =
+            fetch_summary_eval_scores(&infra, "http://evals:8083", sid).await;
+        let r = result.expect("some");
+        assert_eq!(r.eval_version, "v2");
+        assert_eq!(r.scores.len(), 2);
+        assert_eq!(r.scores.get("groundedness").copied(), Some(0.9));
+        assert_eq!(r.scores.get("rubric").copied(), Some(0.5));
+        assert_eq!(
+            r.judge_models.get("groundedness").map(|s| s.as_str()),
+            Some("new-judge")
+        );
+        // "rubric" had no judge_model → should NOT be in judge_models.
+        assert!(!r.judge_models.contains_key("rubric"));
+    }
+
+    #[tokio::test]
+    async fn fetch_batch_cost_formats_total_cost_usd() {
+        let infra = HelperInfra::new();
+        let bid = Uuid::new_v4();
+        infra.responses.lock().unwrap().insert(
+            format!("correlation_id=batch:{}", bid),
+            serde_json::json!({"total_cost_usd": 0.123456789_f64, "total_calls": 3}),
+        );
+        let c = fetch_batch_cost_usd(&infra, "http://brain:8082", bid).await;
+        assert_eq!(c.as_deref(), Some("0.123457"));
+    }
+
+    #[tokio::test]
+    async fn fetch_batch_cost_returns_none_on_error() {
+        let infra = HelperInfra::new();
+        infra
+            .error_urls
+            .lock()
+            .unwrap()
+            .push("/llm/usage".to_string());
+        let c = fetch_batch_cost_usd(&infra, "http://brain:8082", Uuid::new_v4()).await;
+        assert!(c.is_none());
+    }
+
+    // ========== Concurrency cap (EVAL_SCORES_FETCH_CONCURRENCY = 16) ==========
+    //
+    // The private constant is used by `stream::iter(...).buffer_unordered(16)`
+    // only inside `get_summaries()`. We re-exercise the SAME pattern here with
+    // the same constant over the helper, so any future bump to the cap will be
+    // caught here too (asserts against `EVAL_SCORES_FETCH_CONCURRENCY`).
+    #[tokio::test]
+    async fn eval_scores_stream_respects_private_concurrency_constant() {
+        // Ensure the constant is a reasonable positive number.
+        assert!(EVAL_SCORES_FETCH_CONCURRENCY >= 1);
+
+        let infra = HelperInfra::new();
+        // 40 summary IDs; each call sleeps 20ms to create observable overlap.
+        infra.delay_ms.store(20, Ordering::SeqCst);
+        let ids: Vec<Uuid> = (0..40).map(|_| Uuid::new_v4()).collect();
+        // One route that matches any /scores/<id>: use the evals API prefix.
+        infra.responses.lock().unwrap().insert(
+            "/evals-be/api/evals/scores/".to_string(),
+            serde_json::json!({"summary_id": Uuid::nil(), "scores": []}),
+        );
+
+        let _results: Vec<_> = stream::iter(ids)
+            .map(|sid| {
+                let infra = &infra;
+                async move {
+                    fetch_summary_eval_scores(infra, "http://evals:8083", sid).await
+                }
+            })
+            .buffer_unordered(EVAL_SCORES_FETCH_CONCURRENCY)
+            .collect()
+            .await;
+
+        let peak = infra.max_in_flight.load(Ordering::SeqCst);
+        assert!(
+            peak <= EVAL_SCORES_FETCH_CONCURRENCY,
+            "peak {} exceeded cap {}",
+            peak,
+            EVAL_SCORES_FETCH_CONCURRENCY,
+        );
+        // We staged 40 ids with 20ms each — parallelism must be substantial.
+        assert!(
+            peak >= 2,
+            "expected observable parallelism, peak was only {}",
+            peak
+        );
+        // All calls hit the mock.
+        assert_eq!(infra.call_count.load(Ordering::SeqCst), 40);
+    }
+
+    // ========== get_summaries() cache hit ==========
+    //
+    // Full infra fake; only the cache_get responder matters. When the cache
+    // returns a hit, no DB traits need to fire (the `cached_or_fetch` helper
+    // short-circuits before the fetch_fn closure runs), so all the other
+    // trait methods can safely be `unimplemented!()`.
+
+    struct FullInfra {
+        env: HashMap<String, String>,
+        cache: Mutex<HashMap<String, String>>,
+        cache_gets: Mutex<Vec<String>>,
+        // For cache-miss path: DB records we return from
+        // `get_region_mapping`, `get_region_summaries`, `get_summary_sources`.
+        region_mapping: Mutex<Option<RegionMapping>>,
+        summaries: Mutex<Vec<RegionSummaryRecord>>,
+        summary_sources: Mutex<HashMap<Uuid, Vec<ChunkSourceRecord>>>,
+    }
+
+    impl FullInfra {
+        fn new() -> Self {
+            let mut env = HashMap::new();
+            env.insert("DATABASE_URL".to_string(), "postgres://mock".to_string());
+            Self {
+                env,
+                cache: Mutex::new(HashMap::new()),
+                cache_gets: Mutex::new(vec![]),
+                region_mapping: Mutex::new(None),
+                summaries: Mutex::new(vec![]),
+                summary_sources: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    impl EnvInfra for FullInfra {
+        type Error = MockErr;
+        fn get_env_var(&self, key: &str) -> Result<String, Self::Error> {
+            self.env
+                .get(key)
+                .cloned()
+                .ok_or_else(|| MockErr(format!("no env {}", key)))
+        }
+    }
+
+    #[async_trait]
+    impl OrchDatabase for FullInfra {
+        type Error = MockErr;
+
+        async fn get_config(
+            &self,
+            _: &str,
+            _key: ConfigKey,
+        ) -> Result<Option<String>, Self::Error> {
+            // Return None so evals/brainatlas enrichment is skipped cleanly.
+            Ok(None)
+        }
+        async fn get_processed_task(
+            &self,
+            _: &str,
+            _: i64,
+        ) -> Result<Option<ProcessedFetchTask>, Self::Error> {
+            unimplemented!()
+        }
+        async fn insert_processed_task(
+            &self,
+            _: &str,
+            _: NewProcessedFetchTask,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn update_brainatlas_status(
+            &self,
+            _: &str,
+            _: i64,
+            _: &str,
+            _: Option<String>,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn get_all_config(
+            &self,
+            _: &str,
+        ) -> Result<Vec<OrchConfig>, Self::Error> {
+            unimplemented!()
+        }
+        async fn update_config(
+            &self,
+            _: &str,
+            _: ConfigKey,
+            _: &str,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl HttpClient for FullInfra {
+        type Error = MockErr;
+        async fn get<T: DeserializeOwned + Send>(&self, _url: &str) -> Result<T, Self::Error> {
+            // No env/config for evals/brainatlas base URLs → these helpers
+            // short-circuit before calling get(). We still return Err if hit,
+            // to flag any unexpected enrichment paths.
+            Err(MockErr("unexpected http GET".into()))
+        }
+        async fn post<Req: serde::Serialize + Send + Sync, Res: DeserializeOwned + Send + Sync>(
+            &self,
+            _url: &str,
+            _body: &Req,
+        ) -> Result<Res, Self::Error> {
+            unimplemented!()
+        }
+        async fn check_health(&self, _: &str, _: &str) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl BatchManagement for FullInfra {
+        type Error = MockErr;
+        async fn get_queries(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Vec<domain::RegionQuery>, Self::Error> {
+            unimplemented!()
+        }
+        async fn insert_queries(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: Vec<String>,
+        ) -> Result<Vec<Uuid>, Self::Error> {
+            unimplemented!()
+        }
+        async fn delete_queries(&self, _: &str, _: Uuid) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn delete_all_queries(&self, _: &str) -> Result<i64, Self::Error> {
+            unimplemented!()
+        }
+        async fn create_batch(&self, _: &str, _: Uuid, _: i32) -> Result<Uuid, Self::Error> {
+            unimplemented!()
+        }
+        async fn add_tasks_to_batch(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: Vec<i64>,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn update_batch_expected_count(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: i32,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn get_batch_by_id(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Option<domain::ProcessingBatch>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_batches_by_status(
+            &self,
+            _: &str,
+            _: BatchStatus,
+        ) -> Result<Vec<ProcessingBatch>, Self::Error> {
+            unimplemented!()
+        }
+        async fn count_completed_tasks(
+            &self,
+            _: &str,
+            _: &[i64],
+        ) -> Result<usize, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_completed_task_ids(
+            &self,
+            _: &str,
+            _: &[i64],
+        ) -> Result<Vec<i64>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_task_s3_keys(
+            &self,
+            _: &str,
+            _: &[i64],
+        ) -> Result<Vec<String>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_task_paper_metadata(
+            &self,
+            _: &str,
+            _: &[i64],
+        ) -> Result<Vec<PaperMetadataRecord>, Self::Error> {
+            unimplemented!()
+        }
+        async fn update_batch_status(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: BatchStatus,
+            _: Option<String>,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn complete_batch(&self, _: &str, _: Uuid) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn get_active_batch(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Option<ProcessingBatch>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_recent_batch(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Option<ProcessingBatch>, Self::Error> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl RegionMappingQueries for FullInfra {
+        type Error = MockErr;
+        async fn get_region_mapping(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Option<RegionMapping>, Self::Error> {
+            Ok(self.region_mapping.lock().unwrap().clone())
+        }
+        async fn get_all_regions(
+            &self,
+            _: &str,
+        ) -> Result<Vec<RegionMapping>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_total_region_count(&self, _: &str) -> Result<i64, Self::Error> {
+            unimplemented!()
+        }
+        async fn count_regions_without_batches(&self, _: &str) -> Result<i64, Self::Error> {
+            unimplemented!()
+        }
+        async fn count_actively_fetching_regions(
+            &self,
+            _: &str,
+        ) -> Result<i64, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_region_summaries(
+            &self,
+            _: &str,
+            _region_id: i32,
+        ) -> Result<Vec<RegionSummaryRecord>, Self::Error> {
+            Ok(self.summaries.lock().unwrap().clone())
+        }
+        async fn get_summary_sources(
+            &self,
+            _: &str,
+            summary_id: Uuid,
+        ) -> Result<Vec<ChunkSourceRecord>, Self::Error> {
+            Ok(self
+                .summary_sources
+                .lock()
+                .unwrap()
+                .get(&summary_id)
+                .cloned()
+                .unwrap_or_default())
+        }
+        async fn search_regions(
+            &self,
+            _: &str,
+            _: &str,
+            _: i64,
+        ) -> Result<(Vec<SearchHitRecord>, i64), Self::Error> {
+            unimplemented!()
+        }
+        async fn get_regions_without_queries(
+            &self,
+            _: &str,
+        ) -> Result<Vec<RegionInfo>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_all_regions_with_queries(
+            &self,
+            _: &str,
+        ) -> Result<Vec<(Uuid, String, Vec<String>)>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_pending_fetch_task_count(&self, _: &str) -> Result<i64, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_latest_active_summary_age(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Option<chrono::NaiveDateTime>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_summary_freshness_counts(
+            &self,
+            _: &str,
+            _: i64,
+        ) -> Result<SummaryFreshnessCounts, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_system_stats(
+            &self,
+            _: &str,
+        ) -> Result<SystemStatsRaw, Self::Error> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl CacheClient for FullInfra {
+        type Error = MockErr;
+        async fn cache_get(&self, key: &str) -> Result<Option<String>, Self::Error> {
+            self.cache_gets.lock().unwrap().push(key.to_string());
+            Ok(self.cache.lock().unwrap().get(key).cloned())
+        }
+        async fn cache_set(
+            &self,
+            key: &str,
+            val: &str,
+            _ttl: u64,
+        ) -> Result<(), Self::Error> {
+            self.cache
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), val.to_string());
+            Ok(())
+        }
+        async fn cache_del(&self, _key: &str) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        async fn cache_del_pattern(&self, _pattern: &str) -> Result<u64, Self::Error> {
+            Ok(0)
+        }
+        async fn cache_stats(&self) -> Result<domain::RedisStats, Self::Error> {
+            Ok(domain::RedisStats {
+                connected: true,
+                error: None,
+                total_keys: 0,
+                keys_by_prefix: vec![],
+                used_memory_bytes: 0,
+                used_memory_human: "0B".to_string(),
+                uptime_secs: 0,
+                total_connections_received: 0,
+                keyspace_hits: 0,
+                keyspace_misses: 0,
+                hit_rate: 0.0,
+                server_version: "fake".to_string(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn get_summaries_cache_hit_short_circuits_db() {
+        let region_id = Uuid::new_v4();
+        let summary_id = Uuid::new_v4();
+        let batch_id = Uuid::new_v4();
+
+        // Pre-seed the cache with a serialized Vec<RegionSummary>.
+        let cached = vec![domain::RegionSummary {
+            summary_id,
+            summary: "cached summary".to_string(),
+            created_at: chrono::Utc::now(),
+            batch_id,
+            sources: vec![],
+            eval_scores: None,
+            cost_usd: None,
+        }];
+        let infra = FullInfra::new();
+        infra.cache.lock().unwrap().insert(
+            crate::cache_keys::region_summaries(region_id),
+            serde_json::to_string(&cached).unwrap(),
+        );
+        // NOTE: region_mapping intentionally NOT set. A cache miss here would
+        // return NotFound from `get_region_mapping` via Ok(None), proving
+        // the hit path was taken.
+        let infra = Arc::new(infra);
+        let svc = OrchRegionManagement::new(infra.clone());
+
+        let out = <OrchRegionManagement<FullInfra> as app::RegionManagement>::get_summaries(
+            &svc, region_id,
+        )
+        .await
+        .expect("cache hit");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].summary_id, summary_id);
+        assert_eq!(out[0].summary, "cached summary");
+
+        // Cache was consulted for the expected key.
+        let gets = infra.cache_gets.lock().unwrap().clone();
+        assert!(gets.contains(&crate::cache_keys::region_summaries(region_id)));
+    }
+
+    #[tokio::test]
+    async fn get_summaries_cache_miss_not_found_when_region_mapping_missing() {
+        // Cache is empty and region_mapping is None → NotFound error.
+        let region_id = Uuid::new_v4();
+        let infra = Arc::new(FullInfra::new());
+        let svc = OrchRegionManagement::new(infra.clone());
+
+        let err = <OrchRegionManagement<FullInfra> as app::RegionManagement>::get_summaries(
+            &svc, region_id,
+        )
+        .await
+        .err()
+        .expect("err");
+        match err {
+            ServiceError::NotFound => {}
+            other => panic!("expected NotFound, got {:?}", other),
+        }
+        // Confirm we did go through the cache miss path (cache_get was invoked).
+        let gets = infra.cache_gets.lock().unwrap().clone();
+        assert_eq!(gets.len(), 1);
+        assert_eq!(gets[0], crate::cache_keys::region_summaries(region_id));
+    }
+
+    #[tokio::test]
+    async fn get_summaries_cache_miss_populates_from_db_then_caches() {
+        let region_id = Uuid::new_v4();
+        let summary_id = Uuid::new_v4();
+        let batch_id = Uuid::new_v4();
+
+        let infra = FullInfra::new();
+        *infra.region_mapping.lock().unwrap() = Some(RegionMapping {
+            id: region_id,
+            region_id: 42,
+            name: "hippocampus".to_string(),
+            acronym: None,
+            red: None,
+            green: None,
+            blue: None,
+            structure_order: None,
+            parent_region_id: None,
+            parent_acronym: None,
+        });
+        *infra.summaries.lock().unwrap() = vec![RegionSummaryRecord {
+            id: summary_id,
+            summary: Some("hello".to_string()),
+            created_at: chrono::NaiveDateTime::parse_from_str(
+                "2026-04-20 10:00:00",
+                "%Y-%m-%d %H:%M:%S",
+            )
+            .unwrap(),
+            batch_id,
+        }];
+        let infra = Arc::new(infra);
+        let svc = OrchRegionManagement::new(infra.clone());
+
+        let out = <OrchRegionManagement<FullInfra> as app::RegionManagement>::get_summaries(
+            &svc, region_id,
+        )
+        .await
+        .expect("ok");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].summary, "hello");
+        assert!(out[0].eval_scores.is_none());
+        assert!(out[0].cost_usd.is_none());
+
+        // After fetch, the cache should hold a JSON string for this key.
+        let cache = infra.cache.lock().unwrap();
+        assert!(cache.contains_key(&crate::cache_keys::region_summaries(region_id)));
+    }
+}

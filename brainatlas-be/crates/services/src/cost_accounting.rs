@@ -457,65 +457,106 @@ mod tests {
         assert_eq!(row.request_id.as_deref(), Some("req-abc"));
     }
 
-    /// A `MakeWriter` that captures log output into a shared `Vec<u8>` so
-    /// tests can assert on the serialised tracing event.
-    #[derive(Clone)]
-    struct BufWriter(Arc<Mutex<Vec<u8>>>);
+    // ---- Tracing capture helpers (custom Layer — pattern copied from
+    //      orch::services::cost_guardrail because the fmt::layer + BufWriter
+    //      approach is flaky under parallel test execution).
 
-    impl std::io::Write for BufWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
+    #[derive(Clone, Debug)]
+    struct CapturedEvent {
+        target: String,
+        fields: String,
+    }
+
+    #[derive(Default, Clone)]
+    struct CaptureStore {
+        events: Arc<Mutex<Vec<CapturedEvent>>>,
+    }
+
+    impl CaptureStore {
+        fn snapshot(&self) -> Vec<CapturedEvent> {
+            self.events.lock().unwrap().clone()
         }
     }
 
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for BufWriter {
-        type Writer = BufWriter;
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
+    struct FieldVisitor {
+        fields: String,
+    }
+
+    impl tracing::field::Visit for FieldVisitor {
+        fn record_debug(
+            &mut self,
+            field: &tracing::field::Field,
+            value: &dyn std::fmt::Debug,
+        ) {
+            if !self.fields.is_empty() {
+                self.fields.push(' ');
+            }
+            self.fields
+                .push_str(&format!("{}={:?}", field.name(), value));
+        }
+    }
+
+    struct CaptureLayer {
+        store: CaptureStore,
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CaptureLayer {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut v = FieldVisitor {
+                fields: String::new(),
+            };
+            event.record(&mut v);
+            let meta = event.metadata();
+            self.store.events.lock().unwrap().push(CapturedEvent {
+                target: meta.target().to_string(),
+                fields: v.fields,
+            });
         }
     }
 
     /// Contract test for the `tracing::info!(target: "llm.call", ...)` event:
-    /// every documented field NAME must appear in the captured log output.
+    /// every documented field NAME must appear in the captured output.
     /// These field names are consumed by the downstream log-aggregation
     /// pipeline and MUST NOT be renamed without a coordinated change.
-    #[tokio::test]
+    ///
+    /// **Note**: This test uses a thread-local tracing subscriber. When
+    /// `cargo test` runs in parallel (default), tracing's global callsite
+    /// interest cache can race with other tests that emit `llm.call`
+    /// events from multi-threaded tokio runtimes, causing occasional
+    /// misses. CI enforces `--test-threads=1` (see `ci/tests/ci.rs:62`)
+    /// where this test is reliable. Run locally with
+    /// `cargo test --lib -- --test-threads=1` if you see flakes.
+    #[tokio::test(flavor = "current_thread")]
     async fn tracing_event_contains_all_contract_field_names() {
-        use tracing_subscriber::fmt;
         use tracing_subscriber::layer::SubscriberExt;
-        use tracing_subscriber::util::SubscriberInitExt;
+        use tracing_subscriber::Registry;
 
-        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
-        let writer = BufWriter(buf.clone());
+        let store = CaptureStore::default();
+        let subscriber = Registry::default().with(CaptureLayer {
+            store: store.clone(),
+        });
+        let _guard = tracing::subscriber::set_default(subscriber);
 
-        let subscriber = tracing_subscriber::registry().with(
-            fmt::layer()
-                .with_writer(writer)
-                .with_ansi(false)
-                .with_target(true),
-        );
+        let infra = Arc::new(MockInfra::new(Some(pricing())));
+        let accountant = CostAccountant::new(infra.clone());
+        let outc = outcome("openai/gpt-4o-mini", 123, 45);
+        let ctx = UsageContext::default().with_caller_tag("contract-test");
+        accountant.record(&outc, &ctx, 99).await;
 
-        let captured = {
-            let _guard = subscriber.set_default();
-
-            let infra = Arc::new(MockInfra::new(Some(pricing())));
-            let accountant = CostAccountant::new(infra.clone());
-            let outc = outcome("openai/gpt-4o-mini", 123, 45);
-            let ctx = UsageContext::default().with_caller_tag("contract-test");
-            accountant.record(&outc, &ctx, 99).await;
-
-            String::from_utf8(buf.lock().unwrap().clone()).unwrap()
-        };
-
-        // The event itself must have been emitted to target "llm.call".
-        assert!(
-            captured.contains("llm.call"),
-            "missing llm.call target in captured output: {captured}"
-        );
+        let events = store.snapshot();
+        let llm_call = events
+            .iter()
+            .find(|e| e.target == "llm.call")
+            .unwrap_or_else(|| {
+                panic!(
+                    "no event with target=llm.call found; captured: {:?}",
+                    events
+                )
+            });
 
         // These are the contract field names — downstream log pipelines pivot
         // on these exact spellings.
@@ -527,8 +568,9 @@ mod tests {
             "caller_tag",
         ] {
             assert!(
-                captured.contains(field),
-                "missing contract field `{field}` in captured llm.call event: {captured}"
+                llm_call.fields.contains(field),
+                "missing contract field `{field}` in llm.call event fields: {}",
+                llm_call.fields
             );
         }
     }

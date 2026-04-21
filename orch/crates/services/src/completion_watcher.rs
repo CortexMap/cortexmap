@@ -541,3 +541,547 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infra::{
+        NewProcessedFetchTask, OrchConfig, PaperMetadataRecord, ProcessedFetchTask,
+    };
+    use async_trait::async_trait;
+    use chrono::Utc;
+    use domain::ProcessingBatch;
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("mock error: {0}")]
+    struct MockErr(String);
+
+    /// Track every mutating call to the fake, so tests can assert the
+    /// transitions made by `poll()` / `process()`.
+    #[derive(Default)]
+    struct Recorder {
+        status_updates: Mutex<Vec<(Uuid, BatchStatus, Option<String>)>>,
+        completes: Mutex<Vec<Uuid>>,
+        cache_dels: Mutex<Vec<String>>,
+        cache_del_patterns: Mutex<Vec<String>>,
+    }
+
+    struct MockInfra {
+        env: HashMap<String, String>,
+        config: HashMap<String, String>,
+        batches_by_status: Mutex<HashMap<String, Vec<ProcessingBatch>>>,
+        completed_count: Mutex<HashMap<Vec<i64>, usize>>,
+        s3_keys: Mutex<HashMap<Vec<i64>, Vec<String>>>,
+        paper_metadata: Mutex<HashMap<Vec<i64>, Vec<PaperMetadataRecord>>>,
+        http_responders: Mutex<HashMap<String, serde_json::Value>>,
+        recorder: Recorder,
+    }
+
+    impl MockInfra {
+        fn new() -> Self {
+            let mut env = HashMap::new();
+            env.insert("DATABASE_URL".to_string(), "postgres://mock".to_string());
+            env.insert(
+                "BRAINATLAS_HTTP_ADDR".to_string(),
+                "http://brain:8082".to_string(),
+            );
+            Self {
+                env,
+                config: HashMap::new(),
+                batches_by_status: Mutex::new(HashMap::new()),
+                completed_count: Mutex::new(HashMap::new()),
+                s3_keys: Mutex::new(HashMap::new()),
+                paper_metadata: Mutex::new(HashMap::new()),
+                http_responders: Mutex::new(HashMap::new()),
+                recorder: Recorder::default(),
+            }
+        }
+        fn with_batch(self, batch: ProcessingBatch) -> Self {
+            self.batches_by_status
+                .lock()
+                .unwrap()
+                .entry(batch.status.as_str().to_string())
+                .or_default()
+                .push(batch);
+            self
+        }
+        fn with_completed_count(self, task_ids: Vec<i64>, count: usize) -> Self {
+            let mut key = task_ids;
+            key.sort();
+            self.completed_count.lock().unwrap().insert(key, count);
+            self
+        }
+    }
+
+    fn mk_batch(
+        id: Uuid,
+        status: BatchStatus,
+        fetch_task_ids: Vec<i64>,
+    ) -> ProcessingBatch {
+        ProcessingBatch {
+            id,
+            region_id: Uuid::new_v4(),
+            status,
+            fetch_task_ids,
+            expected_task_count: 0,
+            content_hash: None,
+            created_at: Utc::now(),
+            ready_at: None,
+            processing_started_at: None,
+            completed_at: None,
+            summary_id: None,
+            error_message: None,
+        }
+    }
+
+    impl EnvInfra for MockInfra {
+        type Error = MockErr;
+        fn get_env_var(&self, key: &str) -> Result<String, Self::Error> {
+            self.env
+                .get(key)
+                .cloned()
+                .ok_or_else(|| MockErr(format!("no env {}", key)))
+        }
+    }
+
+    #[async_trait]
+    impl OrchDatabase for MockInfra {
+        type Error = MockErr;
+
+        async fn get_config(
+            &self,
+            _database_url: &str,
+            key: ConfigKey,
+        ) -> Result<Option<String>, Self::Error> {
+            Ok(self.config.get(&key.to_string()).cloned())
+        }
+
+        async fn get_processed_task(
+            &self,
+            _: &str,
+            _: i64,
+        ) -> Result<Option<ProcessedFetchTask>, Self::Error> {
+            unimplemented!()
+        }
+        async fn insert_processed_task(
+            &self,
+            _: &str,
+            _: NewProcessedFetchTask,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn update_brainatlas_status(
+            &self,
+            _: &str,
+            _: i64,
+            _: &str,
+            _: Option<String>,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn get_all_config(
+            &self,
+            _: &str,
+        ) -> Result<Vec<OrchConfig>, Self::Error> {
+            unimplemented!()
+        }
+        async fn update_config(
+            &self,
+            _: &str,
+            _: ConfigKey,
+            _: &str,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl HttpClient for MockInfra {
+        type Error = MockErr;
+
+        async fn get<T: DeserializeOwned + Send>(&self, url: &str) -> Result<T, Self::Error> {
+            let v = self
+                .http_responders
+                .lock()
+                .unwrap()
+                .get(url)
+                .cloned()
+                .ok_or_else(|| MockErr(format!("no responder for GET {}", url)))?;
+            serde_json::from_value(v).map_err(|e| MockErr(format!("decode: {}", e)))
+        }
+
+        async fn post<Req: Serialize + Send + Sync, Res: DeserializeOwned + Send + Sync>(
+            &self,
+            url: &str,
+            _body: &Req,
+        ) -> Result<Res, Self::Error> {
+            let v = self
+                .http_responders
+                .lock()
+                .unwrap()
+                .get(url)
+                .cloned()
+                .ok_or_else(|| MockErr(format!("no responder for POST {}", url)))?;
+            serde_json::from_value(v).map_err(|e| MockErr(format!("decode: {}", e)))
+        }
+
+        async fn check_health(&self, _: &str, _: &str) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl BatchManagement for MockInfra {
+        type Error = MockErr;
+
+        async fn get_batches_by_status(
+            &self,
+            _: &str,
+            status: BatchStatus,
+        ) -> Result<Vec<ProcessingBatch>, Self::Error> {
+            Ok(self
+                .batches_by_status
+                .lock()
+                .unwrap()
+                .get(status.as_str())
+                .cloned()
+                .unwrap_or_default())
+        }
+
+        async fn count_completed_tasks(
+            &self,
+            _: &str,
+            task_ids: &[i64],
+        ) -> Result<usize, Self::Error> {
+            let mut key = task_ids.to_vec();
+            key.sort();
+            Ok(*self
+                .completed_count
+                .lock()
+                .unwrap()
+                .get(&key)
+                .unwrap_or(&0))
+        }
+
+        async fn update_batch_status(
+            &self,
+            _: &str,
+            batch_id: Uuid,
+            status: BatchStatus,
+            err: Option<String>,
+        ) -> Result<(), Self::Error> {
+            self.recorder
+                .status_updates
+                .lock()
+                .unwrap()
+                .push((batch_id, status, err));
+            let mut all = self.batches_by_status.lock().unwrap();
+            let mut moved: Option<ProcessingBatch> = None;
+            for (_, v) in all.iter_mut() {
+                if let Some(pos) = v.iter().position(|b: &ProcessingBatch| b.id == batch_id) {
+                    let mut b = v.remove(pos);
+                    b.status = status;
+                    moved = Some(b);
+                    break;
+                }
+            }
+            if let Some(b) = moved {
+                all.entry(status.as_str().to_string()).or_default().push(b);
+            }
+            Ok(())
+        }
+
+        async fn complete_batch(
+            &self,
+            _: &str,
+            batch_id: Uuid,
+        ) -> Result<(), Self::Error> {
+            self.recorder.completes.lock().unwrap().push(batch_id);
+            Ok(())
+        }
+
+        async fn get_task_s3_keys(
+            &self,
+            _: &str,
+            ids: &[i64],
+        ) -> Result<Vec<String>, Self::Error> {
+            let mut key = ids.to_vec();
+            key.sort();
+            Ok(self
+                .s3_keys
+                .lock()
+                .unwrap()
+                .get(&key)
+                .cloned()
+                .unwrap_or_default())
+        }
+
+        async fn get_task_paper_metadata(
+            &self,
+            _: &str,
+            ids: &[i64],
+        ) -> Result<Vec<PaperMetadataRecord>, Self::Error> {
+            let mut key = ids.to_vec();
+            key.sort();
+            Ok(self
+                .paper_metadata
+                .lock()
+                .unwrap()
+                .get(&key)
+                .cloned()
+                .unwrap_or_default())
+        }
+
+        async fn get_queries(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Vec<domain::RegionQuery>, Self::Error> {
+            unimplemented!()
+        }
+        async fn insert_queries(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: Vec<String>,
+        ) -> Result<Vec<Uuid>, Self::Error> {
+            unimplemented!()
+        }
+        async fn delete_queries(&self, _: &str, _: Uuid) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn delete_all_queries(&self, _: &str) -> Result<i64, Self::Error> {
+            unimplemented!()
+        }
+        async fn create_batch(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: i32,
+        ) -> Result<Uuid, Self::Error> {
+            unimplemented!()
+        }
+        async fn add_tasks_to_batch(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: Vec<i64>,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn update_batch_expected_count(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: i32,
+        ) -> Result<(), Self::Error> {
+            unimplemented!()
+        }
+        async fn get_batch_by_id(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Option<domain::ProcessingBatch>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_completed_task_ids(
+            &self,
+            _: &str,
+            _: &[i64],
+        ) -> Result<Vec<i64>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_active_batch(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Option<ProcessingBatch>, Self::Error> {
+            unimplemented!()
+        }
+        async fn get_recent_batch(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Option<ProcessingBatch>, Self::Error> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl CacheClient for MockInfra {
+        type Error = MockErr;
+
+        async fn cache_get(&self, _key: &str) -> Result<Option<String>, Self::Error> {
+            Ok(None)
+        }
+        async fn cache_set(
+            &self,
+            _key: &str,
+            _val: &str,
+            _ttl: u64,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        async fn cache_del(&self, key: &str) -> Result<(), Self::Error> {
+            self.recorder
+                .cache_dels
+                .lock()
+                .unwrap()
+                .push(key.to_string());
+            Ok(())
+        }
+        async fn cache_del_pattern(&self, pattern: &str) -> Result<u64, Self::Error> {
+            self.recorder
+                .cache_del_patterns
+                .lock()
+                .unwrap()
+                .push(pattern.to_string());
+            Ok(0)
+        }
+        async fn cache_stats(&self) -> Result<domain::RedisStats, Self::Error> {
+            Ok(domain::RedisStats {
+                connected: true,
+                error: None,
+                total_keys: 0,
+                keys_by_prefix: vec![],
+                used_memory_bytes: 0,
+                used_memory_human: "0B".to_string(),
+                uptime_secs: 0,
+                total_connections_received: 0,
+                keyspace_hits: 0,
+                keyspace_misses: 0,
+                hit_rate: 0.0,
+                server_version: "fake".to_string(),
+            })
+        }
+    }
+
+    // ========== TESTS ==========
+
+    // TEST 1: URL normalization helper (parametrized)
+    #[test]
+    fn normalize_url_handles_all_shapes() {
+        type CW = CompletionWatcher<MockInfra>;
+        assert_eq!(CW::normalize_url("http://x:8080"), "http://x:8080");
+        assert_eq!(CW::normalize_url("https://x"), "https://x");
+        assert_eq!(CW::normalize_url("0.0.0.0:8080"), "http://localhost:8080");
+        assert_eq!(CW::normalize_url("host:9"), "http://host:9");
+        // passthrough branch short-circuits before 0.0.0.0 rewrite
+        assert_eq!(
+            CW::normalize_url("http://0.0.0.0:8080"),
+            "http://0.0.0.0:8080"
+        );
+    }
+
+    // TEST 2: collecting -> ready when all tasks complete; caches invalidated.
+    #[tokio::test]
+    async fn poll_promotes_collecting_to_ready_when_all_tasks_complete() {
+        let batch_id = Uuid::new_v4();
+        let batch = mk_batch(batch_id, BatchStatus::Collecting, vec![1, 2, 3]);
+        let infra = Arc::new(
+            MockInfra::new()
+                .with_batch(batch)
+                .with_completed_count(vec![1, 2, 3], 3),
+        );
+        let cw = CompletionWatcher::new(infra.clone());
+
+        let res = cw.poll().await.expect("poll ok");
+        // The batch is now ready; poll returns one PendingTask per fetch_task_id.
+        assert_eq!(res.total_found, 2); // already_processed(1) + ready(1)
+        assert_eq!(res.already_processed, 1);
+        assert_eq!(res.tasks.len(), 3);
+
+        // Assert the status was updated to Ready.
+        let updates = infra.recorder.status_updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].0, batch_id);
+        assert_eq!(updates[0].1, BatchStatus::Ready);
+
+        // Expected cache invalidations (single-key + pattern).
+        let dels = infra.recorder.cache_dels.lock().unwrap().clone();
+        assert!(
+            dels.iter()
+                .any(|k| k == &crate::cache_keys::batch_status(batch_id))
+        );
+        assert!(
+            dels.iter()
+                .any(|k| k == &crate::cache_keys::pipeline_stats())
+        );
+        let pat = infra.recorder.cache_del_patterns.lock().unwrap().clone();
+        assert!(pat.contains(&crate::cache_keys::batches_status_pattern()));
+    }
+
+    // TEST 3: collecting stays collecting when not all tasks complete (no-op).
+    #[tokio::test]
+    async fn poll_noop_when_not_all_tasks_complete() {
+        let batch_id = Uuid::new_v4();
+        let batch = mk_batch(batch_id, BatchStatus::Collecting, vec![1, 2, 3]);
+        let infra = Arc::new(
+            MockInfra::new()
+                .with_batch(batch)
+                .with_completed_count(vec![1, 2, 3], 2), // only 2 of 3
+        );
+        let cw = CompletionWatcher::new(infra.clone());
+
+        let res = cw.poll().await.expect("poll ok");
+        assert_eq!(res.already_processed, 1);
+        assert_eq!(res.total_found, 1);
+        assert!(res.tasks.is_empty());
+
+        assert!(infra.recorder.status_updates.lock().unwrap().is_empty());
+        assert!(infra.recorder.cache_dels.lock().unwrap().is_empty());
+        assert!(infra.recorder.cache_del_patterns.lock().unwrap().is_empty());
+    }
+
+    // TEST 4: empty-task-id batch is NOT promoted (guard at
+    // check_all_tasks_complete).
+    #[tokio::test]
+    async fn poll_does_not_promote_empty_task_id_batch() {
+        let batch_id = Uuid::new_v4();
+        let batch = mk_batch(batch_id, BatchStatus::Collecting, vec![]);
+        let infra = Arc::new(MockInfra::new().with_batch(batch));
+        let cw = CompletionWatcher::new(infra.clone());
+
+        let _ = cw.poll().await.expect("poll ok");
+        assert!(infra.recorder.status_updates.lock().unwrap().is_empty());
+    }
+
+    // TEST 5: duplicate task_ids dedupe against the distinct count.
+    #[tokio::test]
+    async fn poll_dedupes_duplicate_task_ids_against_distinct_count() {
+        let batch_id = Uuid::new_v4();
+        let batch = mk_batch(batch_id, BatchStatus::Collecting, vec![1, 1, 2]);
+        let infra = Arc::new(
+            MockInfra::new()
+                .with_batch(batch)
+                .with_completed_count(vec![1, 1, 2], 2),
+        );
+        let cw = CompletionWatcher::new(infra.clone());
+        let _ = cw.poll().await.expect("poll ok");
+
+        let updates = infra.recorder.status_updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].1, BatchStatus::Ready);
+    }
+
+    // TEST 6: ready batches surface as PendingTasks without further transitions.
+    #[tokio::test]
+    async fn poll_surfaces_ready_batches_as_pending_tasks() {
+        let batch_id = Uuid::new_v4();
+        let batch = mk_batch(batch_id, BatchStatus::Ready, vec![10, 20]);
+        let infra = Arc::new(MockInfra::new().with_batch(batch));
+        let cw = CompletionWatcher::new(infra.clone());
+
+        let res = cw.poll().await.expect("poll ok");
+        assert_eq!(res.tasks.len(), 2);
+        assert!(infra.recorder.status_updates.lock().unwrap().is_empty());
+        for t in &res.tasks {
+            assert_eq!(t.pmc_id, format!("batch_{}", batch_id));
+            assert!(t.task_id == 10 || t.task_id == 20);
+        }
+    }
+}
