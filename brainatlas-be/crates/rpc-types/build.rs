@@ -39,6 +39,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "#[serde(default)]",
     );
 
+    // Add serde(default) to correlation_id fields (cost tracking, backward compatible)
+    config = config.field_attribute(
+        "com.cortexmap.ProcessRegionRequest.correlation_id",
+        "#[serde(default)]",
+    );
+    config = config.field_attribute(
+        "com.cortexmap.GenerateQueriesRequest.correlation_id",
+        "#[serde(default)]",
+    );
+
     config.compile_protos(&["../../../proto/llm/brain.proto"], &["../../../proto"])?;
     Ok(())
 }

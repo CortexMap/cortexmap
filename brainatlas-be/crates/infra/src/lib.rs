@@ -2,6 +2,7 @@ mod env;
 mod error;
 mod infra;
 mod llm;
+mod llm_usage;
 mod models;
 mod pg;
 mod s3;

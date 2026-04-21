@@ -1,16 +1,18 @@
 use api::{ApiError, BrainAtlasApi, BrainRegionApi};
 use app::AppError;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use domain::rpc_types::evals::{
-    EmbedRequest, EmbedResponse, ExtractClaimsRequest, JudgeGroundednessRequest, JudgeRubricRequest,
+    EmbedRequest, EmbedResponse, ExtractClaimsRequest, JudgeGroundednessRequest,
+    JudgeRubricRequest, UsageAggregateQuery,
 };
 use domain::rpc_types::{
     GenerateQueriesRequest, ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest,
 };
+use domain::{UsageAggregateFilter};
 use infra::{BrainAtlasInfra, InfraError};
 use services::{BrainAtlasServices, ServiceError};
 use std::sync::Arc;
@@ -74,6 +76,7 @@ impl BrainAtlasServer {
                 post(llm_judge_groundedness_handler),
             )
             .route("/api/llm/judge-rubric", post(llm_judge_rubric_handler))
+            .route("/api/llm/usage", get(llm_usage_handler))
             .route(
                 "/api/chunks/{chunk_id}/source",
                 get(get_chunk_source_handler),
@@ -167,6 +170,7 @@ async fn process_region_handler(
             body.chat_model,
             body.embedding_model,
             body.skip_summarization.unwrap_or(false),
+            body.correlation_id,
         )
         .await
         .map_err(ServerError)?;
@@ -180,7 +184,7 @@ async fn generate_queries_handler(
 ) -> Result<impl IntoResponse, ServerError> {
     let resp = server
         .api
-        .generate_queries(body.region_name, body.count)
+        .generate_queries(body.region_name, body.count, body.correlation_id)
         .await
         .map_err(ServerError)?;
     Ok(Json(resp))
@@ -215,7 +219,11 @@ async fn llm_embed_handler(
 ) -> Result<impl IntoResponse, ServerError> {
     let embedding = server
         .api
-        .embed(&body.text, body.embedding_model.as_deref())
+        .embed(
+            &body.text,
+            body.embedding_model.as_deref(),
+            body.correlation_id,
+        )
         .await
         .map_err(from_app_error)?;
     Ok(Json(EmbedResponse { embedding }))
@@ -232,6 +240,7 @@ async fn llm_extract_claims_handler(
             &body.summary_text,
             &body.region_name,
             body.chat_model.as_deref(),
+            body.correlation_id,
         )
         .await
         .map_err(from_app_error)?;
@@ -249,6 +258,7 @@ async fn llm_judge_groundedness_handler(
             &body.claim_text,
             &body.evidence_chunks,
             body.chat_model.as_deref(),
+            body.correlation_id,
         )
         .await
         .map_err(from_app_error)?;
@@ -266,8 +276,50 @@ async fn llm_judge_rubric_handler(
             &body.summary_text,
             &body.region_name,
             body.chat_model.as_deref(),
+            body.correlation_id,
         )
         .await
         .map_err(from_app_error)?;
     Ok(Json(scores))
+}
+
+/// GET /brainatlas-be/api/llm/usage?since=…&model=…&correlation_id=…
+async fn llm_usage_handler(
+    State(server): State<BrainAtlasServer>,
+    Query(q): Query<UsageAggregateQuery>,
+) -> Result<impl IntoResponse, ServerError> {
+    let parse_ts = |s: Option<String>| -> Result<Option<chrono::DateTime<chrono::Utc>>, ServerError> {
+        match s {
+            None => Ok(None),
+            Some(v) => chrono::DateTime::parse_from_rfc3339(&v)
+                .map(|d| Some(d.with_timezone(&chrono::Utc)))
+                .map_err(|_| ServerError(Error::MissingOrInvalidId)),
+        }
+    };
+    let parse_uuid = |s: Option<String>| -> Result<Option<uuid::Uuid>, ServerError> {
+        match s {
+            None => Ok(None),
+            Some(v) => v
+                .parse::<uuid::Uuid>()
+                .map(Some)
+                .map_err(|_| ServerError(Error::MissingOrInvalidId)),
+        }
+    };
+    let filter = UsageAggregateFilter {
+        since: parse_ts(q.since)?,
+        until: parse_ts(q.until)?,
+        model: q.model,
+        correlation_id: q.correlation_id,
+        correlation_id_prefix: q.correlation_id_prefix,
+        region_id: q.region_id,
+        summary_id: parse_uuid(q.summary_id)?,
+        batch_id: parse_uuid(q.batch_id)?,
+        caller_tag: q.caller_tag,
+    };
+    let agg = server
+        .api
+        .usage_aggregate(filter)
+        .await
+        .map_err(from_app_error)?;
+    Ok(Json(agg))
 }

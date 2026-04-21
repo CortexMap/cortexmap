@@ -1,14 +1,15 @@
 use crate::batch_orchestration::OrchBatchOrchestration;
 use crate::completion_watcher::CompletionWatcher;
 use crate::config_management::OrchConfigManagement;
+use crate::cost_guardrail::CostGuardrail;
 use crate::eval_orchestrator::EvalOrchestrator;
 use crate::pipeline_runner::OrchPipelineRunner;
 use crate::region_management::OrchRegionManagement;
 use crate::{Infra, ServiceError};
 use app::{
-    BatchOrchestration, CompletionOrchestrator, ConfigManagement, EvalOrchestration,
-    EvalStatusSummary, EvalWorstOffenders, HealthCheck, PipelineRunner, RegionManagement,
-    WorkerManagement,
+    BatchOrchestration, CompletionOrchestrator, ConfigManagement, CostGuardrailOrchestration,
+    EvalOrchestration, EvalStatusSummary, EvalWorstOffenders, HealthCheck, PipelineRunner,
+    RegionManagement, WorkerManagement,
 };
 use domain::{
     AllocateWorkersRequest, ConfigEntry, ConfigEntryUpdate, ConfigKey, PendingTask, PollResult,
@@ -26,6 +27,7 @@ pub struct OrchServices<I> {
     config_management: OrchConfigManagement<I>,
     pipeline_runner: OrchPipelineRunner<I>,
     eval_orchestrator: EvalOrchestrator<I>,
+    cost_guardrail: CostGuardrail<I>,
     infra: Arc<I>,
 }
 
@@ -37,6 +39,7 @@ impl<I: Infra> OrchServices<I> {
         let config_management = OrchConfigManagement::new(infra.clone());
         let pipeline_runner = OrchPipelineRunner::new(infra.clone());
         let eval_orchestrator = EvalOrchestrator::new(infra.clone());
+        let cost_guardrail = CostGuardrail::new(infra.clone());
         Self {
             completion_watcher,
             region_management,
@@ -44,6 +47,7 @@ impl<I: Infra> OrchServices<I> {
             config_management,
             pipeline_runner,
             eval_orchestrator,
+            cost_guardrail,
             infra,
         }
     }
@@ -455,5 +459,33 @@ where
         limit: i64,
     ) -> Result<EvalWorstOffenders, Self::Error> {
         self.eval_orchestrator.get_worst(metric, limit).await
+    }
+
+    async fn eval_orchestrator_get_run_cost(
+        &self,
+        run_id: uuid::Uuid,
+    ) -> Result<domain::EvalRunCost, Self::Error> {
+        self.eval_orchestrator.get_run_cost(run_id).await
+    }
+}
+
+#[async_trait::async_trait]
+impl<E, I> CostGuardrailOrchestration for OrchServices<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn cost_guardrail_enabled(&self) -> bool {
+        self.cost_guardrail.is_enabled().await
+    }
+
+    async fn cost_guardrail_poll_interval_secs(&self) -> u64 {
+        self.cost_guardrail.poll_interval_secs().await
+    }
+
+    async fn cost_guardrail_run_once(&self) -> Option<f64> {
+        self.cost_guardrail.run_once().await
     }
 }

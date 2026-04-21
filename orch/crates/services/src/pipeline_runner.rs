@@ -135,6 +135,7 @@ where
                 let request = crate::GenerateQueriesRequest {
                     region_name: region.name.clone(),
                     count: query_count,
+                    correlation_id: Some(format!("region:{}", region.id)),
                 };
 
                 // Retry with exponential backoff (max 3 attempts, 1-10s delay)

@@ -1,30 +1,45 @@
-/// LLM service wrapper for text generation tasks
-use crate::{EnvInfra, LlmClient, ServiceError};
-use domain::{ClaimsResponse, GroundednessVerdict, LlmResponse, RubricScores};
+/// LLM service wrapper for text generation tasks.
+///
+/// Every public method:
+/// 1. Resolves API key and chat model from env.
+/// 2. Calls the infra `LlmClient`, receiving an `LlmCallOutcome`.
+/// 3. Hands the outcome to the shared `CostAccountant`, which persists a row
+///    in `llm_call_usage` and emits the `llm.call` tracing event.
+/// 4. Returns the unwrapped business value.
+///
+/// `UsageContext` is provided by the caller (the app layer) and carries the
+/// `caller_tag`, correlation id and any region/summary/batch linkage.
+use crate::cost_accounting::CostAccountant;
+use crate::{Infra, ServiceError};
+use domain::{ClaimsResponse, GroundednessVerdict, LlmResponse, RubricScores, UsageContext};
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::warn;
 
 pub struct BrainAtlasLlmService<I> {
     infra: Arc<I>,
+    accountant: CostAccountant<I>,
 }
 
 impl<I> BrainAtlasLlmService<I> {
     pub fn new(infra: Arc<I>) -> Self {
-        Self { infra }
+        let accountant = CostAccountant::new(infra.clone());
+        Self { infra, accountant }
     }
 }
 
 impl<E, I> BrainAtlasLlmService<I>
 where
     E: std::error::Error + Send + Sync + 'static,
-    I: EnvInfra<Error = E> + LlmClient<Error = E>,
+    I: Infra<Error = E> + 'static,
 {
-    /// Send a multi-turn chat with tool definitions, returning tool calls or final text
+    /// Send a multi-turn chat with tool definitions, returning tool calls or final text.
     pub async fn summarize_with_tools(
         &self,
         messages: &[serde_json::Value],
         tools: &[serde_json::Value],
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<LlmResponse, ServiceError<E>> {
         let api_key = self
             .infra
@@ -38,19 +53,31 @@ where
                 .unwrap_or_else(|_| "openai/gpt-4o-mini".to_string()),
         };
 
-        self.infra
+        let started = Instant::now();
+        let ctx = if ctx.caller_tag.is_some() {
+            ctx
+        } else {
+            ctx.with_caller_tag(if tools.is_empty() {
+                "chat"
+            } else {
+                "rag_summarize"
+            })
+        };
+        let outcome = self
+            .infra
             .summarize_with_tools(&api_key, &chat_model, messages, tools)
             .await
-            .map_err(ServiceError::InfraError)
+            .map_err(ServiceError::InfraError);
+        self.accountant.finish(outcome, ctx, started).await
     }
 
-    /// Generate search queries for a brain region
+    /// Generate search queries for a brain region.
     pub async fn generate_queries(
         &self,
         region_name: &str,
         count: u32,
+        ctx: UsageContext,
     ) -> Result<Vec<String>, ServiceError<E>> {
-        // Get API key and model from environment
         let api_key = self
             .infra
             .get("OPENROUTER_API_KEY")
@@ -60,10 +87,18 @@ where
             .get("CHAT_MODEL")
             .unwrap_or_else(|_| "openai/gpt-4o-mini".to_string());
 
-        self.infra
+        let started = Instant::now();
+        let ctx = if ctx.caller_tag.is_some() {
+            ctx
+        } else {
+            ctx.with_caller_tag("generate_queries")
+        };
+        let outcome = self
+            .infra
             .generate_queries(&api_key, &chat_model, region_name, count)
             .await
-            .map_err(ServiceError::InfraError)
+            .map_err(ServiceError::InfraError);
+        self.accountant.finish(outcome, ctx, started).await
     }
 
     /// Run a single-turn structured-output chat: system + user, no tools.
@@ -73,13 +108,14 @@ where
         system_prompt: &str,
         user_content: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<String, ServiceError<E>> {
         let messages = vec![
             serde_json::json!({"role": "system", "content": system_prompt}),
             serde_json::json!({"role": "user",   "content": user_content}),
         ];
         match self
-            .summarize_with_tools(&messages, &[], chat_model_override)
+            .summarize_with_tools(&messages, &[], chat_model_override, ctx)
             .await?
         {
             LlmResponse::Final(text) => Ok(text),
@@ -99,14 +135,16 @@ where
         summary_text: &str,
         region_name: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<ClaimsResponse, ServiceError<E>> {
         let system = EXTRACT_CLAIMS_SYSTEM.replace("{{REGION_NAME}}", region_name);
         let user = format!(
             "Brain region: {}\n\nSummary:\n\n{}",
             region_name, summary_text
         );
+        let ctx = ctx.with_caller_tag("extract_claims");
         let raw = self
-            .structured_chat(&system, &user, chat_model_override)
+            .structured_chat(&system, &user, chat_model_override, ctx)
             .await?;
         parse_json_loose::<ClaimsResponse>(&raw)
             .map_err(|e| ServiceError::Other(format!("extract_claims parse error: {e}")))
@@ -118,6 +156,7 @@ where
         claim_text: &str,
         evidence_chunks: &[String],
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<GroundednessVerdict, ServiceError<E>> {
         let mut user = String::new();
         user.push_str("Claim:\n");
@@ -129,8 +168,9 @@ where
         if evidence_chunks.is_empty() {
             user.push_str("\n(no evidence chunks)\n");
         }
+        let ctx = ctx.with_caller_tag("judge_groundedness");
         let raw = self
-            .structured_chat(JUDGE_GROUNDEDNESS_SYSTEM, &user, chat_model_override)
+            .structured_chat(JUDGE_GROUNDEDNESS_SYSTEM, &user, chat_model_override, ctx)
             .await?;
         parse_json_loose::<GroundednessVerdict>(&raw)
             .map_err(|e| ServiceError::Other(format!("judge_groundedness parse error: {e}")))
@@ -142,23 +182,23 @@ where
         summary_text: &str,
         region_name: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<RubricScores, ServiceError<E>> {
         let system = JUDGE_RUBRIC_SYSTEM.replace("{{REGION_NAME}}", region_name);
         let user = format!(
             "Brain region: {}\n\nSummary:\n\n{}",
             region_name, summary_text
         );
+        let ctx = ctx.with_caller_tag("judge_rubric");
         let raw = self
-            .structured_chat(&system, &user, chat_model_override)
+            .structured_chat(&system, &user, chat_model_override, ctx)
             .await?;
         parse_json_loose::<RubricScores>(&raw)
             .map_err(|e| ServiceError::Other(format!("judge_rubric parse error: {e}")))
     }
 }
 
-// Prompt templates loaded at compile time. Live in the `app` crate per the
-// project convention; we reference them via a relative path so the service
-// layer can use them without a runtime file dependency.
+// Prompt templates loaded at compile time.
 const EXTRACT_CLAIMS_SYSTEM: &str = include_str!("../../app/prompts/extract_claims_system.md");
 const JUDGE_GROUNDEDNESS_SYSTEM: &str =
     include_str!("../../app/prompts/judge_groundedness_system.md");

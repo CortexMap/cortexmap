@@ -2,16 +2,23 @@
 pub use rpc_types;
 
 pub mod boolean_query;
+mod cost;
 mod evals;
 mod hash;
 mod processing;
 mod tool_calling;
+mod usage;
 
 pub use boolean_query::BooleanQuery;
+pub use cost::{
+    LlmPricing, NewLlmCallUsage, UsageAggregate, UsageAggregateFilter, UsageByCallerTag,
+    UsageByModel, UsageContext,
+};
 pub use evals::*;
 pub use hash::compute_hash;
 pub use processing::*;
 pub use tool_calling::*;
+pub use usage::{LlmCallOutcome, LlmEndpointKind, Usage};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

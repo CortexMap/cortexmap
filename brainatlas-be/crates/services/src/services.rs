@@ -6,11 +6,12 @@ use crate::region_info::BrainAtlasRegionInfo;
 use crate::{Infra, ServiceError};
 use app::{
     BrainRegionInfo, Chunker, EmbeddingService, ListBrainRegions, LlmService, S3Storage,
-    VectorDatabase,
+    UsageQuery, VectorDatabase,
 };
 use domain::{
     BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
     LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RubricScores, SimilarChunk,
+    UsageAggregate, UsageAggregateFilter, UsageContext,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -24,7 +25,7 @@ pub struct BrainAtlasServices<I> {
     embedding_service: BrainAtlasEmbeddingService<I>,
 }
 
-impl<I: Infra> BrainAtlasServices<I> {
+impl<I: Infra + 'static> BrainAtlasServices<I> {
     pub fn new(infra: Arc<I>) -> Self {
         let brain_atlas_list_brain_regions = BrainAtlasListBrainRegions::new(infra.clone());
         let brain_atlas_region_info = BrainAtlasRegionInfo::new(infra.clone());
@@ -53,7 +54,7 @@ impl<I: Send + Sync> Chunker for BrainAtlasServices<I> {
 impl<E, I> LlmService for BrainAtlasServices<I>
 where
     E: std::error::Error + Send + Sync + 'static,
-    I: Infra<Error = E>,
+    I: Infra<Error = E> + 'static,
 {
     type Error = ServiceError<E>;
 
@@ -62,9 +63,10 @@ where
         messages: &[serde_json::Value],
         tools: &[serde_json::Value],
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<LlmResponse, Self::Error> {
         self.llm_service
-            .summarize_with_tools(messages, tools, chat_model_override)
+            .summarize_with_tools(messages, tools, chat_model_override, ctx)
             .await
     }
 
@@ -72,8 +74,11 @@ where
         &self,
         region_name: &str,
         count: u32,
+        ctx: UsageContext,
     ) -> Result<Vec<String>, Self::Error> {
-        self.llm_service.generate_queries(region_name, count).await
+        self.llm_service
+            .generate_queries(region_name, count, ctx)
+            .await
     }
 
     async fn extract_claims(
@@ -81,9 +86,10 @@ where
         summary_text: &str,
         region_name: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<ClaimsResponse, Self::Error> {
         self.llm_service
-            .extract_claims(summary_text, region_name, chat_model_override)
+            .extract_claims(summary_text, region_name, chat_model_override, ctx)
             .await
     }
 
@@ -92,9 +98,10 @@ where
         claim_text: &str,
         evidence_chunks: &[String],
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<GroundednessVerdict, Self::Error> {
         self.llm_service
-            .judge_groundedness(claim_text, evidence_chunks, chat_model_override)
+            .judge_groundedness(claim_text, evidence_chunks, chat_model_override, ctx)
             .await
     }
 
@@ -103,9 +110,10 @@ where
         summary_text: &str,
         region_name: &str,
         chat_model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<RubricScores, Self::Error> {
         self.llm_service
-            .judge_rubric(summary_text, region_name, chat_model_override)
+            .judge_rubric(summary_text, region_name, chat_model_override, ctx)
             .await
     }
 }
@@ -115,7 +123,7 @@ where
 impl<E, I> EmbeddingService for BrainAtlasServices<I>
 where
     E: std::error::Error + Send + Sync + 'static,
-    I: Infra<Error = E>,
+    I: Infra<Error = E> + 'static,
 {
     type Error = ServiceError<E>;
 
@@ -123,9 +131,10 @@ where
         &self,
         text: &str,
         model_override: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<Vec<f32>, Self::Error> {
         self.embedding_service
-            .generate_embedding(text, model_override)
+            .generate_embedding(text, model_override, ctx)
             .await
     }
 }
@@ -270,6 +279,30 @@ where
 
         self.infra
             .get_chunk_source(&database_url, chunk_id)
+            .await
+            .map_err(ServiceError::InfraError)
+    }
+}
+
+// Implement UsageQuery trait
+#[async_trait::async_trait]
+impl<E, I> UsageQuery for BrainAtlasServices<I>
+where
+    E: std::error::Error + Send + Sync + 'static,
+    I: Infra<Error = E>,
+{
+    type Error = ServiceError<E>;
+
+    async fn usage_aggregate(
+        &self,
+        filter: UsageAggregateFilter,
+    ) -> Result<UsageAggregate, Self::Error> {
+        let database_url = self
+            .infra
+            .get("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+        self.infra
+            .aggregate(&database_url, filter)
             .await
             .map_err(ServiceError::InfraError)
     }

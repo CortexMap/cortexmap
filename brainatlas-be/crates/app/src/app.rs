@@ -1,7 +1,7 @@
 use crate::{AppError, Services};
 use domain::{
     BrainRegionEntry, ChunkSource, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping,
-    SearchEmbeddingsArgs, compute_hash, rpc_types::PaperMetadata,
+    SearchEmbeddingsArgs, UsageContext, compute_hash, rpc_types::PaperMetadata,
 };
 use futures::future::join_all;
 use schemars::schema_for;
@@ -59,9 +59,21 @@ where
         chat_model: Option<String>,
         embedding_model: Option<String>,
         skip_summarization: bool,
+        correlation_id: Option<String>,
     ) -> Result<Uuid, AppError<E>> {
         let region = self.get_region_by_uuid(uuid).await?;
         let embedding_model_ref = embedding_model.as_deref();
+
+        // Correlation defaults to `batch:<batch_id>` if the caller did not
+        // supply one. `UsageContext` carries the correlation/region/batch
+        // linkage into every LLM/embedding call made while processing this
+        // region.
+        let correlation_id =
+            correlation_id.unwrap_or_else(|| format!("batch:{batch_id}"));
+        let base_ctx = UsageContext::default()
+            .with_correlation(Some(correlation_id.clone()))
+            .with_region(Some(region.region_id))
+            .with_batch(Some(batch_id));
 
         // Build a map: s3_key -> metadata for quick lookup
         let metadata_map: HashMap<String, &PaperMetadata> = paper_metadata
@@ -127,7 +139,13 @@ where
         // 4. Generate embeddings for all chunks in parallel
         let embedding_futures: Vec<_> = all_chunks
             .iter()
-            .map(|chunk| self.services.generate_embedding(chunk, embedding_model_ref))
+            .map(|chunk| {
+                self.services.generate_embedding(
+                    chunk,
+                    embedding_model_ref,
+                    base_ctx.clone(),
+                )
+            })
             .collect();
 
         let embedding_results = join_all(embedding_futures).await;
@@ -201,6 +219,7 @@ where
                     region.region_id,
                     chat_model.as_deref(),
                     embedding_model_ref,
+                    base_ctx.clone().with_summary(Some(summary_id)),
                 )
                 .await?;
 
@@ -221,6 +240,7 @@ where
         region_id: i32,
         chat_model: Option<&str>,
         embedding_model: Option<&str>,
+        ctx: UsageContext,
     ) -> Result<String, AppError<E>> {
         // Generate JSON schema for SearchEmbeddingsArgs using schemars
         let schema = schema_for!(SearchEmbeddingsArgs);
@@ -261,7 +281,7 @@ where
 
             let response = self
                 .services
-                .summarize_with_tools(&messages, &tools, chat_model)
+                .summarize_with_tools(&messages, &tools, chat_model, ctx.clone())
                 .await
                 .map_err(AppError::ServiceError)?;
 
@@ -328,7 +348,7 @@ where
                         // Generate embedding for the query
                         let query_embedding = self
                             .services
-                            .generate_embedding(&args.query, embedding_model)
+                            .generate_embedding(&args.query, embedding_model, ctx.clone())
                             .await
                             .map_err(AppError::ServiceError)?;
 
@@ -372,9 +392,14 @@ where
         &self,
         region_name: &str,
         count: u32,
+        correlation_id: Option<String>,
+        region_id: Option<i32>,
     ) -> Result<Vec<String>, AppError<E>> {
+        let ctx = UsageContext::default()
+            .with_correlation(correlation_id)
+            .with_region(region_id);
         self.services
-            .generate_queries(region_name, count)
+            .generate_queries(region_name, count, ctx)
             .await
             .map_err(AppError::ServiceError)
     }
@@ -397,9 +422,11 @@ where
         &self,
         text: &str,
         embedding_model: Option<&str>,
+        correlation_id: Option<String>,
     ) -> Result<Vec<f32>, AppError<E>> {
+        let ctx = UsageContext::default().with_correlation(correlation_id);
         self.services
-            .generate_embedding(text, embedding_model)
+            .generate_embedding(text, embedding_model, ctx)
             .await
             .map_err(AppError::ServiceError)
     }
@@ -410,9 +437,11 @@ where
         summary_text: &str,
         region_name: &str,
         chat_model: Option<&str>,
+        correlation_id: Option<String>,
     ) -> Result<domain::ClaimsResponse, AppError<E>> {
+        let ctx = UsageContext::default().with_correlation(correlation_id);
         self.services
-            .extract_claims(summary_text, region_name, chat_model)
+            .extract_claims(summary_text, region_name, chat_model, ctx)
             .await
             .map_err(AppError::ServiceError)
     }
@@ -423,9 +452,11 @@ where
         claim_text: &str,
         evidence_chunks: &[String],
         chat_model: Option<&str>,
+        correlation_id: Option<String>,
     ) -> Result<domain::GroundednessVerdict, AppError<E>> {
+        let ctx = UsageContext::default().with_correlation(correlation_id);
         self.services
-            .judge_groundedness(claim_text, evidence_chunks, chat_model)
+            .judge_groundedness(claim_text, evidence_chunks, chat_model, ctx)
             .await
             .map_err(AppError::ServiceError)
     }
@@ -436,9 +467,23 @@ where
         summary_text: &str,
         region_name: &str,
         chat_model: Option<&str>,
+        correlation_id: Option<String>,
     ) -> Result<domain::RubricScores, AppError<E>> {
+        let ctx = UsageContext::default().with_correlation(correlation_id);
         self.services
-            .judge_rubric(summary_text, region_name, chat_model)
+            .judge_rubric(summary_text, region_name, chat_model, ctx)
+            .await
+            .map_err(AppError::ServiceError)
+    }
+
+    /// Aggregate LLM usage rows matching the supplied filter. Powers the
+    /// `GET /brainatlas-be/api/llm/usage` endpoint.
+    pub async fn usage_aggregate(
+        &self,
+        filter: domain::UsageAggregateFilter,
+    ) -> Result<domain::UsageAggregate, AppError<E>> {
+        self.services
+            .usage_aggregate(filter)
             .await
             .map_err(AppError::ServiceError)
     }

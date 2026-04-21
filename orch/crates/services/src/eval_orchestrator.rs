@@ -144,6 +144,20 @@ const UNSCORED_PAGE_SIZE: i64 = 200;
 /// single summary before giving up.
 const MAX_STEPS_PER_RUN: usize = 100;
 
+/// Minimal mirror of brainatlas-be's `UsageAggregate` response. We only use
+/// the scalar totals for the run-cost endpoint.
+#[derive(Debug, Clone, Deserialize)]
+struct UsageAggregateWire {
+    #[serde(default)]
+    pub total_cost_usd: f64,
+    #[serde(default)]
+    pub total_prompt_tokens: i64,
+    #[serde(default)]
+    pub total_completion_tokens: i64,
+    #[serde(default)]
+    pub total_calls: i64,
+}
+
 pub struct EvalOrchestrator<I> {
     infra: Arc<I>,
 }
@@ -220,6 +234,36 @@ where
             .await
             .and_then(|v| v.parse().ok())
             .unwrap_or(5)
+    }
+
+    /// Aggregate the LLM cost incurred by a single eval run.
+    ///
+    /// Every LLM call made on behalf of `score/step` is tagged with
+    /// `correlation_id = "eval:{run_id}:{step_id}"` (see `run_cycle` below),
+    /// so aggregating by prefix `eval:{run_id}:` yields the total cost for
+    /// that run across all of its steps.
+    pub async fn get_run_cost(
+        &self,
+        run_id: Uuid,
+    ) -> Result<domain::EvalRunCost, ServiceError<E>> {
+        let base = self.brainatlas_base_url().await?;
+        let url = format!(
+            "{}/brainatlas-be/api/llm/usage?correlation_id_prefix=eval:{}:",
+            base.trim_end_matches('/'),
+            run_id
+        );
+        let wire: UsageAggregateWire = self
+            .infra
+            .get(&url)
+            .await
+            .map_err(ServiceError::InfraError)?;
+        Ok(domain::EvalRunCost {
+            run_id: run_id.to_string(),
+            total_cost_usd: format!("{:.6}", wire.total_cost_usd),
+            total_input_tokens: wire.total_prompt_tokens,
+            total_output_tokens: wire.total_completion_tokens,
+            total_calls: wire.total_calls,
+        })
     }
 
     /// Run a single orchestrator cycle: discover unscored summaries and
@@ -403,10 +447,20 @@ where
                 body,
             } => {
                 step_count += 1;
-                // Call brainatlas with the body evals-be handed us.
+                // Call brainatlas with the body evals-be handed us, annotating
+                // it with a correlation id so brainatlas persists the cost
+                // row under `eval:{run_id}:{step_id}`. See
+                // `plans/2026-04-20-llm-cost-tracking-v1.md` task 14.
                 let llm_url = format!("{}{}", brainatlas_base, path);
+                let mut body_with_corr = body.clone();
+                if let Some(obj) = body_with_corr.as_object_mut() {
+                    obj.insert(
+                        "correlation_id".to_string(),
+                        serde_json::Value::String(format!("eval:{}:{}", run_id, step_id)),
+                    );
+                }
                 let llm_resp_json: serde_json::Value = infra
-                    .post::<serde_json::Value, serde_json::Value>(&llm_url, &body)
+                    .post::<serde_json::Value, serde_json::Value>(&llm_url, &body_with_corr)
                     .await
                     .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)?;
 

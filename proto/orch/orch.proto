@@ -82,6 +82,7 @@ message RegionSummary {
   google.protobuf.Timestamp created_at = 2;
   string                   batch_id   = 3;
   repeated SummarySource   sources    = 4;
+  optional string          cost_usd   = 5;
 }
 
 message SummarySource {

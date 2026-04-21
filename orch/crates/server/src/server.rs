@@ -87,6 +87,10 @@ impl OrchServer {
             .route("/dev/api/redis-stats", get(dev_redis_stats_handler))
             .route("/api/evals/status", get(get_eval_status_handler))
             .route("/api/evals/worst", get(get_eval_worst_handler))
+            .route(
+                "/api/evals/runs/{run_id}/cost",
+                get(get_eval_run_cost_handler),
+            )
             .layer(cors)
             .layer(
                 TraceLayer::new_for_http()
@@ -291,5 +295,13 @@ async fn get_eval_worst_handler(
     let metric = q.metric.unwrap_or_else(|| "groundedness".to_string());
     let limit = q.limit.unwrap_or(10) as i64;
     let result = server.api.get_eval_worst(metric, limit).await?;
+    Ok(Json(result))
+}
+
+async fn get_eval_run_cost_handler(
+    State(server): State<OrchServer>,
+    Path(run_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError> {
+    let result = server.api.get_eval_run_cost(run_id).await?;
     Ok(Json(result))
 }

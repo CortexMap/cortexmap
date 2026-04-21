@@ -20,7 +20,7 @@ uuid = { version = "1.11", features = ["serde", "v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 thiserror = "2.0"
-diesel = { version = "2.3.2", features = ["postgres", "r2d2", "chrono", "uuid"] }
+diesel = { version = "2.3.2", features = ["postgres", "r2d2", "chrono", "uuid", "numeric"] }
 deadpool-diesel = { version = "0.6", features = ["postgres"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
@@ -31,3 +31,4 @@ aws-sdk-s3 = "1.0"
 aws-config = "1.0"
 sha2 = "0.10"
 schemars = "0.8"
+bigdecimal = { version = "0.4", features = ["serde"] }
