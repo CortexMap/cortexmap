@@ -762,25 +762,48 @@ mod http_handler_tests {
     /// = false`. This exercises the "per-phase failure is swallowed"
     /// contract documented on `trigger_pipeline`.
     ///
-    /// Note: we set `FETCHER_HTTP_ADDR` to an unreachable port BEFORE
-    /// building the router so the lazy http client tries and fails. We
-    /// can't reliably know whether fetcher is running in the test env,
-    /// so instead of asserting on the error contents we assert the
-    /// response is either (a) success when fetcher IS running, or
-    /// (b) a well-formed failure with an entry in `errors`.
+    /// We set `FETCHER_HTTP_ADDR` to an unreachable port BEFORE building
+    /// the router so the lazy http client tries and fails quickly.
+    /// Wrapped in a 30s guardrail — fetcher calls on an unreachable port
+    /// should RST immediately on localhost.
     #[tokio::test]
     async fn pipeline_trigger_ensure_workers_returns_200_even_on_failure() {
         if !should_run() {
             eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
             return;
         }
+
+        // Point fetcher at a port nothing is listening on so ensure_workers
+        // fails fast with a TCP RST instead of hanging on a long connect
+        // timeout. Restore the original value after the test so later tests
+        // in the same process aren't affected.
+        let original_fetcher = env::var("FETCHER_HTTP_ADDR").ok();
+        // SAFETY: edition 2024; see redis_stats_degraded_when_unreachable.
+        unsafe {
+            env::set_var("FETCHER_HTTP_ADDR", "http://127.0.0.1:1");
+        }
+
         let router = build_router();
-        let resp = post_json(
-            &router,
-            "/orch/api/pipeline/trigger",
-            serde_json::json!({"ensure_workers": true}),
+        let resp = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            post_json(
+                &router,
+                "/orch/api/pipeline/trigger",
+                serde_json::json!({"ensure_workers": true}),
+            ),
         )
         .await;
+
+        // Restore env before assertions.
+        unsafe {
+            match original_fetcher {
+                Some(v) => env::set_var("FETCHER_HTTP_ADDR", v),
+                None => env::remove_var("FETCHER_HTTP_ADDR"),
+            }
+        }
+
+        let resp = resp.expect("pipeline_trigger ensure_workers blocked for >30s");
+
         // Regardless of fetcher availability the HTTP status MUST be 200 —
         // errors are returned inline, not as a 5xx.
         assert_eq!(
