@@ -68,9 +68,31 @@ struct FakeServices {
     eval_worst: Mutex<Option<Result<EvalWorstOffenders, FakeErr>>>,
     eval_run_cost: Mutex<Option<Result<domain::EvalRunCost, FakeErr>>>,
     get_config: Mutex<Option<Result<Vec<ConfigEntry>, FakeErr>>>,
+    update_config_result: Mutex<Option<Result<Vec<ConfigEntry>, FakeErr>>>,
     list_summaries: Mutex<Option<Result<Vec<RegionSummary>, FakeErr>>>,
+    active_batch: Mutex<Option<Result<Option<ProcessingBatch>, FakeErr>>>,
+    recent_batch: Mutex<Option<Result<Option<ProcessingBatch>, FakeErr>>>,
+    batch_by_id: Mutex<Option<Result<Option<ProcessingBatch>, FakeErr>>>,
+    count_completed_tasks: Mutex<Option<Result<i32, FakeErr>>>,
+    all_regions: Mutex<Option<Result<Vec<Region>, FakeErr>>>,
+    worker_status: Mutex<Option<Result<Vec<WorkerStatus>, FakeErr>>>,
+    allocate_workers_result: Mutex<Option<Result<WorkerAllocationResponse, FakeErr>>>,
+    stop_workers_result: Mutex<Option<Result<WorkerStopResponse, FakeErr>>>,
+    chunk_source: Mutex<Option<Result<domain::ChunkSourceResponse, FakeErr>>>,
+    reverse_search_result: Mutex<Option<Result<domain::SearchResponse, FakeErr>>>,
+    total_regions: Mutex<Option<Result<i64, FakeErr>>>,
+    regions_without_batches: Mutex<Option<Result<i64, FakeErr>>>,
+    actively_fetching_regions: Mutex<Option<Result<i64, FakeErr>>>,
+    batches_by_status: Mutex<Option<Vec<(BatchStatus, Vec<ProcessingBatch>)>>>,
+    pending_fetch_task_count: Mutex<Option<Result<i64, FakeErr>>>,
+    regions_without_queries_count: Mutex<Option<Result<i64, FakeErr>>>,
+    regions_with_queries_count: Mutex<Option<Result<i64, FakeErr>>>,
     // Last args observed by a handful of setter-style handlers.
     last_worst_args: Mutex<Option<(String, i64)>>,
+    last_update_config: Mutex<Option<Vec<ConfigEntryUpdate>>>,
+    last_allocate_req: Mutex<Option<AllocateWorkersRequest>>,
+    last_stop_req: Mutex<Option<StopWorkersRequest>>,
+    last_reverse_query: Mutex<Option<String>>,
 }
 
 impl FakeServices {
@@ -116,13 +138,19 @@ impl RegionManagement for FakeServices {
         &self,
         _region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
-        not_staged("get_active_batch")
+        match self.active_batch.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("get_active_batch"),
+        }
     }
     async fn get_recent_batch(
         &self,
         _region_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
-        not_staged("get_recent_batch")
+        match self.recent_batch.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("get_recent_batch"),
+        }
     }
     async fn get_queries(&self, _region_id: Uuid) -> Result<Vec<RegionQuery>, Self::Error> {
         not_staged("get_queries")
@@ -151,21 +179,38 @@ impl RegionManagement for FakeServices {
     }
     async fn get_batches_by_status(
         &self,
-        _status: BatchStatus,
+        status: BatchStatus,
     ) -> Result<Vec<ProcessingBatch>, Self::Error> {
+        if let Some(list) = self.batches_by_status.lock().unwrap().as_ref() {
+            for (s, v) in list {
+                if *s == status {
+                    return Ok(v.clone());
+                }
+            }
+            return Ok(vec![]);
+        }
         not_staged("get_batches_by_status")
     }
     async fn get_region_name(&self, _region_id: Uuid) -> Result<String, Self::Error> {
         not_staged("get_region_name")
     }
     async fn get_total_regions(&self) -> Result<i64, Self::Error> {
-        not_staged("get_total_regions")
+        match self.total_regions.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("get_total_regions"),
+        }
     }
     async fn count_regions_without_batches(&self) -> Result<i64, Self::Error> {
-        not_staged("count_regions_without_batches")
+        match self.regions_without_batches.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("count_regions_without_batches"),
+        }
     }
     async fn count_actively_fetching_regions(&self) -> Result<i64, Self::Error> {
-        not_staged("count_actively_fetching_regions")
+        match self.actively_fetching_regions.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("count_actively_fetching_regions"),
+        }
     }
     async fn get_latest_active_summary_age(
         &self,
@@ -183,7 +228,10 @@ impl RegionManagement for FakeServices {
         not_staged("get_query_generation_limit")
     }
     async fn get_all_regions(&self) -> Result<Vec<Region>, Self::Error> {
-        not_staged("get_all_regions")
+        match self.all_regions.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("get_all_regions"),
+        }
     }
     async fn delete_queries(&self, _region_id: Uuid) -> Result<(), Self::Error> {
         not_staged("delete_queries")
@@ -199,10 +247,17 @@ impl RegionManagement for FakeServices {
         &self,
         _chunk_id: Uuid,
     ) -> Result<domain::ChunkSourceResponse, Self::Error> {
-        not_staged("get_chunk_source")
+        match self.chunk_source.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("get_chunk_source"),
+        }
     }
-    async fn reverse_search(&self, _query: &str) -> Result<domain::SearchResponse, Self::Error> {
-        not_staged("reverse_search")
+    async fn reverse_search(&self, query: &str) -> Result<domain::SearchResponse, Self::Error> {
+        *self.last_reverse_query.lock().unwrap() = Some(query.to_string());
+        match self.reverse_search_result.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("reverse_search"),
+        }
     }
 }
 
@@ -245,14 +300,20 @@ impl BatchOrchestration for FakeServices {
         &self,
         _batch_id: Uuid,
     ) -> Result<Option<ProcessingBatch>, Self::Error> {
-        not_staged("get_batch_by_id")
+        match self.batch_by_id.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("get_batch_by_id"),
+        }
     }
     async fn ensure_workers_allocated(&self) -> Result<(), Self::Error> {
         // Used by trigger_pipeline's ensure_workers phase. Succeed silently.
         Ok(())
     }
     async fn count_completed_tasks(&self, _task_ids: Vec<i64>) -> Result<i32, Self::Error> {
-        not_staged("count_completed_tasks")
+        match self.count_completed_tasks.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("count_completed_tasks"),
+        }
     }
     async fn get_completed_task_ids(&self, _task_ids: Vec<i64>) -> Result<Vec<i64>, Self::Error> {
         not_staged("get_completed_task_ids")
@@ -273,9 +334,13 @@ impl ConfigManagement for FakeServices {
     }
     async fn update_config(
         &self,
-        _entries: Vec<ConfigEntryUpdate>,
+        entries: Vec<ConfigEntryUpdate>,
     ) -> Result<Vec<ConfigEntry>, Self::Error> {
-        not_staged("update_config")
+        *self.last_update_config.lock().unwrap() = Some(entries);
+        match self.update_config_result.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("update_config"),
+        }
     }
 }
 
@@ -286,19 +351,30 @@ impl WorkerManagement for FakeServices {
     type Error = FakeErr;
 
     async fn get_worker_status(&self) -> Result<Vec<WorkerStatus>, Self::Error> {
-        not_staged("get_worker_status")
+        match self.worker_status.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("get_worker_status"),
+        }
     }
     async fn allocate_workers(
         &self,
-        _req: AllocateWorkersRequest,
+        req: AllocateWorkersRequest,
     ) -> Result<WorkerAllocationResponse, Self::Error> {
-        not_staged("allocate_workers")
+        *self.last_allocate_req.lock().unwrap() = Some(req);
+        match self.allocate_workers_result.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("allocate_workers"),
+        }
     }
     async fn stop_workers(
         &self,
-        _req: StopWorkersRequest,
+        req: StopWorkersRequest,
     ) -> Result<WorkerStopResponse, Self::Error> {
-        not_staged("stop_workers")
+        *self.last_stop_req.lock().unwrap() = Some(req);
+        match self.stop_workers_result.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("stop_workers"),
+        }
     }
 }
 
@@ -338,13 +414,22 @@ impl PipelineRunner for FakeServices {
         Ok(())
     }
     async fn get_pending_fetch_task_count(&self) -> Result<i64, Self::Error> {
-        not_staged("get_pending_fetch_task_count")
+        match self.pending_fetch_task_count.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("get_pending_fetch_task_count"),
+        }
     }
     async fn generate_queries_for_new_regions_count(&self) -> Result<i64, Self::Error> {
-        not_staged("generate_queries_for_new_regions_count")
+        match self.regions_without_queries_count.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("generate_queries_for_new_regions_count"),
+        }
     }
     async fn get_regions_with_queries_count(&self) -> Result<i64, Self::Error> {
-        not_staged("get_regions_with_queries_count")
+        match self.regions_with_queries_count.lock().unwrap().take() {
+            Some(r) => r,
+            None => not_staged("get_regions_with_queries_count"),
+        }
     }
     async fn get_system_stats(&self) -> Result<SystemStats, Self::Error> {
         match self.system_stats.lock().unwrap().take() {
@@ -936,3 +1021,703 @@ async fn pipeline_trigger_preserves_errors_on_partial_phase_failure() {
         "expected the Phase-2 failure surface to include a descriptive message: {body:#}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Additional tests: extend coverage of app.rs + server.rs handlers.
+// ---------------------------------------------------------------------------
+
+fn patch_json(uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method(Method::PATCH)
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+fn sample_batch(region_id: Uuid, status: BatchStatus, task_ids: Vec<i64>) -> ProcessingBatch {
+    ProcessingBatch {
+        id: Uuid::new_v4(),
+        region_id,
+        status,
+        fetch_task_ids: task_ids,
+        expected_task_count: 5,
+        content_hash: None,
+        created_at: chrono::Utc::now(),
+        ready_at: None,
+        processing_started_at: None,
+        completed_at: None,
+        summary_id: None,
+        error_message: None,
+    }
+}
+
+fn sample_region_summary(region_id: Uuid) -> RegionSummary {
+    let _ = region_id;
+    RegionSummary {
+        summary_id: Uuid::new_v4(),
+        summary: "A brief overview".to_string(),
+        created_at: chrono::Utc::now(),
+        batch_id: Uuid::new_v4(),
+        sources: vec![],
+        eval_scores: None,
+        cost_usd: None,
+    }
+}
+
+// --- list_summaries handler ---
+
+#[tokio::test]
+async fn list_summaries_handler_returns_summaries() {
+    let region_id = Uuid::new_v4();
+    let svc = Arc::new(FakeServices::new());
+    *svc.list_summaries.lock().unwrap() = Some(Ok(vec![sample_region_summary(region_id)]));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/regions/{region_id}/summaries")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = read_body_json(resp).await;
+    assert!(body["summaries"].is_array());
+    assert_eq!(body["summaries"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn list_summaries_handler_propagates_service_error_as_500() {
+    let region_id = Uuid::new_v4();
+    let svc = Arc::new(FakeServices::new());
+    *svc.list_summaries.lock().unwrap() = Some(Err(FakeErr("db down".to_string())));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/regions/{region_id}/summaries")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = read_body_json(resp).await;
+    assert!(body["error"].as_str().unwrap().contains("db down"));
+}
+
+// --- get_config (happy path) ---
+
+#[tokio::test]
+async fn get_config_returns_all_entries() {
+    let svc = Arc::new(FakeServices::new());
+    *svc.get_config.lock().unwrap() = Some(Ok(vec![ConfigEntry {
+        key: "chat_model".to_string(),
+        value: "gpt-4".to_string(),
+        description: Some("Primary chat model".to_string()),
+        updated_at: chrono::Utc::now(),
+    }]));
+
+    let app = router(svc);
+    let resp = app.oneshot(get("/orch/api/config")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = read_body_json(resp).await;
+    let arr = body.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["key"], "chat_model");
+    assert_eq!(arr[0]["value"], "gpt-4");
+}
+
+// --- update_config (PATCH) ---
+
+#[tokio::test]
+async fn update_config_patch_forwards_body_and_returns_result() {
+    let svc = Arc::new(FakeServices::new());
+    *svc.update_config_result.lock().unwrap() = Some(Ok(vec![ConfigEntry {
+        key: "chat_model".to_string(),
+        value: "claude".to_string(),
+        description: None,
+        updated_at: chrono::Utc::now(),
+    }]));
+
+    let app = router(svc.clone());
+    let req_body = serde_json::json!([
+        {"key": "chat_model", "value": "claude"},
+        {"key": "other", "value": "v"},
+    ]);
+    let resp = app
+        .oneshot(patch_json("/orch/api/config", req_body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = read_body_json(resp).await;
+    assert_eq!(body[0]["key"], "chat_model");
+    assert_eq!(body[0]["value"], "claude");
+
+    let last = svc.last_update_config.lock().unwrap().clone().unwrap();
+    assert_eq!(last.len(), 2);
+    assert_eq!(last[0].key, "chat_model");
+    assert_eq!(last[1].key, "other");
+}
+
+#[tokio::test]
+async fn update_config_patch_rejects_malformed_body_with_400() {
+    let svc = Arc::new(FakeServices::new());
+    let app = router(svc);
+
+    let req = Request::builder()
+        .method(Method::PATCH)
+        .uri("/orch/api/config")
+        .header("content-type", "application/json")
+        .body(Body::from("not json"))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+// --- get_all_regions ---
+
+#[tokio::test]
+async fn get_all_regions_returns_list() {
+    let svc = Arc::new(FakeServices::new());
+    *svc.all_regions.lock().unwrap() = Some(Ok(vec![Region {
+        id: Uuid::new_v4(),
+        region_id: 42,
+        name: "Hippocampus".to_string(),
+        acronym: Some("HPF".to_string()),
+        color: None,
+        structure_order: None,
+        parent_region_id: None,
+        parent_acronym: None,
+    }]));
+
+    let app = router(svc);
+    let resp = app.oneshot(get("/orch/api/regions")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body.as_array().unwrap().len(), 1);
+    assert_eq!(body[0]["name"], "Hippocampus");
+    assert_eq!(body[0]["region_id"], 42);
+}
+
+// --- get_active_batch_id ---
+
+#[tokio::test]
+async fn get_active_batch_handler_returns_batch_id_when_active() {
+    let region_id = Uuid::new_v4();
+    let batch = sample_batch(region_id, BatchStatus::Collecting, vec![1, 2, 3]);
+    let batch_id = batch.id;
+
+    let svc = Arc::new(FakeServices::new());
+    *svc.active_batch.lock().unwrap() = Some(Ok(Some(batch)));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/regions/{region_id}/active-batch")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["region_id"], region_id.to_string());
+    assert_eq!(body["active_batch_id"], batch_id.to_string());
+}
+
+#[tokio::test]
+async fn get_active_batch_handler_returns_null_when_none() {
+    let region_id = Uuid::new_v4();
+    let svc = Arc::new(FakeServices::new());
+    *svc.active_batch.lock().unwrap() = Some(Ok(None));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/regions/{region_id}/active-batch")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert!(body["active_batch_id"].is_null());
+}
+
+// --- get_region_status: covers app::get_region_status flow ---
+
+#[tokio::test]
+async fn region_status_done_when_summaries_present() {
+    let region_id = Uuid::new_v4();
+    let svc = Arc::new(FakeServices::new());
+    *svc.active_batch.lock().unwrap() = Some(Ok(None));
+    *svc.list_summaries.lock().unwrap() = Some(Ok(vec![sample_region_summary(region_id)]));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/regions/{region_id}/status")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["status"], "Done");
+    assert_eq!(body["summary_count"], 1);
+}
+
+#[tokio::test]
+async fn region_status_not_started_when_no_batch_no_summary() {
+    let region_id = Uuid::new_v4();
+    let svc = Arc::new(FakeServices::new());
+    *svc.active_batch.lock().unwrap() = Some(Ok(None));
+    *svc.list_summaries.lock().unwrap() = Some(Ok(vec![]));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/regions/{region_id}/status")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["status"], "NotStarted");
+    assert_eq!(body["summary_count"], 0);
+}
+
+#[tokio::test]
+async fn region_status_reflects_active_batch_collecting() {
+    let region_id = Uuid::new_v4();
+    let batch = sample_batch(region_id, BatchStatus::Collecting, vec![1]);
+    let svc = Arc::new(FakeServices::new());
+    *svc.active_batch.lock().unwrap() = Some(Ok(Some(batch)));
+    *svc.list_summaries.lock().unwrap() = Some(Ok(vec![]));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/regions/{region_id}/status")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["status"], "FetchQueued");
+}
+
+// --- get_pipeline_stats: covers app::get_pipeline_stats aggregation ---
+
+#[tokio::test]
+async fn pipeline_stats_aggregates_latest_batch_per_region_across_statuses() {
+    let r1 = Uuid::new_v4();
+    let r2 = Uuid::new_v4();
+    let r3 = Uuid::new_v4();
+
+    let svc = Arc::new(FakeServices::new());
+    *svc.total_regions.lock().unwrap() = Some(Ok(1000));
+    *svc.regions_without_batches.lock().unwrap() = Some(Ok(900));
+    *svc.actively_fetching_regions.lock().unwrap() = Some(Ok(7));
+
+    // One batch per region, each in a different status.
+    let batches = vec![
+        (
+            BatchStatus::Collecting,
+            vec![sample_batch(r1, BatchStatus::Collecting, vec![])],
+        ),
+        (
+            BatchStatus::Ready,
+            vec![sample_batch(r2, BatchStatus::Ready, vec![])],
+        ),
+        (
+            BatchStatus::Completed,
+            vec![sample_batch(r3, BatchStatus::Completed, vec![])],
+        ),
+        (BatchStatus::Processing, vec![]),
+        (BatchStatus::Failed, vec![]),
+        (BatchStatus::Invalidated, vec![]),
+    ];
+    *svc.batches_by_status.lock().unwrap() = Some(batches);
+
+    let app = router(svc);
+    let resp = app.oneshot(get("/orch/api/pipeline/stats")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = read_body_json(resp).await;
+    assert_eq!(body["total_regions"], 1000);
+    assert_eq!(body["not_started"], 900);
+    assert_eq!(body["fetching"], 7);
+    assert_eq!(body["fetch_queued"], 1);
+    assert_eq!(body["llm_queued"], 1);
+    assert_eq!(body["done"], 1);
+    assert_eq!(body["processing"], 0);
+    assert_eq!(body["fetch_failed"], 0);
+    assert_eq!(body["invalidated"], 0);
+}
+
+#[tokio::test]
+async fn pipeline_stats_keeps_only_most_recent_batch_per_region() {
+    // Same region_id in two different statuses → later (created_at) wins.
+    let region_id = Uuid::new_v4();
+
+    let old = ProcessingBatch {
+        id: Uuid::new_v4(),
+        region_id,
+        status: BatchStatus::Failed,
+        fetch_task_ids: vec![],
+        expected_task_count: 0,
+        content_hash: None,
+        created_at: chrono::Utc::now() - chrono::Duration::hours(2),
+        ready_at: None,
+        processing_started_at: None,
+        completed_at: None,
+        summary_id: None,
+        error_message: None,
+    };
+    let new = ProcessingBatch {
+        id: Uuid::new_v4(),
+        region_id,
+        status: BatchStatus::Completed,
+        fetch_task_ids: vec![],
+        expected_task_count: 0,
+        content_hash: None,
+        created_at: chrono::Utc::now(),
+        ready_at: None,
+        processing_started_at: None,
+        completed_at: None,
+        summary_id: None,
+        error_message: None,
+    };
+
+    let svc = Arc::new(FakeServices::new());
+    *svc.total_regions.lock().unwrap() = Some(Ok(1));
+    *svc.regions_without_batches.lock().unwrap() = Some(Ok(0));
+    *svc.actively_fetching_regions.lock().unwrap() = Some(Ok(0));
+    *svc.batches_by_status.lock().unwrap() = Some(vec![
+        (BatchStatus::Failed, vec![old]),
+        (BatchStatus::Completed, vec![new]),
+        (BatchStatus::Collecting, vec![]),
+        (BatchStatus::Ready, vec![]),
+        (BatchStatus::Processing, vec![]),
+        (BatchStatus::Invalidated, vec![]),
+    ]);
+
+    let app = router(svc);
+    let resp = app.oneshot(get("/orch/api/pipeline/stats")).await.unwrap();
+    let body = read_body_json(resp).await;
+    // Only the newer batch (Completed) should count.
+    assert_eq!(body["done"], 1);
+    assert_eq!(body["fetch_failed"], 0);
+}
+
+// --- get_batch_status: covers app::get_batch_status + count_completed_tasks ---
+
+#[tokio::test]
+async fn get_batch_status_collecting_with_task_progress() {
+    let region_id = Uuid::new_v4();
+    let mut batch = sample_batch(region_id, BatchStatus::Collecting, vec![1, 2, 3]);
+    batch.expected_task_count = 3;
+    let batch_id = batch.id;
+
+    let svc = Arc::new(FakeServices::new());
+    *svc.batch_by_id.lock().unwrap() = Some(Ok(Some(batch)));
+    *svc.count_completed_tasks.lock().unwrap() = Some(Ok(2));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/batches/{batch_id}/status")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["status"], "Fetching");
+    assert_eq!(body["expected_tasks"], 3);
+    assert_eq!(body["completed_tasks"], 2);
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("Fetching papers")
+    );
+}
+
+#[tokio::test]
+async fn get_batch_status_failed_embeds_error_in_message() {
+    let region_id = Uuid::new_v4();
+    let mut batch = sample_batch(region_id, BatchStatus::Failed, vec![]);
+    batch.error_message = Some("No papers found".to_string());
+    let batch_id = batch.id;
+
+    let svc = Arc::new(FakeServices::new());
+    *svc.batch_by_id.lock().unwrap() = Some(Ok(Some(batch)));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/batches/{batch_id}/status")))
+        .await
+        .unwrap();
+    let body = read_body_json(resp).await;
+    assert_eq!(body["status"], "FetchFailed");
+    assert_eq!(body["error"], "No papers found");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("No papers found")
+    );
+    // Empty fetch_task_ids → completed_tasks stays null.
+    assert!(body["completed_tasks"].is_null());
+}
+
+#[tokio::test]
+async fn get_batch_status_ready_has_waiting_message() {
+    let region_id = Uuid::new_v4();
+    let batch = sample_batch(region_id, BatchStatus::Ready, vec![1]);
+    let batch_id = batch.id;
+
+    let svc = Arc::new(FakeServices::new());
+    *svc.batch_by_id.lock().unwrap() = Some(Ok(Some(batch)));
+    *svc.count_completed_tasks.lock().unwrap() = Some(Ok(1));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/batches/{batch_id}/status")))
+        .await
+        .unwrap();
+    let body = read_body_json(resp).await;
+    assert_eq!(body["status"], "LlmQueued");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("waiting for LLM processing")
+    );
+}
+
+// --- reverse_search ---
+
+#[tokio::test]
+async fn reverse_search_forwards_query_and_returns_results() {
+    let svc = Arc::new(FakeServices::new());
+    *svc.reverse_search_result.lock().unwrap() = Some(Ok(domain::SearchResponse {
+        query: "memory".to_string(),
+        results: vec![],
+        total_found: 0,
+    }));
+
+    let app = router(svc.clone());
+    let resp = app
+        .oneshot(post_json(
+            "/orch/api/search",
+            serde_json::json!({"query": "memory"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["query"], "memory");
+    assert_eq!(body["total_found"], 0);
+
+    let observed = svc.last_reverse_query.lock().unwrap().clone();
+    assert_eq!(observed.as_deref(), Some("memory"));
+}
+
+// --- worker endpoints ---
+
+#[tokio::test]
+async fn worker_status_endpoint_returns_list() {
+    let svc = Arc::new(FakeServices::new());
+    *svc.worker_status.lock().unwrap() = Some(Ok(vec![WorkerStatus {
+        worker_id: "w-1".to_string(),
+        status: "running".to_string(),
+        current_task: None,
+        tasks_processed: 3,
+        started_at: 1700000000,
+        worker_version: Some("v1".to_string()),
+        last_heartbeat_at: Some(1700000100),
+        uptime_seconds: 100.0,
+        tasks_failed: 0,
+        success_rate: 1.0,
+        task_timeout_secs: 30,
+        failure_backoff_base_secs: 5,
+        max_retry_attempts: 3,
+        backoff_strategy: "constant".to_string(),
+    }]));
+
+    let app = router(svc);
+    let resp = app.oneshot(get("/orch/api/workers/status")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body[0]["worker_id"], "w-1");
+    assert_eq!(body[0]["status"], "running");
+}
+
+#[tokio::test]
+async fn allocate_workers_endpoint_forwards_body_and_returns_ids() {
+    let svc = Arc::new(FakeServices::new());
+    *svc.allocate_workers_result.lock().unwrap() = Some(Ok(WorkerAllocationResponse {
+        success: true,
+        worker_ids: vec!["w-1".to_string(), "w-2".to_string()],
+        error_message: None,
+    }));
+
+    let app = router(svc.clone());
+    let resp = app
+        .oneshot(post_json(
+            "/orch/api/workers/allocate",
+            serde_json::json!({
+                "worker_count": 2,
+                "task_timeout_secs": 30,
+                "max_retry_attempts": 3,
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["worker_ids"].as_array().unwrap().len(), 2);
+
+    let observed = svc.last_allocate_req.lock().unwrap().as_ref().map(|r| r.worker_count);
+    assert_eq!(observed, Some(2));
+}
+
+#[tokio::test]
+async fn stop_workers_endpoint_forwards_ids_and_returns_count() {
+    let svc = Arc::new(FakeServices::new());
+    *svc.stop_workers_result.lock().unwrap() = Some(Ok(WorkerStopResponse {
+        success: true,
+        workers_stopped: 1,
+        error_message: None,
+    }));
+
+    let app = router(svc.clone());
+    let resp = app
+        .oneshot(post_json(
+            "/orch/api/workers/stop",
+            serde_json::json!({"worker_ids": ["w-1"]}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["workers_stopped"], 1);
+
+    let observed = svc.last_stop_req.lock().unwrap().as_ref().map(|r| r.worker_ids.clone());
+    assert_eq!(observed, Some(vec!["w-1".to_string()]));
+}
+
+// --- chunk source ---
+
+#[tokio::test]
+async fn get_chunk_source_returns_details() {
+    let chunk_id = Uuid::new_v4();
+    let svc = Arc::new(FakeServices::new());
+    *svc.chunk_source.lock().unwrap() = Some(Ok(domain::ChunkSourceResponse {
+        chunk_id,
+        chunk_text: "some text".to_string(),
+        source_s3_key: Some("s3://k".to_string()),
+        source_pmc_id: Some("PMC1".to_string()),
+        source_uid: None,
+        source_query: Some("q".to_string()),
+        char_start: Some(0),
+        char_end: Some(9),
+    }));
+
+    let app = router(svc);
+    let resp = app
+        .oneshot(get(&format!("/orch/api/chunks/{chunk_id}/source")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["chunk_text"], "some text");
+    assert_eq!(body["source_pmc_id"], "PMC1");
+}
+
+// --- pipeline status ---
+
+#[tokio::test]
+async fn get_pipeline_status_aggregates_counts_and_running_workers() {
+    let svc = Arc::new(FakeServices::new());
+    *svc.pending_fetch_task_count.lock().unwrap() = Some(Ok(42));
+    *svc.regions_without_queries_count.lock().unwrap() = Some(Ok(10));
+    *svc.regions_with_queries_count.lock().unwrap() = Some(Ok(1190));
+    // Two workers: one "running", one "idle" → only running counted.
+    *svc.worker_status.lock().unwrap() = Some(Ok(vec![
+        WorkerStatus {
+            worker_id: "w-1".to_string(),
+            status: "running".to_string(),
+            current_task: None,
+            tasks_processed: 0,
+            started_at: 0,
+            worker_version: None,
+            last_heartbeat_at: None,
+            uptime_seconds: 0.0,
+            tasks_failed: 0,
+            success_rate: 1.0,
+            task_timeout_secs: 30,
+            failure_backoff_base_secs: 5,
+            max_retry_attempts: 3,
+            backoff_strategy: "constant".to_string(),
+        },
+        WorkerStatus {
+            worker_id: "w-2".to_string(),
+            status: "idle".to_string(),
+            current_task: None,
+            tasks_processed: 0,
+            started_at: 0,
+            worker_version: None,
+            last_heartbeat_at: None,
+            uptime_seconds: 0.0,
+            tasks_failed: 0,
+            success_rate: 1.0,
+            task_timeout_secs: 30,
+            failure_backoff_base_secs: 5,
+            max_retry_attempts: 3,
+            backoff_strategy: "constant".to_string(),
+        },
+    ]));
+
+    let app = router(svc);
+    let resp = app.oneshot(get("/orch/api/pipeline/status")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["pending_fetch_tasks"], 42);
+    assert_eq!(body["regions_without_queries"], 10);
+    assert_eq!(body["regions_with_queries"], 1190);
+    assert_eq!(body["worker_count"], 1);
+}
+
+#[tokio::test]
+async fn get_pipeline_status_falls_back_to_zero_on_errors() {
+    // app::get_pipeline_status uses unwrap_or(0) on every sub-call so even
+    // when each underlying service errors the endpoint still returns 200.
+    let svc = Arc::new(FakeServices::new());
+    *svc.pending_fetch_task_count.lock().unwrap() = Some(Err(FakeErr("db".to_string())));
+    *svc.regions_without_queries_count.lock().unwrap() = Some(Err(FakeErr("db".to_string())));
+    *svc.regions_with_queries_count.lock().unwrap() = Some(Err(FakeErr("db".to_string())));
+    *svc.worker_status.lock().unwrap() = Some(Err(FakeErr("fetcher down".to_string())));
+
+    let app = router(svc);
+    let resp = app.oneshot(get("/orch/api/pipeline/status")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["pending_fetch_tasks"], 0);
+    assert_eq!(body["regions_without_queries"], 0);
+    assert_eq!(body["regions_with_queries"], 0);
+    assert_eq!(body["worker_count"], 0);
+}
+
+// --- generate_summary: existing active batch returns "already_in_progress" ---
+
+#[tokio::test]
+async fn generate_summary_returns_existing_batch_when_active() {
+    let region_id = Uuid::new_v4();
+    let batch = sample_batch(region_id, BatchStatus::Processing, vec![10, 20, 30]);
+    let batch_id = batch.id;
+
+    let svc = Arc::new(FakeServices::new());
+    *svc.active_batch.lock().unwrap() = Some(Ok(Some(batch)));
+
+    let app = router(svc);
+    let post_req = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/orch/api/regions/{region_id}/generate"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(post_req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_body_json(resp).await;
+    assert_eq!(body["batch_id"], batch_id.to_string());
+    assert_eq!(body["already_in_progress"], true);
+    assert_eq!(body["task_count"], 3);
+    assert_eq!(body["query_count"], 0);
+}
+

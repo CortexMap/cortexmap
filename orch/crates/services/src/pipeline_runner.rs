@@ -20,6 +20,69 @@ impl<I> OrchPipelineRunner<I> {
     }
 }
 
+/// Helpers shared across the `PipelineRunner` impl. Kept separate so the
+/// trait impl isn't cluttered with private utilities and so we can call
+/// them with a different bound set than the trait requires.
+impl<E, I> OrchPipelineRunner<I>
+where
+    E: Error + Send + Sync + 'static,
+    I: HttpClient<Error = E> + Send + Sync,
+{
+    /// POST the knowledge-only summary request to brainatlas, with an
+    /// exponential retry. Returns `Ok(())` on success; error is wrapped in
+    /// `ServiceError` on persistent failure.
+    async fn generate_knowledge_summary(
+        &self,
+        url: &str,
+        region_id: uuid::Uuid,
+        batch_id: uuid::Uuid,
+        region_name: &str,
+    ) -> Result<(), ServiceError<E>> {
+        let request = crate::ProcessNoPapersRequest {
+            region_id: crate::UuidWrapper {
+                value: region_id.to_string(),
+            },
+            batch_id: crate::UuidWrapper {
+                value: batch_id.to_string(),
+            },
+            chat_model: None,
+            correlation_id: Some(format!("batch:{}", batch_id)),
+        };
+
+        let retry_strategy = ExponentialBuilder::default()
+            .with_max_times(2)
+            .with_min_delay(std::time::Duration::from_secs(2))
+            .with_max_delay(std::time::Duration::from_secs(30));
+
+        let infra = &self.infra;
+        let req_ref = &request;
+        let url_ref = url;
+
+        let _: crate::ProcessRegionResponse = (|| async {
+            infra
+                .post::<crate::ProcessNoPapersRequest, crate::ProcessRegionResponse>(
+                    url_ref, req_ref,
+                )
+                .await
+        })
+        .retry(retry_strategy)
+        .notify(|err, dur: std::time::Duration| {
+            tracing::warn!(
+                region_id = %region_id,
+                region_name = %region_name,
+                batch_id = %batch_id,
+                error = %err,
+                retry_after_ms = dur.as_millis() as u64,
+                "Phase 2: Retrying knowledge-only summary POST"
+            );
+        })
+        .await
+        .map_err(ServiceError::InfraError)?;
+
+        Ok(())
+    }
+}
+
 #[async_trait::async_trait]
 impl<E, I> PipelineRunner for OrchPipelineRunner<I>
 where
@@ -279,6 +342,24 @@ where
             fetcher_url.trim_end_matches('/')
         );
 
+        // Also resolve the brainatlas URL — needed for the knowledge-only
+        // summary path (regions whose NCBI queries return zero papers).
+        let brainatlas_url = match self.infra.get_env_var("BRAINATLAS_HTTP_ADDR") {
+            Ok(addr) => normalize_url(&addr),
+            Err(_) => self
+                .infra
+                .get_config(&database_url, ConfigKey::BrainatlasBaseUrl)
+                .await
+                .map_err(ServiceError::InfraError)?
+                .ok_or_else(|| ServiceError::ConfigNotFound {
+                    key: "brainatlas_base_url".to_string(),
+                })?,
+        };
+        let knowledge_summary_url = format!(
+            "{}/brainatlas-be/api/process-no-papers",
+            brainatlas_url.trim_end_matches('/')
+        );
+
         // Read page_size and max_retry_attempts from config instead of hardcoding
         let page_size: u32 = self
             .infra
@@ -312,6 +393,8 @@ where
         let mut regions_scanned = 0usize;
         let mut regions_skipped_fresh = 0usize;
         let mut total_new_tasks = 0usize;
+        let mut knowledge_summaries_attempted = 0usize;
+        let mut knowledge_summaries_succeeded = 0usize;
 
         // For each region, re-run all queries against NCBI
         // UNIQUE(pmc_id) constraint deduplicates — only genuinely new papers get tasks
@@ -476,6 +559,123 @@ where
                         );
                     }
                 }
+            } else {
+                // No papers found for any of this region's queries. Fall back
+                // to a knowledge-only summary so every region ends up with at
+                // least one entry in `region_summary`.
+                //
+                // Only attempt this if there's no active batch already — an
+                // in-flight batch (e.g. from a prior cycle where NCBI did
+                // return results) should run to completion on its own.
+                match self.infra.get_active_batch(&database_url, *region_id).await {
+                    Ok(Some(existing_batch)) => {
+                        tracing::debug!(
+                            region_id = %region_id,
+                            batch_id = %existing_batch.id,
+                            "Phase 2: No new papers, but an active batch exists — skipping knowledge-only fallback"
+                        );
+                    }
+                    Ok(None) => {
+                        knowledge_summaries_attempted += 1;
+                        match self
+                            .infra
+                            .create_batch(&database_url, *region_id, 0)
+                            .await
+                        {
+                            Ok(batch_id) => {
+                                // Mark the batch Processing so it's visible
+                                // to the dashboards and zombie-watcher.
+                                if let Err(e) = self
+                                    .infra
+                                    .update_batch_status(
+                                        &database_url,
+                                        batch_id,
+                                        domain::BatchStatus::Processing,
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        batch_id = %batch_id,
+                                        error = %e,
+                                        "Phase 2: Failed to mark knowledge-only batch as Processing"
+                                    );
+                                }
+
+                                match self
+                                    .generate_knowledge_summary(
+                                        &knowledge_summary_url,
+                                        *region_id,
+                                        batch_id,
+                                        region_name,
+                                    )
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        if let Err(e) = self
+                                            .infra
+                                            .complete_batch(&database_url, batch_id)
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                batch_id = %batch_id,
+                                                error = %e,
+                                                "Phase 2: Knowledge summary succeeded but marking batch complete failed"
+                                            );
+                                        }
+                                        knowledge_summaries_succeeded += 1;
+                                        tracing::info!(
+                                            region_id = %region_id,
+                                            region_name = %region_name,
+                                            batch_id = %batch_id,
+                                            "Phase 2: Generated knowledge-only summary (zero NCBI results)"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        let err_msg = e.to_string();
+                                        if let Err(upd) = self
+                                            .infra
+                                            .update_batch_status(
+                                                &database_url,
+                                                batch_id,
+                                                domain::BatchStatus::Failed,
+                                                Some(err_msg.clone()),
+                                            )
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                batch_id = %batch_id,
+                                                error = %upd,
+                                                "Phase 2: Failed to mark knowledge-only batch Failed"
+                                            );
+                                        }
+                                        tracing::error!(
+                                            region_id = %region_id,
+                                            region_name = %region_name,
+                                            batch_id = %batch_id,
+                                            error = %err_msg,
+                                            "Phase 2: Knowledge-only summary generation failed"
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    region_id = %region_id,
+                                    error = %e,
+                                    "Phase 2: Failed to create knowledge-only batch"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            region_id = %region_id,
+                            error = %e,
+                            "Phase 2: Failed to check active batch for knowledge-only fallback"
+                        );
+                    }
+                }
             }
 
             regions_scanned += 1;
@@ -487,6 +687,13 @@ where
                 regions_skipped_fresh,
                 staleness_days,
                 "Phase 2: Staleness gate skipped fresh regions"
+            );
+        }
+        if knowledge_summaries_attempted > 0 {
+            tracing::info!(
+                knowledge_summaries_attempted,
+                knowledge_summaries_succeeded,
+                "Phase 2: Knowledge-only summary generation stats"
             );
         }
 

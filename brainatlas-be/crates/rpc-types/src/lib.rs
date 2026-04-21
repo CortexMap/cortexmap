@@ -9,9 +9,10 @@ pub use prost_types;
 // Re-export commonly used types for convenience
 pub use proto::{
     Acronym, BrainRegionEntry, BrainRegionList, BrainRegionListResponse, GenerateQueriesRequest,
-    GenerateQueriesResponse, PaperMetadata, ProcessRegionRequest, ProcessRegionResponse, RegionId,
-    RegionMapping, Rgb, SearchBrainRegionRequest, SearchBrainRegionResponse, Status, StatusRequest,
-    StatusResponse, Uuid,
+    GenerateQueriesResponse, PaperMetadata, ProcessNoPapersRequest, ProcessNoPapersResponse,
+    ProcessRegionRequest, ProcessRegionResponse, RegionId, RegionMapping, Rgb,
+    SearchBrainRegionRequest, SearchBrainRegionResponse, Status, StatusRequest, StatusResponse,
+    Uuid,
     brain_region_service_client::BrainRegionServiceClient,
     brain_region_service_server::{BrainRegionService, BrainRegionServiceServer},
 };

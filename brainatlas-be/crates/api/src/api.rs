@@ -41,6 +41,16 @@ pub trait BrainRegionApi: Send + Sync {
         correlation_id: Option<String>,
     ) -> Result<ProcessRegionResponse, Self::Error>;
 
+    /// Generate a knowledge-only summary for a region with zero NCBI results.
+    /// POST /api/process-no-papers — called by orch
+    async fn process_region_no_papers(
+        &self,
+        region_id: Option<Uuid>,
+        batch_id: Option<Uuid>,
+        chat_model: Option<String>,
+        correlation_id: Option<String>,
+    ) -> Result<ProcessRegionResponse, Self::Error>;
+
     /// Generate search queries for a brain region using LLM.
     /// POST /api/generate-queries — called by orch when creating a new batch
     async fn generate_queries(

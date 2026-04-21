@@ -1438,6 +1438,117 @@ mod tests {
         assert!(raw.contains("\"kind\":\"done\""));
         assert!(!raw.contains("call_llm"));
     }
+
+    // ---- initial_action branch coverage ----
+    //
+    // `initial_action` is a pure function over `(ctx, g_cached, r_cached,
+    // cached_metrics)`. The three branches are: both cached → Done,
+    // groundedness-not-cached → ExtractClaims, groundedness-cached + rubric-
+    // not-cached → JudgeRubric. Each test below locks one branch.
+
+    use crate::infra::SummaryRow;
+
+    fn ia_fixture_summary() -> SummaryRow {
+        SummaryRow {
+            id: Uuid::new_v4(),
+            region_id: 7,
+            name: "Amygdala".to_string(),
+            acronym: Some("AMY".to_string()),
+            summary: "The amygdala processes emotion.".to_string(),
+        }
+    }
+
+    fn ia_ctx<'a>(summary: &'a SummaryRow, hash: &'a str) -> RunContext<'a> {
+        RunContext {
+            summary,
+            summary_hash: hash,
+            eval_version: "v-initial",
+            judge_chat_model: "ia-judge",
+            rubric_chat_model: "ia-rubric",
+            embedding_model: "ia-embed",
+            top_k_chunks: 2,
+            similarity_threshold: 0.4,
+            citation_support_enabled: false,
+            citation_support_max_calls: 5,
+        }
+    }
+
+    /// Both upstream families cached → `Done` with the provided metrics, no
+    /// LLM call scheduled.
+    #[test]
+    fn initial_action_both_cached_returns_done() {
+        let summary = ia_fixture_summary();
+        let ctx = ia_ctx(&summary, "h-both-cached");
+        let cached = vec![MetricResult {
+            metric: "length_in_range".to_string(),
+            score: 1.0,
+            cached: true,
+            judge_model: None,
+        }];
+
+        let (state, next) = initial_action(&ctx, true, true, cached.clone());
+
+        assert!(matches!(state, RunState::Done));
+        match next {
+            NextAction::Done { metrics } => {
+                assert_eq!(metrics.len(), 1);
+                assert_eq!(metrics[0].metric, "length_in_range");
+            }
+            NextAction::CallLlm { .. } => panic!("expected Done, got CallLlm"),
+        }
+    }
+
+    /// Groundedness NOT cached → schedule `ExtractClaims` and transition to
+    /// `AwaitingClaims`. Rubric-cached status is irrelevant on this branch.
+    #[test]
+    fn initial_action_groundedness_missing_schedules_extract_claims() {
+        let summary = ia_fixture_summary();
+        let ctx = ia_ctx(&summary, "h-extract");
+
+        let (state, next) = initial_action(&ctx, false, true, vec![]);
+
+        assert!(matches!(state, RunState::AwaitingClaims));
+        match next {
+            NextAction::CallLlm { endpoint, body, .. } => {
+                assert_eq!(endpoint, LlmEndpoint::ExtractClaims);
+                // Body must contain the summary text and region name from ctx.
+                assert_eq!(body["summary_text"], summary.summary);
+                assert_eq!(body["region_name"], summary.name);
+                assert_eq!(body["chat_model"], "ia-judge");
+            }
+            NextAction::Done { .. } => panic!("expected CallLlm, got Done"),
+        }
+    }
+
+    /// Groundedness cached, rubric missing → skip claims entirely, schedule
+    /// `JudgeRubric`, and transition to `AwaitingRubric { claims: None }`.
+    /// The `claims: None` is the key invariant here — no claim extraction
+    /// ever ran, so citations cannot run on this branch.
+    #[test]
+    fn initial_action_only_rubric_missing_schedules_rubric_with_no_claims() {
+        let summary = ia_fixture_summary();
+        let ctx = ia_ctx(&summary, "h-rubric-only");
+
+        let (state, next) = initial_action(&ctx, true, false, vec![]);
+
+        match state {
+            RunState::AwaitingRubric { claims } => {
+                assert!(
+                    claims.is_none(),
+                    "rubric-only branch must carry claims=None so citations skip"
+                );
+            }
+            other => panic!("expected AwaitingRubric, got {:?}", other),
+        }
+        match next {
+            NextAction::CallLlm { endpoint, body, .. } => {
+                assert_eq!(endpoint, LlmEndpoint::JudgeRubric);
+                assert_eq!(body["summary_text"], summary.summary);
+                assert_eq!(body["chat_model"], "ia-rubric");
+            }
+            NextAction::Done { .. } => panic!("expected CallLlm, got Done"),
+        }
+    }
 }
 
 // =============================================================================
@@ -2720,5 +2831,86 @@ mod advance_tests {
         // The cited_chunks map is keyed by UUID (serde serializes as string keys).
         assert!(v["cited_chunks"][u.to_string()].is_object());
         assert_eq!(v["cited_chunks"][u.to_string()]["chunk_index"], 42);
+    }
+
+    // ---- Public `advance` dispatcher ----
+
+    /// The public `advance` dispatcher must reject `RunState::Done` as an
+    /// input: once a run has finished, orch should not call `step_score` on
+    /// it again. Any attempt is a caller bug surfaced as
+    /// `ServiceError::InvalidRequest`. This guards against a dispatcher
+    /// regression that would silently allow post-terminal advances.
+    #[tokio::test]
+    async fn advance_dispatcher_rejects_done_state() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-done");
+        let mut acc = Vec::new();
+
+        // Any payload works — the dispatcher short-circuits before looking at it.
+        let response = LlmResponsePayload::Claims(ClaimsResponse { claims: vec![] });
+        let err = advance(&db, "memory://", RunState::Done, &ctx, response, &mut acc)
+            .await
+            .expect_err("Done state must produce InvalidRequest");
+
+        match err {
+            ServiceError::InvalidRequest(msg) => {
+                assert!(
+                    msg.contains("already Done"),
+                    "error message must mention the terminal-state violation, got {msg}"
+                );
+            }
+            other => panic!("expected InvalidRequest, got {:?}", other),
+        }
+        assert!(
+            acc.is_empty(),
+            "no metrics must be persisted when the dispatcher bails early"
+        );
+    }
+
+    /// The public `advance` dispatcher, when given a valid non-terminal
+    /// state, must delegate to the matching `advance_*` helper and return a
+    /// coherent `(state, next)` pair. We pick the cheapest path:
+    /// `AwaitingClaims` + empty claims list → short-circuits to rubric with
+    /// two groundedness rows persisted. This exercises the dispatcher's
+    /// pattern-match arm for `AwaitingClaims` (which the direct-call tests
+    /// bypass).
+    #[tokio::test]
+    async fn advance_dispatcher_routes_awaiting_claims() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-dispatch");
+        let mut acc = Vec::new();
+
+        let response = LlmResponsePayload::Claims(ClaimsResponse { claims: vec![] });
+        let (state, next) = advance(
+            &db,
+            "memory://",
+            RunState::AwaitingClaims,
+            &ctx,
+            response,
+            &mut acc,
+        )
+        .await
+        .expect("dispatcher must route AwaitingClaims");
+
+        // Empty-claims path carries `claims: Some(empty_vec)` through to rubric
+        // (distinguishing "extracted 0 claims" from "never extracted") — see
+        // the direct `advance_claims_empty_short_circuits_to_rubric` test.
+        match state {
+            RunState::AwaitingRubric { claims } => {
+                assert!(matches!(claims, Some(v) if v.is_empty()));
+            }
+            other => panic!("expected AwaitingRubric, got {other:?}"),
+        }
+        match next {
+            NextAction::CallLlm { endpoint, .. } => {
+                assert_eq!(endpoint, LlmEndpoint::JudgeRubric);
+            }
+            NextAction::Done { .. } => panic!("expected CallLlm, got Done"),
+        }
+        // Both empty-claims groundedness metrics landed.
+        assert!(acc.iter().any(|m| m.metric == "claim_groundedness"));
+        assert!(acc.iter().any(|m| m.metric == "hallucination_rate"));
     }
 }

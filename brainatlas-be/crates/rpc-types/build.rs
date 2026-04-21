@@ -16,6 +16,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "com.cortexmap.StatusResponse",
         "com.cortexmap.ProcessRegionRequest",
         "com.cortexmap.ProcessRegionResponse",
+        "com.cortexmap.ProcessNoPapersRequest",
+        "com.cortexmap.ProcessNoPapersResponse",
         "com.cortexmap.GenerateQueriesRequest",
         "com.cortexmap.GenerateQueriesResponse",
         "com.cortexmap.PaperMetadata",
@@ -46,6 +48,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     config = config.field_attribute(
         "com.cortexmap.GenerateQueriesRequest.correlation_id",
+        "#[serde(default)]",
+    );
+
+    // ProcessNoPapersRequest optional fields — default for backward compatibility.
+    config = config.field_attribute(
+        "com.cortexmap.ProcessNoPapersRequest.chat_model",
+        "#[serde(default)]",
+    );
+    config = config.field_attribute(
+        "com.cortexmap.ProcessNoPapersRequest.correlation_id",
         "#[serde(default)]",
     );
 

@@ -103,6 +103,33 @@ where
         })
     }
 
+    async fn process_region_no_papers(
+        &self,
+        region_id: Option<Uuid>,
+        batch_id: Option<Uuid>,
+        chat_model: Option<String>,
+        correlation_id: Option<String>,
+    ) -> Result<ProcessRegionResponse, Self::Error> {
+        let region_uuid = region_id.ok_or(ApiError::MissingOrInvalidId)?;
+        // Batch id is optional from the wire; synthesise one if absent so the
+        // usage rows still have a stable batch grouping.
+        let batch_uuid = batch_id.unwrap_or_else(Uuid::new_v4);
+
+        let summary_id = self
+            .app()
+            .process_region_no_papers(region_uuid, batch_uuid, chat_model, correlation_id)
+            .await
+            .map_err(ApiError::AppError)?;
+
+        let detail = format!("Successfully created knowledge-only summary {}", summary_id);
+        Ok(ProcessRegionResponse {
+            region_id: Some(rpc_types::Uuid {
+                value: region_uuid.to_string(),
+            }),
+            detail,
+        })
+    }
+
     async fn generate_queries(
         &self,
         region_name: String,

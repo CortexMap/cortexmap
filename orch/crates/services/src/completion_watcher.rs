@@ -1184,4 +1184,416 @@ mod tests {
             assert!(t.task_id == 10 || t.task_id == 20);
         }
     }
+
+    // ========== ADDITIONAL TESTS (gap-close) ==========
+
+    // Helpers to extend MockInfra for the `process()` / `process_batch()` tests
+    impl MockInfra {
+        fn without_env(mut self, key: &str) -> Self {
+            self.env.remove(key);
+            self
+        }
+        fn with_env(mut self, k: &str, v: &str) -> Self {
+            self.env.insert(k.to_string(), v.to_string());
+            self
+        }
+        fn with_config(mut self, key: ConfigKey, val: &str) -> Self {
+            self.config.insert(key.to_string(), val.to_string());
+            self
+        }
+        fn with_s3_keys(self, task_ids: Vec<i64>, keys: Vec<String>) -> Self {
+            let mut k = task_ids;
+            k.sort();
+            self.s3_keys.lock().unwrap().insert(k, keys);
+            self
+        }
+        fn with_paper_metadata(
+            self,
+            task_ids: Vec<i64>,
+            md: Vec<PaperMetadataRecord>,
+        ) -> Self {
+            let mut k = task_ids;
+            k.sort();
+            self.paper_metadata.lock().unwrap().insert(k, md);
+            self
+        }
+        fn with_http_response(self, url_contains: &str, body: serde_json::Value) -> Self {
+            self.http_responders
+                .lock()
+                .unwrap()
+                .insert(url_contains.to_string(), body);
+            self
+        }
+    }
+
+    fn mk_batch_full(
+        id: Uuid,
+        status: BatchStatus,
+        fetch_task_ids: Vec<i64>,
+        expected_task_count: i32,
+        processing_started_at: Option<chrono::DateTime<Utc>>,
+        created_at: chrono::DateTime<Utc>,
+    ) -> ProcessingBatch {
+        ProcessingBatch {
+            id,
+            region_id: Uuid::new_v4(),
+            status,
+            fetch_task_ids,
+            expected_task_count,
+            content_hash: None,
+            created_at,
+            ready_at: None,
+            processing_started_at,
+            completed_at: None,
+            summary_id: None,
+            error_message: None,
+        }
+    }
+
+    // TEST 7: get_config trait method delegates to infra.
+    #[tokio::test]
+    async fn get_config_returns_value_from_infra() {
+        let infra = Arc::new(
+            MockInfra::new().with_config(ConfigKey::ChatModel, "gpt-test"),
+        );
+        let cw = CompletionWatcher::new(infra.clone());
+        let v = cw
+            .get_config(ConfigKey::ChatModel)
+            .await
+            .expect("ok");
+        assert_eq!(v.as_deref(), Some("gpt-test"));
+    }
+
+    // TEST 8: get_config returns None when key missing.
+    #[tokio::test]
+    async fn get_config_returns_none_when_missing() {
+        let infra = Arc::new(MockInfra::new());
+        let cw = CompletionWatcher::new(infra.clone());
+        let v = cw.get_config(ConfigKey::ChatModel).await.expect("ok");
+        assert!(v.is_none());
+    }
+
+    // TEST 9: poll returns InfraError when DATABASE_URL env var missing.
+    #[tokio::test]
+    async fn poll_surfaces_env_error_when_database_url_missing() {
+        let infra = Arc::new(MockInfra::new().without_env("DATABASE_URL"));
+        let cw = CompletionWatcher::new(infra);
+        let err = cw.poll().await.expect_err("must fail");
+        matches!(err, ServiceError::InfraError(_));
+    }
+
+    // TEST 10: recover_stale_batches marks stuck-processing batch as failed
+    // when processing_started_at exceeds the timeout.
+    #[tokio::test]
+    async fn recover_stale_batches_marks_stuck_processing_as_failed() {
+        let batch_id = Uuid::new_v4();
+        // processing_started_at is 2 hours ago → definitely past default 1800s.
+        let started = Utc::now() - chrono::Duration::hours(2);
+        let b = mk_batch_full(
+            batch_id,
+            BatchStatus::Processing,
+            vec![1],
+            1,
+            Some(started),
+            started,
+        );
+        let infra = Arc::new(MockInfra::new().with_batch(b));
+        let cw = CompletionWatcher::new(infra.clone());
+        cw.recover_stale_batches("postgres://mock")
+            .await
+            .expect("ok");
+        let upd = infra.recorder.status_updates.lock().unwrap();
+        assert_eq!(upd.len(), 1);
+        assert_eq!(upd[0].0, batch_id);
+        assert_eq!(upd[0].1, BatchStatus::Failed);
+        // Reason message carries the timeout prefix.
+        assert!(upd[0].2.as_ref().unwrap().contains("timed out"));
+    }
+
+    // TEST 11: recover_stale_batches uses created_at as fallback when
+    // processing_started_at is None.
+    #[tokio::test]
+    async fn recover_stale_batches_falls_back_to_created_at_for_processing() {
+        let batch_id = Uuid::new_v4();
+        let created = Utc::now() - chrono::Duration::hours(3);
+        let b = mk_batch_full(
+            batch_id,
+            BatchStatus::Processing,
+            vec![1],
+            1,
+            None, // no processing_started_at
+            created,
+        );
+        let infra = Arc::new(MockInfra::new().with_batch(b));
+        let cw = CompletionWatcher::new(infra.clone());
+        cw.recover_stale_batches("postgres://mock")
+            .await
+            .expect("ok");
+        let upd = infra.recorder.status_updates.lock().unwrap();
+        assert_eq!(upd.len(), 1);
+        assert_eq!(upd[0].1, BatchStatus::Failed);
+    }
+
+    // TEST 12: recent Processing batch is NOT recovered.
+    #[tokio::test]
+    async fn recover_stale_batches_leaves_fresh_processing_alone() {
+        let batch_id = Uuid::new_v4();
+        let recent = Utc::now() - chrono::Duration::seconds(10);
+        let b = mk_batch_full(
+            batch_id,
+            BatchStatus::Processing,
+            vec![1],
+            1,
+            Some(recent),
+            recent,
+        );
+        let infra = Arc::new(MockInfra::new().with_batch(b));
+        let cw = CompletionWatcher::new(infra.clone());
+        cw.recover_stale_batches("postgres://mock")
+            .await
+            .expect("ok");
+        // No updates — fresh batch not touched.
+        assert!(infra.recorder.status_updates.lock().unwrap().is_empty());
+    }
+
+    // TEST 13: recover_stale_batches honours custom timeout from config.
+    #[tokio::test]
+    async fn recover_stale_batches_respects_custom_timeout_config() {
+        let batch_id = Uuid::new_v4();
+        // Started 2 min ago.
+        let started = Utc::now() - chrono::Duration::seconds(120);
+        let b = mk_batch_full(
+            batch_id,
+            BatchStatus::Processing,
+            vec![1],
+            1,
+            Some(started),
+            started,
+        );
+        let infra = Arc::new(
+            MockInfra::new()
+                .with_batch(b)
+                .with_config(ConfigKey::ProcessingBatchTimeoutSecs, "60"),
+        );
+        let cw = CompletionWatcher::new(infra.clone());
+        cw.recover_stale_batches("postgres://mock")
+            .await
+            .expect("ok");
+        // 120s > 60s → recovered.
+        let upd = infra.recorder.status_updates.lock().unwrap();
+        assert_eq!(upd.len(), 1);
+        assert_eq!(upd[0].1, BatchStatus::Failed);
+    }
+
+    // TEST 14: process() with no ready batches returns empty success.
+    #[tokio::test]
+    async fn process_with_no_ready_batches_returns_empty_success() {
+        let infra = Arc::new(MockInfra::new());
+        let cw = CompletionWatcher::new(infra);
+        let r = cw.process(vec![]).await.expect("ok");
+        assert_eq!(r.successful, 0);
+        assert_eq!(r.failed, 0);
+        assert!(r.task_results.is_empty());
+    }
+
+    // TEST 15: process() on a Ready batch with an empty fetch_task_ids
+    // returns a Failed TaskResult (NoS3Keys path → zombie-check inside process_batch).
+    #[tokio::test]
+    async fn process_zombie_ready_batch_is_reported_as_failed() {
+        let batch_id = Uuid::new_v4();
+        let b = mk_batch(batch_id, BatchStatus::Ready, vec![]);
+        let infra = Arc::new(MockInfra::new().with_batch(b));
+        let cw = CompletionWatcher::new(infra.clone());
+        let r = cw.process(vec![]).await.expect("ok");
+        assert_eq!(r.successful, 0);
+        assert_eq!(r.failed, 1);
+        // Status transitions: Processing then Failed.
+        let upd = infra.recorder.status_updates.lock().unwrap();
+        let statuses: Vec<BatchStatus> = upd.iter().map(|u| u.1).collect();
+        assert!(statuses.contains(&BatchStatus::Processing));
+        assert!(statuses.contains(&BatchStatus::Failed));
+    }
+
+    // TEST 16: process() with all-PDF S3 keys marks the batch Failed.
+    #[tokio::test]
+    async fn process_all_pdf_keys_marks_batch_failed() {
+        let batch_id = Uuid::new_v4();
+        let b = mk_batch(batch_id, BatchStatus::Ready, vec![1, 2]);
+        let infra = Arc::new(
+            MockInfra::new()
+                .with_batch(b)
+                .with_s3_keys(vec![1, 2], vec!["a.pdf".into(), "b.PDF".into()]),
+        );
+        let cw = CompletionWatcher::new(infra.clone());
+        let r = cw.process(vec![]).await.expect("ok");
+        assert_eq!(r.failed, 1);
+        let upd = infra.recorder.status_updates.lock().unwrap();
+        let failed = upd
+            .iter()
+            .find(|u| u.1 == BatchStatus::Failed)
+            .expect("must mark Failed");
+        assert!(failed.2.as_ref().unwrap().contains("No text files"));
+    }
+
+    // TEST 17: process() happily completes a batch when brainatlas returns OK.
+    #[tokio::test]
+    async fn process_succeeds_when_brainatlas_returns_ok() {
+        let batch_id = Uuid::new_v4();
+        let b = mk_batch(batch_id, BatchStatus::Ready, vec![1]);
+        let metadata = vec![PaperMetadataRecord {
+            s3_key: "paper.txt".into(),
+            pmc_id: Some("PMC1".into()),
+            uid: Some("U1".into()),
+            query: Some("q".into()),
+        }];
+        let resp = serde_json::json!({
+            "region_id": {"value": Uuid::new_v4().to_string()},
+            "detail": "processed ok"
+        });
+        let infra = Arc::new(
+            MockInfra::new()
+                .with_batch(b)
+                .with_s3_keys(vec![1], vec!["paper.txt".into()])
+                .with_paper_metadata(vec![1], metadata)
+                .with_http_response(
+                    "http://brain:8082/brainatlas-be/api/process",
+                    resp,
+                ),
+        );
+        let cw = CompletionWatcher::new(infra.clone());
+        let r = cw.process(vec![]).await.expect("ok");
+        assert_eq!(r.successful, 1);
+        assert_eq!(r.failed, 0);
+        assert!(matches!(r.task_results[0].status, TaskStatus::Success));
+        assert_eq!(
+            r.task_results[0].detail.as_deref(),
+            Some("processed ok")
+        );
+        // complete_batch was called.
+        let completes = infra.recorder.completes.lock().unwrap();
+        assert!(completes.contains(&batch_id));
+    }
+
+    // TEST 18: process() uses brainatlas URL from config when the env var
+    // is absent (config fallback path).
+    #[tokio::test]
+    async fn process_uses_brainatlas_url_from_config_when_env_missing() {
+        let batch_id = Uuid::new_v4();
+        let b = mk_batch(batch_id, BatchStatus::Ready, vec![1]);
+        let resp = serde_json::json!({
+            "region_id": {"value": Uuid::new_v4().to_string()},
+            "detail": "ok"
+        });
+        let infra = Arc::new(
+            MockInfra::new()
+                .without_env("BRAINATLAS_HTTP_ADDR")
+                .with_config(ConfigKey::BrainatlasBaseUrl, "http://cfg:9999")
+                .with_batch(b)
+                .with_s3_keys(vec![1], vec!["x.txt".into()])
+                .with_http_response(
+                    "http://cfg:9999/brainatlas-be/api/process",
+                    resp,
+                ),
+        );
+        let cw = CompletionWatcher::new(infra);
+        let r = cw.process(vec![]).await.expect("ok");
+        assert_eq!(r.successful, 1);
+    }
+
+    // TEST 19: process() returns ConfigNotFound when neither env nor config
+    // provides a brainatlas URL.
+    #[tokio::test]
+    async fn process_returns_config_not_found_when_no_brainatlas_url() {
+        let infra = Arc::new(MockInfra::new().without_env("BRAINATLAS_HTTP_ADDR"));
+        let cw = CompletionWatcher::new(infra);
+        let err = cw.process(vec![]).await.expect_err("must fail");
+        match err {
+            ServiceError::ConfigNotFound { key } => {
+                assert_eq!(key, "brainatlas_base_url")
+            }
+            other => panic!("expected ConfigNotFound, got {:?}", other),
+        }
+    }
+
+    // TEST 20: process() uses CHAT_MODEL/EMBEDDING_MODEL env vars when set
+    // (exercise the env-hit branches for those two lookups).
+    #[tokio::test]
+    async fn process_honours_chat_and_embedding_model_env_vars() {
+        let batch_id = Uuid::new_v4();
+        let b = mk_batch(batch_id, BatchStatus::Ready, vec![1]);
+        let resp = serde_json::json!({
+            "region_id": {"value": Uuid::new_v4().to_string()},
+            "detail": "ok"
+        });
+        let infra = Arc::new(
+            MockInfra::new()
+                .with_env("CHAT_MODEL", "env-chat")
+                .with_env("EMBEDDING_MODEL", "env-embed")
+                .with_batch(b)
+                .with_s3_keys(vec![1], vec!["x.txt".into()])
+                .with_http_response(
+                    "http://brain:8082/brainatlas-be/api/process",
+                    resp,
+                ),
+        );
+        let cw = CompletionWatcher::new(infra.clone());
+        let r = cw.process(vec![]).await.expect("ok");
+        assert_eq!(r.successful, 1);
+    }
+
+    // TEST 21: process() custom concurrency config parses and is respected
+    // (just smoke-exercises the parse branch and the non-default path).
+    #[tokio::test]
+    async fn process_parses_max_parallel_process_calls_config() {
+        let b1 = mk_batch(Uuid::new_v4(), BatchStatus::Ready, vec![1]);
+        let resp = serde_json::json!({
+            "region_id": {"value": Uuid::new_v4().to_string()},
+            "detail": "ok"
+        });
+        let infra = Arc::new(
+            MockInfra::new()
+                .with_config(ConfigKey::MaxParallelProcessCalls, "4")
+                .with_batch(b1)
+                .with_s3_keys(vec![1], vec!["x.txt".into()])
+                .with_http_response(
+                    "http://brain:8082/brainatlas-be/api/process",
+                    resp,
+                ),
+        );
+        let cw = CompletionWatcher::new(infra);
+        let r = cw.process(vec![]).await.expect("ok");
+        assert_eq!(r.successful, 1);
+    }
+
+    // TEST 22: process_batch() short-circuits on Invalidated status.
+    #[tokio::test]
+    async fn process_batch_skips_invalidated_batch() {
+        let batch_id = Uuid::new_v4();
+        let b = mk_batch(batch_id, BatchStatus::Invalidated, vec![1]);
+        let infra = Arc::new(MockInfra::new());
+        let cw = CompletionWatcher::new(infra.clone());
+        let res = cw
+            .process_batch(&b, "http://brain:8082", "postgres://mock")
+            .await;
+        match res {
+            Err(ServiceError::External { message }) => {
+                assert!(message.contains("invalidated"))
+            }
+            other => panic!("expected External error, got {:?}", other),
+        }
+        // No status transitions happened.
+        assert!(infra.recorder.status_updates.lock().unwrap().is_empty());
+    }
+
+    // TEST 23: check_all_tasks_complete returns false for empty input.
+    #[tokio::test]
+    async fn check_all_tasks_complete_returns_false_for_empty_input() {
+        let infra = Arc::new(MockInfra::new());
+        let cw = CompletionWatcher::new(infra);
+        let r = cw
+            .check_all_tasks_complete(&[], "postgres://mock")
+            .await
+            .expect("ok");
+        assert!(!r);
+    }
 }

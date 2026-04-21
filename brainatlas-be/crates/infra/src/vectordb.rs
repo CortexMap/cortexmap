@@ -59,6 +59,13 @@ impl VectorDatabase for BrainAtlasVectorDB {
         database_url: &str,
         embeddings: Vec<NewEmbedding>,
     ) -> Result<(), Self::Error> {
+        // diesel's `.values(&[])` with no rows is not a valid INSERT and will
+        // fail at the SQL layer. The knowledge-only summary path passes an
+        // empty vec (no sources → no chunks to embed), so we short-circuit.
+        if embeddings.is_empty() {
+            return Ok(());
+        }
+
         self.run_blocking(database_url, move |conn| {
             use schema::brain_region_embeddings;
 

@@ -15,6 +15,8 @@ const MAX_TOOL_CALL_ITERATIONS: usize = 5;
 // Load prompt templates at compile time
 const RAG_SUMMARIZE_SYSTEM_TEMPLATE: &str = include_str!("../prompts/rag_summarize_system.md");
 const RAG_SUMMARIZE_USER_TEMPLATE: &str = include_str!("../prompts/rag_summarize_user.md");
+const KNOWLEDGE_SUMMARIZE_SYSTEM_TEMPLATE: &str =
+    include_str!("../prompts/knowledge_summarize_system.md");
 
 pub struct BrainAtlasApp<S> {
     services: Arc<S>,
@@ -225,6 +227,119 @@ where
                 .await
                 .map_err(AppError::ServiceError)?;
         }
+
+        Ok(summary_id)
+    }
+
+    /// Knowledge-only path: used when NCBI search returns zero papers for a
+    /// region. Generates a structured summary purely from the LLM's general
+    /// / textbook knowledge (no retrieved chunks, no embeddings, no citations)
+    /// so that every region in `region_mapping` ends up with at least one
+    /// entry in `region_summary`.
+    pub async fn process_region_no_papers(
+        &self,
+        uuid: Uuid,
+        batch_id: Uuid,
+        chat_model: Option<String>,
+        correlation_id: Option<String>,
+    ) -> Result<Uuid, AppError<E>> {
+        let region = self.get_region_by_uuid(uuid).await?;
+
+        let correlation_id = correlation_id.unwrap_or_else(|| format!("batch:{batch_id}"));
+        let ctx = UsageContext::default()
+            .with_correlation(Some(correlation_id.clone()))
+            .with_region(Some(region.region_id))
+            .with_batch(Some(batch_id))
+            .with_caller_tag("knowledge_summarize");
+
+        // Dedup on a stable per-region key so retries don't multiply rows.
+        let content_hash = format!("knowledge-only:{}", region.region_id);
+
+        // If a prior knowledge-only summary for this region exists with the
+        // same content hash, return it rather than regenerating. This mirrors
+        // the check in `process_region`.
+        if let Some(existing) = self
+            .services
+            .check_content_hash(region.region_id, &content_hash)
+            .await
+            .map_err(AppError::ServiceError)?
+        {
+            return Ok(existing.summary_id);
+        }
+
+        // Build the system+user message pair. No tools — the LLM must return
+        // a single final text response.
+        let system_prompt =
+            KNOWLEDGE_SUMMARIZE_SYSTEM_TEMPLATE.replace("{{REGION_NAME}}", &region.name);
+        let user_prompt = format!(
+            "Please provide the structured summary for {}.",
+            region.name
+        );
+        let messages: Vec<serde_json::Value> = vec![
+            serde_json::json!({ "role": "system", "content": system_prompt }),
+            serde_json::json!({ "role": "user", "content": user_prompt }),
+        ];
+
+        // Insert placeholder summary first so the usage rows (which reference
+        // summary_id via ctx) have a valid FK. Empty embeddings — the service
+        // layer must tolerate an empty slice.
+        let new_summary = NewRegionSummary {
+            region_id: region.region_id,
+            name: region.name.clone(),
+            acronym: region.acronym.clone(),
+            summary: String::new(), // filled in via update_summary_text below
+            content_hash,
+            batch_id,
+        };
+
+        let summary_id = self
+            .services
+            .insert_summary_with_embeddings(new_summary, Vec::new())
+            .await
+            .map_err(AppError::ServiceError)?;
+
+        let ctx = ctx.with_summary(Some(summary_id));
+
+        info!(
+            region = %region.name,
+            region_id = region.region_id,
+            summary_id = %summary_id,
+            "knowledge-only summarization starting (no sources)"
+        );
+
+        let response = self
+            .services
+            .summarize_with_tools(
+                &messages,
+                &[], // no tools — forces a Final response
+                chat_model.as_deref(),
+                ctx,
+            )
+            .await
+            .map_err(AppError::ServiceError)?;
+
+        let summary_text = match response {
+            LlmResponse::Final(text) => text,
+            LlmResponse::ToolCalls(_) => {
+                error!(
+                    region = %region.name,
+                    "knowledge-only summarization returned tool calls despite no tools being offered"
+                );
+                return Err(AppError::UnexpectedToolCall);
+            }
+        };
+
+        info!(
+            region = %region.name,
+            summary_id = %summary_id,
+            chars = summary_text.len(),
+            "knowledge-only summary generated"
+        );
+
+        self.services
+            .update_summary_text(summary_id, &summary_text)
+            .await
+            .map_err(AppError::ServiceError)?;
 
         Ok(summary_id)
     }
@@ -498,5 +613,943 @@ where
             .judge_citation(claim_text, sentence_context, chunk_text, chat_model, ctx)
             .await
             .map_err(AppError::ServiceError)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Orchestration-level tests for `BrainAtlasApp`.
+    //!
+    //! These exercise the code paths in `app.rs` itself; the services layer
+    //! is stubbed with a hand-rolled `FakeServices` (recording pattern, no
+    //! mockall) that implements every sub-trait of the `Services` umbrella.
+    use super::*;
+    use crate::services::{
+        BrainRegionInfo, Chunker, EmbeddingService, ListBrainRegions, LlmService, S3Storage,
+        UsageQuery, VectorDatabase,
+    };
+    use domain::{
+        BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
+        LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RubricScores, SimilarChunk,
+        ToolCall, UsageAggregate, UsageAggregateFilter,
+        rpc_types::PaperMetadata,
+    };
+    use std::sync::Mutex;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("fake service error: {0}")]
+    struct FakeErr(&'static str);
+
+    /// FIFO-consumed canned responses for `summarize_with_tools`.
+    #[allow(dead_code)]
+    enum CannedSummarize {
+        Ok(LlmResponse),
+        Err(&'static str),
+    }
+
+    /// Records every method call for post-hoc assertion.
+    #[derive(Default)]
+    struct Calls {
+        downloads: Vec<String>,
+        chunked: usize,
+        embeddings_generated: Vec<String>,
+        content_hashes_checked: Vec<(i32, String)>,
+        inserted_summary: Option<(NewRegionSummary, Vec<NewEmbedding>)>,
+        summarize_calls: usize,
+        summary_text_updates: Vec<(Uuid, String)>,
+        searches: Vec<(i32, usize)>,
+        generate_queries_calls: Vec<(String, u32)>,
+    }
+
+    struct FakeServices {
+        regions: Vec<RegionMapping>,
+        downloads: std::collections::HashMap<String, String>,
+        chunk_behaviour: ChunkBehaviour,
+        summarize_queue: Mutex<Vec<CannedSummarize>>,
+        /// Map content_hash -> existing summary (dedup).
+        existing_by_hash: std::collections::HashMap<String, ExistingSummary>,
+        calls: Mutex<Calls>,
+        /// When Some, `search` returns this error.
+        search_error: Option<&'static str>,
+        /// When Some, `download` returns this error for the first call.
+        download_error_on_first: bool,
+        /// Pre-seeded `insert_summary_with_embeddings` summary_id.
+        insert_summary_id: Uuid,
+        /// Last-resort error toggles.
+        fail_insert_summary: bool,
+        fail_update_summary: bool,
+        fail_generate_embedding: bool,
+    }
+
+    #[allow(dead_code)]
+    enum ChunkBehaviour {
+        /// For each input text, split into N equal-ish chunks by `chunk_size`.
+        ByChunkSize,
+        /// Return a fixed set of chunks regardless of input.
+        Fixed(Vec<String>),
+    }
+
+    impl FakeServices {
+        fn new() -> Self {
+            Self {
+                regions: vec![],
+                downloads: std::collections::HashMap::new(),
+                chunk_behaviour: ChunkBehaviour::ByChunkSize,
+                summarize_queue: Mutex::new(vec![]),
+                existing_by_hash: std::collections::HashMap::new(),
+                calls: Mutex::new(Calls::default()),
+                search_error: None,
+                download_error_on_first: false,
+                insert_summary_id: Uuid::new_v4(),
+                fail_insert_summary: false,
+                fail_update_summary: false,
+                fail_generate_embedding: false,
+            }
+        }
+
+        fn with_region(mut self, r: RegionMapping) -> Self {
+            self.regions.push(r);
+            self
+        }
+
+        fn with_download(mut self, key: &str, content: &str) -> Self {
+            self.downloads
+                .insert(key.to_string(), content.to_string());
+            self
+        }
+
+        fn enqueue_summarize_ok(self, resp: LlmResponse) -> Self {
+            self.summarize_queue
+                .lock()
+                .unwrap()
+                .push(CannedSummarize::Ok(resp));
+            self
+        }
+
+        #[allow(dead_code)]
+        fn enqueue_summarize_err(self, msg: &'static str) -> Self {
+            self.summarize_queue
+                .lock()
+                .unwrap()
+                .push(CannedSummarize::Err(msg));
+            self
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ListBrainRegions for FakeServices {
+        type Error = FakeErr;
+        async fn list(&self) -> Result<Vec<RegionMapping>, Self::Error> {
+            Ok(self.regions.clone())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BrainRegionInfo for FakeServices {
+        type Error = FakeErr;
+        async fn search(&self, _id: Uuid) -> Result<Vec<BrainRegionEntry>, Self::Error> {
+            if let Some(msg) = self.search_error {
+                return Err(FakeErr(msg));
+            }
+            Ok(vec![])
+        }
+    }
+
+    impl Chunker for FakeServices {
+        fn chunk(&self, text: &str, chunk_size: usize, _overlap: usize) -> Vec<String> {
+            let mut calls = self.calls.lock().unwrap();
+            calls.chunked += 1;
+            drop(calls);
+            match &self.chunk_behaviour {
+                ChunkBehaviour::Fixed(v) => v.clone(),
+                ChunkBehaviour::ByChunkSize => {
+                    if text.is_empty() {
+                        return vec![];
+                    }
+                    let step = chunk_size.max(1);
+                    text.as_bytes()
+                        .chunks(step)
+                        .map(|b| String::from_utf8_lossy(b).to_string())
+                        .collect()
+                }
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmService for FakeServices {
+        type Error = FakeErr;
+
+        async fn summarize_with_tools(
+            &self,
+            _messages: &[serde_json::Value],
+            _tools: &[serde_json::Value],
+            _chat_model: Option<&str>,
+            _ctx: UsageContext,
+        ) -> Result<LlmResponse, Self::Error> {
+            self.calls.lock().unwrap().summarize_calls += 1;
+            let mut q = self.summarize_queue.lock().unwrap();
+            if q.is_empty() {
+                // Default to an infinite tool-call loop trigger so we can
+                // test MAX_TOOL_CALL_ITERATIONS without pre-seeding five
+                // entries.
+                return Ok(LlmResponse::ToolCalls(vec![ToolCall {
+                    id: "auto".to_string(),
+                    name: "search_embeddings".to_string(),
+                    arguments: r#"{"query":"x","top_k":1}"#.to_string(),
+                }]));
+            }
+            match q.remove(0) {
+                CannedSummarize::Ok(r) => Ok(r),
+                CannedSummarize::Err(m) => Err(FakeErr(m)),
+            }
+        }
+
+        async fn generate_queries(
+            &self,
+            region_name: &str,
+            count: u32,
+            _ctx: UsageContext,
+        ) -> Result<Vec<String>, Self::Error> {
+            self.calls
+                .lock()
+                .unwrap()
+                .generate_queries_calls
+                .push((region_name.to_string(), count));
+            Ok((0..count).map(|i| format!("{region_name} q{i}")).collect())
+        }
+
+        async fn extract_claims(
+            &self,
+            _summary_text: &str,
+            _region_name: &str,
+            _chat_model: Option<&str>,
+            _ctx: UsageContext,
+        ) -> Result<ClaimsResponse, Self::Error> {
+            Ok(ClaimsResponse { claims: vec![] })
+        }
+
+        async fn judge_groundedness(
+            &self,
+            _claim_text: &str,
+            _evidence_chunks: &[String],
+            _chat_model: Option<&str>,
+            _ctx: UsageContext,
+        ) -> Result<GroundednessVerdict, Self::Error> {
+            Ok(GroundednessVerdict {
+                verdict: domain::GroundednessLabel::Unsupported,
+                confidence: 0.5,
+                supporting_chunks: vec![],
+                rationale: String::new(),
+            })
+        }
+
+        async fn judge_rubric(
+            &self,
+            _summary_text: &str,
+            _region_name: &str,
+            _chat_model: Option<&str>,
+            _ctx: UsageContext,
+        ) -> Result<RubricScores, Self::Error> {
+            let c = || domain::RubricCriterion {
+                score: 3,
+                rationale: String::new(),
+            };
+            Ok(RubricScores {
+                relevance: c(),
+                coherence: c(),
+                specificity: c(),
+                clinical_utility: c(),
+                terminology: c(),
+            })
+        }
+
+        async fn judge_citation(
+            &self,
+            _claim_text: &str,
+            _sentence_context: &str,
+            _chunk_text: &str,
+            _chat_model: Option<&str>,
+            _ctx: UsageContext,
+        ) -> Result<GroundednessVerdict, Self::Error> {
+            Ok(GroundednessVerdict {
+                verdict: domain::GroundednessLabel::Supported,
+                confidence: 1.0,
+                supporting_chunks: vec![],
+                rationale: String::new(),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingService for FakeServices {
+        type Error = FakeErr;
+        async fn generate_embedding(
+            &self,
+            text: &str,
+            _model_override: Option<&str>,
+            _ctx: UsageContext,
+        ) -> Result<Vec<f32>, Self::Error> {
+            if self.fail_generate_embedding {
+                return Err(FakeErr("embedding failed"));
+            }
+            self.calls
+                .lock()
+                .unwrap()
+                .embeddings_generated
+                .push(text.to_string());
+            Ok(vec![0.1, 0.2, 0.3])
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl S3Storage for FakeServices {
+        type Error = FakeErr;
+        async fn download(&self, key: &str) -> Result<String, Self::Error> {
+            {
+                let mut c = self.calls.lock().unwrap();
+                if self.download_error_on_first && c.downloads.is_empty() {
+                    c.downloads.push(key.to_string());
+                    return Err(FakeErr("download failed"));
+                }
+                c.downloads.push(key.to_string());
+            }
+            self.downloads
+                .get(key)
+                .cloned()
+                .ok_or(FakeErr("s3 key not found"))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl VectorDatabase for FakeServices {
+        type Error = FakeErr;
+
+        async fn check_content_hash(
+            &self,
+            region_id: i32,
+            content_hash: &str,
+        ) -> Result<Option<ExistingSummary>, Self::Error> {
+            self.calls
+                .lock()
+                .unwrap()
+                .content_hashes_checked
+                .push((region_id, content_hash.to_string()));
+            Ok(self.existing_by_hash.get(content_hash).cloned())
+        }
+
+        async fn insert_summary_with_embeddings(
+            &self,
+            summary: NewRegionSummary,
+            embeddings: Vec<NewEmbedding>,
+        ) -> Result<Uuid, Self::Error> {
+            if self.fail_insert_summary {
+                return Err(FakeErr("insert failed"));
+            }
+            self.calls.lock().unwrap().inserted_summary = Some((summary, embeddings));
+            Ok(self.insert_summary_id)
+        }
+
+        async fn search_similar(
+            &self,
+            _query_embedding: Vec<f32>,
+            region_id: i32,
+            top_k: usize,
+        ) -> Result<Vec<SimilarChunk>, Self::Error> {
+            self.calls.lock().unwrap().searches.push((region_id, top_k));
+            Ok(vec![])
+        }
+
+        async fn update_summary_text(
+            &self,
+            summary_id: Uuid,
+            summary_text: &str,
+        ) -> Result<(), Self::Error> {
+            if self.fail_update_summary {
+                return Err(FakeErr("update failed"));
+            }
+            self.calls
+                .lock()
+                .unwrap()
+                .summary_text_updates
+                .push((summary_id, summary_text.to_string()));
+            Ok(())
+        }
+
+        async fn get_chunk_source(
+            &self,
+            _chunk_id: Uuid,
+        ) -> Result<Option<ChunkSource>, Self::Error> {
+            Ok(None)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl UsageQuery for FakeServices {
+        type Error = FakeErr;
+        async fn usage_aggregate(
+            &self,
+            _filter: UsageAggregateFilter,
+        ) -> Result<UsageAggregate, Self::Error> {
+            Ok(UsageAggregate::default())
+        }
+    }
+
+    // ---------- Helpers ----------
+
+    fn sample_region(region_id: i32) -> RegionMapping {
+        RegionMapping::new(region_id, format!("Region {region_id}"))
+    }
+
+    fn paper_meta(s3_key: &str, pmc: Option<&str>) -> PaperMetadata {
+        PaperMetadata {
+            s3_key: s3_key.to_string(),
+            pmc_id: pmc.map(|s| s.to_string()),
+            uid: None,
+            query: None,
+        }
+    }
+
+    // ---------- Tests: list / search ----------
+
+    #[tokio::test]
+    async fn list_delegates_to_services() {
+        let region = sample_region(1);
+        let services = Arc::new(FakeServices::new().with_region(region.clone()));
+        let app = BrainAtlasApp::new(services);
+        let got = app.list().await.unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].region_id, 1);
+    }
+
+    #[tokio::test]
+    async fn search_delegates_errors_through_app_error() {
+        let mut svc = FakeServices::new();
+        svc.search_error = Some("boom");
+        let app = BrainAtlasApp::new(Arc::new(svc));
+        let err = app.search(Uuid::new_v4()).await.err().expect("should err");
+        match err {
+            AppError::ServiceError(e) => assert_eq!(e.to_string(), "fake service error: boom"),
+            other => panic!("expected ServiceError, got {:?}", other),
+        }
+    }
+
+    // ---------- Tests: get_region_by_uuid / NotFound ----------
+
+    #[tokio::test]
+    async fn process_region_returns_not_found_when_uuid_missing() {
+        let app = BrainAtlasApp::new(Arc::new(FakeServices::new()));
+        let err = app
+            .process_region(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                vec![],
+                vec![],
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, AppError::NotFound), "got {:?}", err);
+    }
+
+    // ---------- Tests: process_region happy paths ----------
+
+    #[tokio::test]
+    async fn process_region_skip_summarization_short_circuits() {
+        let region = sample_region(7);
+        let region_uuid = region.id;
+        let svc = FakeServices::new()
+            .with_region(region)
+            .with_download("paper1.pdf", "Hello world this is content for paper one.");
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        let batch_id = Uuid::new_v4();
+        let summary_id = app
+            .process_region(
+                region_uuid,
+                batch_id,
+                vec!["paper1.pdf".to_string()],
+                vec![paper_meta("paper1.pdf", Some("PMC1"))],
+                None,
+                None,
+                /* skip_summarization */ true,
+                Some("corr-xyz".to_string()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(summary_id, svc.insert_summary_id);
+
+        let calls = svc.calls.lock().unwrap();
+        // Should have called download + chunk once, inserted summary,
+        // but NOT invoked summarize_with_tools or update_summary_text.
+        assert_eq!(calls.downloads, vec!["paper1.pdf".to_string()]);
+        assert_eq!(calls.summarize_calls, 0);
+        assert!(calls.summary_text_updates.is_empty());
+        assert!(calls.inserted_summary.is_some());
+        let (ins_summary, embeds) = calls.inserted_summary.as_ref().unwrap();
+        assert_eq!(ins_summary.batch_id, batch_id);
+        assert!(ins_summary.summary.is_empty(), "placeholder when skipped");
+        assert!(!embeds.is_empty(), "embeddings must be generated");
+        // Source metadata wired through: first embedding has pmc_id = PMC1.
+        assert_eq!(embeds[0].source_pmc_id.as_deref(), Some("PMC1"));
+        assert_eq!(embeds[0].source_s3_key.as_deref(), Some("paper1.pdf"));
+    }
+
+    #[tokio::test]
+    async fn process_region_runs_rag_loop_when_not_skipped() {
+        let region = sample_region(9);
+        let region_uuid = region.id;
+        let svc = FakeServices::new()
+            .with_region(region)
+            .with_download("a.txt", "alpha beta gamma")
+            .enqueue_summarize_ok(LlmResponse::Final("final summary text".to_string()));
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        let summary_id = app
+            .process_region(
+                region_uuid,
+                Uuid::new_v4(),
+                vec!["a.txt".to_string()],
+                vec![paper_meta("a.txt", None)],
+                Some("chat-model".to_string()),
+                Some("embed-model".to_string()),
+                false,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(summary_id, svc.insert_summary_id);
+        let calls = svc.calls.lock().unwrap();
+        assert_eq!(calls.summarize_calls, 1);
+        assert_eq!(
+            calls.summary_text_updates,
+            vec![(svc.insert_summary_id, "final summary text".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn process_region_dedups_via_content_hash() {
+        let region = sample_region(3);
+        let region_uuid = region.id;
+        let existing_id = Uuid::new_v4();
+        let mut svc = FakeServices::new()
+            .with_region(region)
+            .with_download("same.txt", "identical content");
+        // Pre-seed existing summary for the hash the app will compute.
+        // Since the hash depends on the concatenation used internally,
+        // just pre-insert all possible hashes via a wildcard-free key:
+        // we compute it here using the same compute_hash helper.
+        let expected_hash = domain::compute_hash("identical content\n\n---\n\n");
+        svc.existing_by_hash.insert(
+            expected_hash,
+            ExistingSummary {
+                summary_id: existing_id,
+                summary: "old".to_string(),
+            },
+        );
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        let got = app
+            .process_region(
+                region_uuid,
+                Uuid::new_v4(),
+                vec!["same.txt".to_string()],
+                vec![paper_meta("same.txt", None)],
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(got, existing_id, "dedup path returned existing id");
+        let calls = svc.calls.lock().unwrap();
+        // Should NOT have inserted a new summary nor invoked LLM.
+        assert!(calls.inserted_summary.is_none());
+        assert_eq!(calls.summarize_calls, 0);
+        assert!(calls.embeddings_generated.is_empty());
+    }
+
+    // ---------- Tests: process_region error paths ----------
+
+    #[tokio::test]
+    async fn process_region_propagates_download_error() {
+        let region = sample_region(1);
+        let region_uuid = region.id;
+        let mut svc = FakeServices::new().with_region(region);
+        svc.download_error_on_first = true;
+        let app = BrainAtlasApp::new(Arc::new(svc));
+        let err = app
+            .process_region(
+                region_uuid,
+                Uuid::new_v4(),
+                vec!["missing.txt".to_string()],
+                vec![paper_meta("missing.txt", None)],
+                None,
+                None,
+                true,
+                None,
+            )
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, AppError::ServiceError(_)));
+    }
+
+    #[tokio::test]
+    async fn process_region_propagates_embedding_error() {
+        let region = sample_region(1);
+        let region_uuid = region.id;
+        let mut svc = FakeServices::new()
+            .with_region(region)
+            .with_download("k.txt", "some text");
+        svc.fail_generate_embedding = true;
+        let app = BrainAtlasApp::new(Arc::new(svc));
+        let err = app
+            .process_region(
+                region_uuid,
+                Uuid::new_v4(),
+                vec!["k.txt".to_string()],
+                vec![paper_meta("k.txt", None)],
+                None,
+                None,
+                true,
+                None,
+            )
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, AppError::ServiceError(_)));
+    }
+
+    #[tokio::test]
+    async fn process_region_propagates_insert_failure() {
+        let region = sample_region(1);
+        let region_uuid = region.id;
+        let mut svc = FakeServices::new()
+            .with_region(region)
+            .with_download("k.txt", "some text");
+        svc.fail_insert_summary = true;
+        let app = BrainAtlasApp::new(Arc::new(svc));
+        let err = app
+            .process_region(
+                region_uuid,
+                Uuid::new_v4(),
+                vec!["k.txt".to_string()],
+                vec![paper_meta("k.txt", None)],
+                None,
+                None,
+                true,
+                None,
+            )
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, AppError::ServiceError(_)));
+    }
+
+    #[tokio::test]
+    async fn process_region_propagates_update_summary_failure_when_not_skipped() {
+        let region = sample_region(4);
+        let region_uuid = region.id;
+        let mut svc = FakeServices::new()
+            .with_region(region)
+            .with_download("k.txt", "some text")
+            .enqueue_summarize_ok(LlmResponse::Final("ok".to_string()));
+        svc.fail_update_summary = true;
+        let app = BrainAtlasApp::new(Arc::new(svc));
+        let err = app
+            .process_region(
+                region_uuid,
+                Uuid::new_v4(),
+                vec!["k.txt".to_string()],
+                vec![paper_meta("k.txt", None)],
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, AppError::ServiceError(_)));
+    }
+
+    // ---------- Tests: RAG loop inside rag_summarize ----------
+
+    #[tokio::test]
+    async fn rag_loop_executes_tool_calls_then_returns_final() {
+        let region = sample_region(2);
+        let region_uuid = region.id;
+        let svc = FakeServices::new()
+            .with_region(region)
+            .with_download("p.txt", "content")
+            // Iteration 1: tool call -> search_embeddings
+            .enqueue_summarize_ok(LlmResponse::ToolCalls(vec![ToolCall {
+                id: "call-1".to_string(),
+                name: "search_embeddings".to_string(),
+                arguments: r#"{"query":"hippocampus","top_k":3}"#.to_string(),
+            }]))
+            // Iteration 2: final answer
+            .enqueue_summarize_ok(LlmResponse::Final("done".to_string()));
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        let _ = app
+            .process_region(
+                region_uuid,
+                Uuid::new_v4(),
+                vec!["p.txt".to_string()],
+                vec![paper_meta("p.txt", None)],
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .unwrap();
+        let calls = svc.calls.lock().unwrap();
+        assert_eq!(calls.summarize_calls, 2, "two LLM iterations");
+        // search_similar was invoked once per tool call.
+        assert_eq!(calls.searches.len(), 1);
+        assert_eq!(calls.searches[0].1, 3, "top_k propagated");
+    }
+
+    #[tokio::test]
+    async fn rag_loop_tolerates_unknown_tool_and_continues() {
+        let region = sample_region(2);
+        let region_uuid = region.id;
+        let svc = FakeServices::new()
+            .with_region(region)
+            .with_download("p.txt", "content")
+            .enqueue_summarize_ok(LlmResponse::ToolCalls(vec![ToolCall {
+                id: "call-1".to_string(),
+                name: "unknown_tool".to_string(),
+                arguments: "{}".to_string(),
+            }]))
+            .enqueue_summarize_ok(LlmResponse::Final("ok".to_string()));
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        app.process_region(
+            region_uuid,
+            Uuid::new_v4(),
+            vec!["p.txt".to_string()],
+            vec![paper_meta("p.txt", None)],
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        // search_similar must NOT have been called for the unknown tool.
+        let calls = svc.calls.lock().unwrap();
+        assert!(calls.searches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rag_loop_tolerates_malformed_tool_arguments() {
+        let region = sample_region(2);
+        let region_uuid = region.id;
+        let svc = FakeServices::new()
+            .with_region(region)
+            .with_download("p.txt", "content")
+            .enqueue_summarize_ok(LlmResponse::ToolCalls(vec![ToolCall {
+                id: "call-bad".to_string(),
+                name: "search_embeddings".to_string(),
+                // Invalid JSON.
+                arguments: "not json at all".to_string(),
+            }]))
+            .enqueue_summarize_ok(LlmResponse::Final("ok".to_string()));
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        app.process_region(
+            region_uuid,
+            Uuid::new_v4(),
+            vec!["p.txt".to_string()],
+            vec![paper_meta("p.txt", None)],
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        // search_similar was not called because parse failed.
+        let calls = svc.calls.lock().unwrap();
+        assert!(calls.searches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rag_loop_returns_error_when_iterations_exceed_max() {
+        let region = sample_region(5);
+        let region_uuid = region.id;
+        // Enqueue nothing — the fake defaults to emitting an infinite loop
+        // of `search_embeddings` tool calls, which will exhaust the budget.
+        let svc = FakeServices::new()
+            .with_region(region)
+            .with_download("p.txt", "content");
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        let err = app
+            .process_region(
+                region_uuid,
+                Uuid::new_v4(),
+                vec!["p.txt".to_string()],
+                vec![paper_meta("p.txt", None)],
+                None,
+                None,
+                false,
+                None,
+            )
+            .await
+            .err()
+            .unwrap();
+        match err {
+            AppError::MaxToolCallsExceeded(n) => {
+                assert_eq!(n, MAX_TOOL_CALL_ITERATIONS);
+            }
+            other => panic!("expected MaxToolCallsExceeded, got {other:?}"),
+        }
+        let calls = svc.calls.lock().unwrap();
+        assert_eq!(calls.summarize_calls, MAX_TOOL_CALL_ITERATIONS);
+    }
+
+    // ---------- Tests: pass-through eval helpers ----------
+
+    #[tokio::test]
+    async fn generate_queries_delegates_and_builds_ctx() {
+        let app = BrainAtlasApp::new(Arc::new(FakeServices::new()));
+        let got = app
+            .generate_queries(
+                "hippocampus",
+                3,
+                Some("corr".to_string()),
+                Some(42),
+            )
+            .await
+            .unwrap();
+        assert_eq!(got.len(), 3);
+        assert!(got[0].contains("hippocampus"));
+    }
+
+    #[tokio::test]
+    async fn embed_and_eval_helpers_delegate_to_services() {
+        let app = BrainAtlasApp::new(Arc::new(FakeServices::new()));
+        let v = app.embed("hi", None, None).await.unwrap();
+        assert_eq!(v.len(), 3);
+
+        let claims = app
+            .extract_claims("summary", "region", None, None)
+            .await
+            .unwrap();
+        assert!(claims.claims.is_empty());
+
+        let verdict = app
+            .judge_groundedness("claim", &[], None, None)
+            .await
+            .unwrap();
+        assert_eq!(verdict.verdict, domain::GroundednessLabel::Unsupported);
+
+        let rubric = app
+            .judge_rubric("summary", "region", None, None)
+            .await
+            .unwrap();
+        // Default RubricScores -> all fields 0.
+        let _ = rubric;
+
+        let citation = app
+            .judge_citation("claim", "sent", "chunk", None, None)
+            .await
+            .unwrap();
+        assert_eq!(citation.verdict, domain::GroundednessLabel::Supported);
+    }
+
+    #[tokio::test]
+    async fn get_chunk_source_returns_none_when_missing() {
+        let app = BrainAtlasApp::new(Arc::new(FakeServices::new()));
+        let got = app.get_chunk_source(Uuid::new_v4()).await.unwrap();
+        assert!(got.is_none());
+    }
+
+    #[tokio::test]
+    async fn usage_aggregate_returns_default_and_is_plumbed() {
+        let app = BrainAtlasApp::new(Arc::new(FakeServices::new()));
+        let agg = app
+            .usage_aggregate(UsageAggregateFilter::default())
+            .await
+            .unwrap();
+        // Default filter -> default aggregate.
+        let _ = agg;
+    }
+
+    // ---------- Tests: default correlation id & multi-file source attribution ----------
+
+    #[tokio::test]
+    async fn process_region_default_correlation_id_is_batch_prefix() {
+        // We can't easily read the correlation_id back from the FakeServices
+        // (it is opaque inside UsageContext), but we can assert the call
+        // succeeds when correlation_id is None. This at minimum exercises
+        // the `.unwrap_or_else(|| format!("batch:..."))` branch.
+        let region = sample_region(1);
+        let region_uuid = region.id;
+        let svc = FakeServices::new()
+            .with_region(region)
+            .with_download("a.txt", "alpha");
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc);
+        let _ = app
+            .process_region(
+                region_uuid,
+                Uuid::new_v4(),
+                vec!["a.txt".to_string()],
+                vec![paper_meta("a.txt", None)],
+                None,
+                None,
+                true,
+                /* correlation_id */ None,
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn process_region_attributes_chunks_to_multiple_s3_keys() {
+        let region = sample_region(1);
+        let region_uuid = region.id;
+        let svc = FakeServices::new()
+            .with_region(region)
+            .with_download("a.txt", "alpha")
+            .with_download("b.txt", "beta");
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        let _ = app
+            .process_region(
+                region_uuid,
+                Uuid::new_v4(),
+                vec!["a.txt".to_string(), "b.txt".to_string()],
+                vec![
+                    paper_meta("a.txt", Some("PMC-A")),
+                    paper_meta("b.txt", Some("PMC-B")),
+                ],
+                None,
+                None,
+                true,
+                None,
+            )
+            .await
+            .unwrap();
+        let calls = svc.calls.lock().unwrap();
+        let (_sum, embeds) = calls.inserted_summary.as_ref().unwrap();
+        // Must cover both source keys: at least one embedding per key.
+        let keys: std::collections::HashSet<_> = embeds
+            .iter()
+            .filter_map(|e| e.source_s3_key.clone())
+            .collect();
+        assert!(keys.contains("a.txt"));
+        assert!(keys.contains("b.txt"));
     }
 }

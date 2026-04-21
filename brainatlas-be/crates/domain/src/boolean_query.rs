@@ -307,4 +307,114 @@ mod tests {
             "(\"motor+cortex\"+AND+NOT+species:mouse)"
         );
     }
+
+    // ---------- Gap-fill tests (push coverage ≥ 90%) ----------
+
+    #[test]
+    fn test_phrase_escapes_embedded_quotes() {
+        let q = BooleanQuery::phrase("a \"b\" c");
+        assert_eq!(q.to_string_inner(), "\"a \\\"b\\\" c\"");
+    }
+
+    #[test]
+    fn test_wildcard_is_passed_through_unchanged() {
+        let q = BooleanQuery::wildcard("moto*");
+        assert_eq!(q.to_string_inner(), "moto*");
+    }
+
+    #[test]
+    fn test_field_without_boost_or_spaces() {
+        let q = BooleanQuery::field("species", "mouse");
+        assert_eq!(q.to_string_inner(), "species:mouse");
+    }
+
+    #[test]
+    fn test_multi_term_and_wraps_in_parens() {
+        let q = BooleanQuery::and(vec![
+            BooleanQuery::term("cortex"),
+            BooleanQuery::term("neuron"),
+        ]);
+        assert_eq!(q.to_string_inner(), "(cortex AND neuron)");
+    }
+
+    #[test]
+    fn test_multi_term_or_wraps_in_parens() {
+        let q = BooleanQuery::or(vec![
+            BooleanQuery::term("cortex"),
+            BooleanQuery::term("neuron"),
+        ]);
+        assert_eq!(q.to_string_inner(), "(cortex OR neuron)");
+    }
+
+    #[test]
+    fn test_boost_query_builder_serializes_with_factor() {
+        let q = BooleanQuery::boost(BooleanQuery::term("memory"), 2.5);
+        assert_eq!(q.to_string_inner(), "memory^2.5");
+    }
+
+    #[test]
+    fn test_range_inclusive_and_mixed_open_bounds() {
+        // Fully inclusive [a TO b]
+        let q = BooleanQuery::Range(RangeQuery {
+            field: "year".to_string(),
+            gte: Some("2000".to_string()),
+            gt: None,
+            lte: Some("2020".to_string()),
+            lt: None,
+        });
+        assert_eq!(q.to_string_inner(), "year:[2000 TO 2020]");
+
+        // Open below, inclusive above: [* TO lte]
+        let q_open_low = BooleanQuery::Range(RangeQuery {
+            field: "year".to_string(),
+            gte: None,
+            gt: None,
+            lte: Some("2020".to_string()),
+            lt: None,
+        });
+        assert_eq!(q_open_low.to_string_inner(), "year:[* TO 2020]");
+
+        // Inclusive below, open above: [gte TO *]
+        let q_open_high = BooleanQuery::Range(RangeQuery {
+            field: "year".to_string(),
+            gte: Some("2000".to_string()),
+            gt: None,
+            lte: None,
+            lt: None,
+        });
+        assert_eq!(q_open_high.to_string_inner(), "year:[2000 TO *]");
+
+        // Fully open: [* TO *]
+        let q_full_open = BooleanQuery::Range(RangeQuery {
+            field: "year".to_string(),
+            gte: None,
+            gt: None,
+            lte: None,
+            lt: None,
+        });
+        assert_eq!(q_full_open.to_string_inner(), "year:[* TO *]");
+    }
+
+    #[test]
+    fn test_not_operator_wraps_inner_query() {
+        let q = !BooleanQuery::term("cat");
+        assert_eq!(q.to_string_inner(), "NOT cat");
+    }
+
+    #[test]
+    fn test_roundtrip_serde_and_fields() {
+        // Exercise the `#[serde(skip_serializing_if = "Option::is_none")]`
+        // branches for FieldQuery.boost and RangeQuery.
+        let field = BooleanQuery::Field(FieldQuery {
+            name: "title".to_string(),
+            value: "x".to_string(),
+            boost: None,
+        });
+        let s = serde_json::to_string(&field).unwrap();
+        // `boost` is not serialized when None.
+        assert!(!s.contains("boost"));
+
+        let back: BooleanQuery = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, field);
+    }
 }

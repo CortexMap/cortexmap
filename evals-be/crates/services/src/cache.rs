@@ -672,4 +672,156 @@ mod tests {
             other => panic!("expected InfraError, got {:?}", other),
         }
     }
+
+    /// `ComputedScore::structural` must set `judge_model` and `details` to
+    /// `None`. This is the shape contract for every deterministic structural
+    /// metric (length, section completeness, etc.) and is relied on by the
+    /// cache inserter — if these default to `Some(_)` the schema would reject.
+    #[test]
+    fn computed_score_structural_has_no_judge_model_or_details() {
+        let c = ComputedScore::structural(0.42);
+        assert!((c.score - 0.42).abs() < 1e-6);
+        assert!(
+            c.judge_model.is_none(),
+            "structural metrics must carry no judge_model"
+        );
+        assert!(
+            c.details.is_none(),
+            "structural metrics must carry no details blob"
+        );
+    }
+
+    /// Cache-hit path must surface the seeded row's judge_model and details
+    /// verbatim — the wire layer relies on this to expose the original
+    /// judge model for provenance in the UI. We seed a row carrying both
+    /// fields and assert the hit returns them unchanged.
+    #[tokio::test]
+    async fn cache_hit_preserves_judge_model_and_details() {
+        let db = StubDb::default();
+        let mut row = make_row(HASH, METRIC, VERSION, 0.5);
+        row.judge_model = Some("gpt-test-judge".to_string());
+        row.details = Some(serde_json::json!({"rationale": "matches"}));
+        db.seed(row.clone());
+
+        let result = score_with_cache(
+            &db,
+            DB_URL,
+            Uuid::new_v4(),
+            HASH,
+            METRIC,
+            VERSION,
+            || async { Ok::<_, ServiceError<MockError>>(ComputedScore::structural(0.0)) },
+        )
+        .await
+        .expect("hit must succeed");
+
+        assert!(result.cached);
+        assert_eq!(result.row.judge_model.as_deref(), Some("gpt-test-judge"));
+        assert_eq!(
+            result.row.details,
+            Some(serde_json::json!({"rationale": "matches"}))
+        );
+        assert_eq!(
+            db.insert_calls.load(Ordering::SeqCst),
+            0,
+            "no INSERT on hit even when judge_model/details are populated"
+        );
+    }
+
+    /// Two different `eval_version`s for the same `(summary_hash, metric)`
+    /// must be stored as separate rows: an upgrade of the eval pipeline
+    /// bumps the version and re-scores every summary. We seed `v1` and ask
+    /// for `v2` — the lookup must miss, the scorer must run, and a second
+    /// row must land alongside the first.
+    #[tokio::test]
+    async fn cache_miss_when_eval_version_differs() {
+        let db = StubDb::default();
+        // Seed a v1 row.
+        db.seed(make_row(HASH, METRIC, "v1", 0.3));
+
+        let result = score_with_cache(
+            &db,
+            DB_URL,
+            Uuid::new_v4(),
+            HASH,
+            METRIC,
+            "v2",
+            || async { Ok::<_, ServiceError<MockError>>(ComputedScore::structural(0.7)) },
+        )
+        .await
+        .expect("v2 must compute fresh");
+
+        assert!(!result.cached, "v2 must miss and compute");
+        assert!((result.row.score - 0.7).abs() < 1e-6);
+        assert_eq!(result.row.eval_version, "v2");
+        assert_eq!(db.insert_calls.load(Ordering::SeqCst), 1);
+        // Both rows coexist.
+        let scores = db.scores.lock().unwrap();
+        assert_eq!(scores.len(), 2);
+        let versions: std::collections::HashSet<_> =
+            scores.iter().map(|s| s.eval_version.clone()).collect();
+        assert!(versions.contains("v1"));
+        assert!(versions.contains("v2"));
+    }
+
+    /// Two different `metric`s for the same `(summary_hash, eval_version)`
+    /// must also miss independently — the unique index is on the triple.
+    #[tokio::test]
+    async fn cache_miss_when_metric_differs() {
+        let db = StubDb::default();
+        db.seed(make_row(HASH, "section_completeness", VERSION, 0.6));
+
+        let result = score_with_cache(
+            &db,
+            DB_URL,
+            Uuid::new_v4(),
+            HASH,
+            "length_in_range",
+            VERSION,
+            || async { Ok::<_, ServiceError<MockError>>(ComputedScore::structural(0.9)) },
+        )
+        .await
+        .expect("different metric must miss");
+
+        assert!(!result.cached);
+        assert_eq!(result.row.metric, "length_in_range");
+        assert!((result.row.score - 0.9).abs() < 1e-6);
+        assert_eq!(db.insert_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(db.scores.lock().unwrap().len(), 2);
+    }
+
+    /// Miss path: scorer produces details JSON — the cache layer must pass
+    /// it through to `NewEvalScore.details` so the persisted row carries
+    /// the computed metadata (rationales, sub-scores, etc.). Guards against
+    /// a regression where the details field is silently dropped.
+    #[tokio::test]
+    async fn cache_miss_persists_scorer_details_and_judge_model() {
+        let db = StubDb::default();
+        let details = serde_json::json!({"breakdown": [1, 2, 3], "note": "ok"});
+
+        let result = score_with_cache(
+            &db,
+            DB_URL,
+            Uuid::new_v4(),
+            HASH,
+            METRIC,
+            VERSION,
+            || {
+                let d = details.clone();
+                async move {
+                    Ok::<_, ServiceError<MockError>>(ComputedScore {
+                        score: 0.55,
+                        judge_model: Some("custom-judge-v3".to_string()),
+                        details: Some(d),
+                    })
+                }
+            },
+        )
+        .await
+        .expect("miss must persist details");
+
+        assert!(!result.cached);
+        assert_eq!(result.row.judge_model.as_deref(), Some("custom-judge-v3"));
+        assert_eq!(result.row.details, Some(details));
+    }
 }

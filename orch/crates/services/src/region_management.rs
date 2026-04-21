@@ -1155,13 +1155,35 @@ mod tests {
 
     struct FullInfra {
         env: HashMap<String, String>,
+        config: Mutex<HashMap<String, String>>,
         cache: Mutex<HashMap<String, String>>,
         cache_gets: Mutex<Vec<String>>,
+        cache_dels: Mutex<Vec<String>>,
+        cache_del_patterns: Mutex<Vec<String>>,
         // For cache-miss path: DB records we return from
         // `get_region_mapping`, `get_region_summaries`, `get_summary_sources`.
         region_mapping: Mutex<Option<RegionMapping>>,
         summaries: Mutex<Vec<RegionSummaryRecord>>,
         summary_sources: Mutex<HashMap<Uuid, Vec<ChunkSourceRecord>>>,
+        // Extension state for gap-close tests.
+        queries: Mutex<HashMap<Uuid, Vec<domain::RegionQuery>>>,
+        inserted_queries: Mutex<Vec<(Uuid, Vec<String>)>>,
+        deleted_queries: Mutex<Vec<Uuid>>,
+        delete_all_count: Mutex<i64>,
+        active_batch: Mutex<HashMap<Uuid, ProcessingBatch>>,
+        recent_batch: Mutex<HashMap<Uuid, ProcessingBatch>>,
+        batches_by_status: Mutex<HashMap<String, Vec<ProcessingBatch>>>,
+        update_batch_statuses: Mutex<Vec<(Uuid, BatchStatus, Option<String>)>>,
+        http_responses: Mutex<HashMap<String, serde_json::Value>>,
+        http_post_responses: Mutex<HashMap<String, serde_json::Value>>,
+        http_error_urls: Mutex<Vec<String>>,
+        all_regions: Mutex<Vec<RegionMapping>>,
+        total_region_count: Mutex<i64>,
+        regions_without_batches: Mutex<i64>,
+        actively_fetching_regions: Mutex<i64>,
+        latest_active_summary_age: Mutex<Option<chrono::NaiveDateTime>>,
+        summary_freshness: Mutex<SummaryFreshnessCounts>,
+        search_results: Mutex<(Vec<SearchHitRecord>, i64)>,
     }
 
     impl FullInfra {
@@ -1170,12 +1192,67 @@ mod tests {
             env.insert("DATABASE_URL".to_string(), "postgres://mock".to_string());
             Self {
                 env,
+                config: Mutex::new(HashMap::new()),
                 cache: Mutex::new(HashMap::new()),
                 cache_gets: Mutex::new(vec![]),
+                cache_dels: Mutex::new(vec![]),
+                cache_del_patterns: Mutex::new(vec![]),
                 region_mapping: Mutex::new(None),
                 summaries: Mutex::new(vec![]),
                 summary_sources: Mutex::new(HashMap::new()),
+                queries: Mutex::new(HashMap::new()),
+                inserted_queries: Mutex::new(vec![]),
+                deleted_queries: Mutex::new(vec![]),
+                delete_all_count: Mutex::new(0),
+                active_batch: Mutex::new(HashMap::new()),
+                recent_batch: Mutex::new(HashMap::new()),
+                batches_by_status: Mutex::new(HashMap::new()),
+                update_batch_statuses: Mutex::new(vec![]),
+                http_responses: Mutex::new(HashMap::new()),
+                http_post_responses: Mutex::new(HashMap::new()),
+                http_error_urls: Mutex::new(vec![]),
+                all_regions: Mutex::new(vec![]),
+                total_region_count: Mutex::new(0),
+                regions_without_batches: Mutex::new(0),
+                actively_fetching_regions: Mutex::new(0),
+                latest_active_summary_age: Mutex::new(None),
+                summary_freshness: Mutex::new(SummaryFreshnessCounts::default()),
+                search_results: Mutex::new((vec![], 0)),
             }
+        }
+
+        fn with_env(mut self, k: &str, v: &str) -> Self {
+            self.env.insert(k.to_string(), v.to_string());
+            self
+        }
+        fn without_env(mut self, k: &str) -> Self {
+            self.env.remove(k);
+            self
+        }
+        fn with_config(self, k: ConfigKey, v: &str) -> Self {
+            self.config.lock().unwrap().insert(k.to_string(), v.to_string());
+            self
+        }
+        fn with_http_response(self, url_contains: &str, body: serde_json::Value) -> Self {
+            self.http_responses
+                .lock()
+                .unwrap()
+                .insert(url_contains.to_string(), body);
+            self
+        }
+        fn with_http_post_response(self, url_contains: &str, body: serde_json::Value) -> Self {
+            self.http_post_responses
+                .lock()
+                .unwrap()
+                .insert(url_contains.to_string(), body);
+            self
+        }
+        fn with_http_error(self, url_contains: &str) -> Self {
+            self.http_error_urls
+                .lock()
+                .unwrap()
+                .push(url_contains.to_string());
+            self
         }
     }
 
@@ -1196,10 +1273,11 @@ mod tests {
         async fn get_config(
             &self,
             _: &str,
-            _key: ConfigKey,
+            key: ConfigKey,
         ) -> Result<Option<String>, Self::Error> {
-            // Return None so evals/brainatlas enrichment is skipped cleanly.
-            Ok(None)
+            // Return the configured value (or None) so individual tests
+            // can script config-driven branches.
+            Ok(self.config.lock().unwrap().get(&key.to_string()).cloned())
         }
         async fn get_processed_task(
             &self,
@@ -1235,18 +1313,53 @@ mod tests {
     #[async_trait]
     impl HttpClient for FullInfra {
         type Error = MockErr;
-        async fn get<T: DeserializeOwned + Send>(&self, _url: &str) -> Result<T, Self::Error> {
-            // No env/config for evals/brainatlas base URLs → these helpers
-            // short-circuit before calling get(). We still return Err if hit,
-            // to flag any unexpected enrichment paths.
-            Err(MockErr("unexpected http GET".into()))
+        async fn get<T: DeserializeOwned + Send>(&self, url: &str) -> Result<T, Self::Error> {
+            let errs = self.http_error_urls.lock().unwrap();
+            if errs.iter().any(|p| url.contains(p)) {
+                return Err(MockErr(format!("staged error for {}", url)));
+            }
+            drop(errs);
+            let map = self.http_responses.lock().unwrap();
+            let mut best: Option<serde_json::Value> = None;
+            let mut best_len = 0usize;
+            for (pat, val) in map.iter() {
+                if url.contains(pat.as_str()) && pat.len() >= best_len {
+                    best_len = pat.len();
+                    best = Some(val.clone());
+                }
+            }
+            match best {
+                Some(v) => {
+                    serde_json::from_value(v).map_err(|e| MockErr(format!("decode: {}", e)))
+                }
+                None => Err(MockErr(format!("no responder: {}", url))),
+            }
         }
         async fn post<Req: serde::Serialize + Send + Sync, Res: DeserializeOwned + Send + Sync>(
             &self,
-            _url: &str,
+            url: &str,
             _body: &Req,
         ) -> Result<Res, Self::Error> {
-            unimplemented!()
+            let errs = self.http_error_urls.lock().unwrap();
+            if errs.iter().any(|p| url.contains(p)) {
+                return Err(MockErr(format!("staged error for {}", url)));
+            }
+            drop(errs);
+            let map = self.http_post_responses.lock().unwrap();
+            let mut best: Option<serde_json::Value> = None;
+            let mut best_len = 0usize;
+            for (pat, val) in map.iter() {
+                if url.contains(pat.as_str()) && pat.len() >= best_len {
+                    best_len = pat.len();
+                    best = Some(val.clone());
+                }
+            }
+            match best {
+                Some(v) => {
+                    serde_json::from_value(v).map_err(|e| MockErr(format!("decode: {}", e)))
+                }
+                None => Err(MockErr(format!("no POST responder: {}", url))),
+            }
         }
         async fn check_health(&self, _: &str, _: &str) -> Result<(), Self::Error> {
             unimplemented!()
@@ -1259,23 +1372,35 @@ mod tests {
         async fn get_queries(
             &self,
             _: &str,
-            _: Uuid,
+            region_id: Uuid,
         ) -> Result<Vec<domain::RegionQuery>, Self::Error> {
-            unimplemented!()
+            Ok(self
+                .queries
+                .lock()
+                .unwrap()
+                .get(&region_id)
+                .cloned()
+                .unwrap_or_default())
         }
         async fn insert_queries(
             &self,
             _: &str,
-            _: Uuid,
-            _: Vec<String>,
+            region_id: Uuid,
+            queries: Vec<String>,
         ) -> Result<Vec<Uuid>, Self::Error> {
-            unimplemented!()
+            let ids: Vec<Uuid> = queries.iter().map(|_| Uuid::new_v4()).collect();
+            self.inserted_queries
+                .lock()
+                .unwrap()
+                .push((region_id, queries));
+            Ok(ids)
         }
-        async fn delete_queries(&self, _: &str, _: Uuid) -> Result<(), Self::Error> {
-            unimplemented!()
+        async fn delete_queries(&self, _: &str, region_id: Uuid) -> Result<(), Self::Error> {
+            self.deleted_queries.lock().unwrap().push(region_id);
+            Ok(())
         }
         async fn delete_all_queries(&self, _: &str) -> Result<i64, Self::Error> {
-            unimplemented!()
+            Ok(*self.delete_all_count.lock().unwrap())
         }
         async fn create_batch(&self, _: &str, _: Uuid, _: i32) -> Result<Uuid, Self::Error> {
             unimplemented!()
@@ -1306,9 +1431,15 @@ mod tests {
         async fn get_batches_by_status(
             &self,
             _: &str,
-            _: BatchStatus,
+            status: BatchStatus,
         ) -> Result<Vec<ProcessingBatch>, Self::Error> {
-            unimplemented!()
+            Ok(self
+                .batches_by_status
+                .lock()
+                .unwrap()
+                .get(status.as_str())
+                .cloned()
+                .unwrap_or_default())
         }
         async fn count_completed_tasks(&self, _: &str, _: &[i64]) -> Result<usize, Self::Error> {
             unimplemented!()
@@ -1333,11 +1464,15 @@ mod tests {
         async fn update_batch_status(
             &self,
             _: &str,
-            _: Uuid,
-            _: BatchStatus,
-            _: Option<String>,
+            batch_id: Uuid,
+            status: BatchStatus,
+            err: Option<String>,
         ) -> Result<(), Self::Error> {
-            unimplemented!()
+            self.update_batch_statuses
+                .lock()
+                .unwrap()
+                .push((batch_id, status, err));
+            Ok(())
         }
         async fn complete_batch(&self, _: &str, _: Uuid) -> Result<(), Self::Error> {
             unimplemented!()
@@ -1345,16 +1480,16 @@ mod tests {
         async fn get_active_batch(
             &self,
             _: &str,
-            _: Uuid,
+            region_id: Uuid,
         ) -> Result<Option<ProcessingBatch>, Self::Error> {
-            unimplemented!()
+            Ok(self.active_batch.lock().unwrap().get(&region_id).cloned())
         }
         async fn get_recent_batch(
             &self,
             _: &str,
-            _: Uuid,
+            region_id: Uuid,
         ) -> Result<Option<ProcessingBatch>, Self::Error> {
-            unimplemented!()
+            Ok(self.recent_batch.lock().unwrap().get(&region_id).cloned())
         }
     }
 
@@ -1369,16 +1504,16 @@ mod tests {
             Ok(self.region_mapping.lock().unwrap().clone())
         }
         async fn get_all_regions(&self, _: &str) -> Result<Vec<RegionMapping>, Self::Error> {
-            unimplemented!()
+            Ok(self.all_regions.lock().unwrap().clone())
         }
         async fn get_total_region_count(&self, _: &str) -> Result<i64, Self::Error> {
-            unimplemented!()
+            Ok(*self.total_region_count.lock().unwrap())
         }
         async fn count_regions_without_batches(&self, _: &str) -> Result<i64, Self::Error> {
-            unimplemented!()
+            Ok(*self.regions_without_batches.lock().unwrap())
         }
         async fn count_actively_fetching_regions(&self, _: &str) -> Result<i64, Self::Error> {
-            unimplemented!()
+            Ok(*self.actively_fetching_regions.lock().unwrap())
         }
         async fn get_region_summaries(
             &self,
@@ -1406,7 +1541,8 @@ mod tests {
             _: &str,
             _: i64,
         ) -> Result<(Vec<SearchHitRecord>, i64), Self::Error> {
-            unimplemented!()
+            let guard = self.search_results.lock().unwrap();
+            Ok(guard.clone())
         }
         async fn get_regions_without_queries(
             &self,
@@ -1428,14 +1564,18 @@ mod tests {
             _: &str,
             _: Uuid,
         ) -> Result<Option<chrono::NaiveDateTime>, Self::Error> {
-            unimplemented!()
+            Ok(*self.latest_active_summary_age.lock().unwrap())
         }
         async fn get_summary_freshness_counts(
             &self,
             _: &str,
-            _: i64,
+            staleness_days: i64,
         ) -> Result<SummaryFreshnessCounts, Self::Error> {
-            unimplemented!()
+            let mut c = self.summary_freshness.lock().unwrap().clone();
+            // Mirror the staleness_days input back so the service layer
+            // sees the same value it passed in.
+            c.staleness_days = staleness_days;
+            Ok(c)
         }
         async fn get_system_stats(&self, _: &str) -> Result<SystemStatsRaw, Self::Error> {
             unimplemented!()
@@ -1456,10 +1596,15 @@ mod tests {
                 .insert(key.to_string(), val.to_string());
             Ok(())
         }
-        async fn cache_del(&self, _key: &str) -> Result<(), Self::Error> {
+        async fn cache_del(&self, key: &str) -> Result<(), Self::Error> {
+            self.cache_dels.lock().unwrap().push(key.to_string());
             Ok(())
         }
-        async fn cache_del_pattern(&self, _pattern: &str) -> Result<u64, Self::Error> {
+        async fn cache_del_pattern(&self, pattern: &str) -> Result<u64, Self::Error> {
+            self.cache_del_patterns
+                .lock()
+                .unwrap()
+                .push(pattern.to_string());
             Ok(0)
         }
         async fn cache_stats(&self) -> Result<domain::RedisStats, Self::Error> {
@@ -1589,5 +1734,551 @@ mod tests {
         // After fetch, the cache should hold a JSON string for this key.
         let cache = infra.cache.lock().unwrap();
         assert!(cache.contains_key(&crate::cache_keys::region_summaries(region_id)));
+    }
+
+    // ========== ADDITIONAL TESTS (gap-close) ==========
+
+    use app::RegionManagement as _;
+
+    fn mk_batch(id: Uuid, region_id: Uuid, status: BatchStatus) -> ProcessingBatch {
+        ProcessingBatch {
+            id,
+            region_id,
+            status,
+            fetch_task_ids: vec![],
+            expected_task_count: 0,
+            content_hash: None,
+            created_at: chrono::Utc::now(),
+            ready_at: None,
+            processing_started_at: None,
+            completed_at: None,
+            summary_id: None,
+            error_message: None,
+        }
+    }
+
+    // TEST: get_active_batch returns the configured batch for the region.
+    #[tokio::test]
+    async fn region_mgmt_get_active_batch_returns_configured_batch() {
+        let region_id = Uuid::new_v4();
+        let batch_id = Uuid::new_v4();
+        let infra = FullInfra::new();
+        infra
+            .active_batch
+            .lock()
+            .unwrap()
+            .insert(region_id, mk_batch(batch_id, region_id, BatchStatus::Ready));
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        let got = svc.get_active_batch(region_id).await.expect("ok");
+        assert_eq!(got.map(|b| b.id), Some(batch_id));
+    }
+
+    // TEST: get_recent_batch returns None when unset.
+    #[tokio::test]
+    async fn region_mgmt_get_recent_batch_returns_none() {
+        let svc = OrchRegionManagement::new(Arc::new(FullInfra::new()));
+        let got = svc.get_recent_batch(Uuid::new_v4()).await.expect("ok");
+        assert!(got.is_none());
+    }
+
+    // TEST: get_queries delegates to infra.
+    #[tokio::test]
+    async fn region_mgmt_get_queries_returns_configured_list() {
+        let region_id = Uuid::new_v4();
+        let q = domain::RegionQuery {
+            id: Uuid::new_v4(),
+            region_id,
+            query_text: "hello".to_string(),
+            source: domain::QuerySource::LlmGenerated,
+            priority: 0,
+            enabled: true,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let infra = FullInfra::new();
+        infra.queries.lock().unwrap().insert(region_id, vec![q]);
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        let got = svc.get_queries(region_id).await.expect("ok");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].query_text, "hello");
+    }
+
+    // TEST: update_batch_status records the transition and invalidates caches.
+    #[tokio::test]
+    async fn region_mgmt_update_batch_status_invalidates_caches() {
+        let infra = Arc::new(FullInfra::new());
+        let svc = OrchRegionManagement::new(infra.clone());
+        let batch_id = Uuid::new_v4();
+        svc.update_batch_status(batch_id, BatchStatus::Invalidated, Some("x".into()))
+            .await
+            .expect("ok");
+        let trans = infra.update_batch_statuses.lock().unwrap();
+        assert_eq!(trans.len(), 1);
+        assert_eq!(trans[0].0, batch_id);
+        assert_eq!(trans[0].1, BatchStatus::Invalidated);
+        let dels = infra.cache_dels.lock().unwrap().clone();
+        assert!(dels.iter().any(|k| k == &cache_keys::batch_status(batch_id)));
+        assert!(dels.iter().any(|k| k == &cache_keys::pipeline_stats()));
+        let pats = infra.cache_del_patterns.lock().unwrap().clone();
+        assert!(pats.contains(&cache_keys::batches_status_pattern()));
+    }
+
+    // TEST: store_queries returns one UUID per input query.
+    #[tokio::test]
+    async fn region_mgmt_store_queries_returns_one_id_per_query() {
+        let infra = Arc::new(FullInfra::new());
+        let svc = OrchRegionManagement::new(infra.clone());
+        let ids = svc
+            .store_queries(
+                Uuid::new_v4(),
+                vec!["a".into(), "b".into(), "c".into()],
+            )
+            .await
+            .expect("ok");
+        assert_eq!(ids.len(), 3);
+        let inserted = infra.inserted_queries.lock().unwrap();
+        assert_eq!(inserted[0].1.len(), 3);
+    }
+
+    // TEST: generate_queries uses env var URL and returns queries from POST.
+    #[tokio::test]
+    async fn region_mgmt_generate_queries_via_env_var_url() {
+        let infra = FullInfra::new().with_http_post_response(
+            "http://brain:8082/brainatlas-be/api/generate-queries",
+            serde_json::json!({"queries": ["q1", "q2"]}),
+        );
+        let infra = Arc::new(infra.with_env("BRAINATLAS_HTTP_ADDR", "http://brain:8082"));
+        let svc = OrchRegionManagement::new(infra);
+        let qs = svc
+            .generate_queries("hippocampus", 2)
+            .await
+            .expect("ok");
+        assert_eq!(qs, vec!["q1".to_string(), "q2".to_string()]);
+    }
+
+    // TEST: generate_queries falls back to config when BRAINATLAS_HTTP_ADDR unset.
+    // NOTE: the generate_queries config fallback does NOT re-normalize the URL —
+    // only env-var input goes through normalize_url. So we pass a proper
+    // http:// URL here.
+    #[tokio::test]
+    async fn region_mgmt_generate_queries_config_fallback_with_normalize() {
+        let infra = FullInfra::new()
+            .without_env("BRAINATLAS_HTTP_ADDR")
+            .with_config(ConfigKey::BrainatlasBaseUrl, "http://cfg:8082/")
+            .with_http_post_response(
+                "http://cfg:8082/brainatlas-be/api/generate-queries",
+                serde_json::json!({"queries": ["only"]}),
+            );
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        let qs = svc.generate_queries("r", 1).await.expect("ok");
+        assert_eq!(qs, vec!["only".to_string()]);
+    }
+
+    // TEST: generate_queries without env or config surfaces ConfigNotFound.
+    #[tokio::test]
+    async fn region_mgmt_generate_queries_config_not_found_without_url() {
+        let infra = FullInfra::new().without_env("BRAINATLAS_HTTP_ADDR");
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        let err = svc.generate_queries("r", 1).await.expect_err("must fail");
+        match err {
+            ServiceError::ConfigNotFound { key } => {
+                assert_eq!(key, "brainatlas_base_url")
+            }
+            other => panic!("expected ConfigNotFound, got {:?}", other),
+        }
+    }
+
+    // TEST: get_batches_by_status caches through cached_or_fetch.
+    #[tokio::test]
+    async fn region_mgmt_get_batches_by_status_caches() {
+        let region_id = Uuid::new_v4();
+        let batch = mk_batch(Uuid::new_v4(), region_id, BatchStatus::Ready);
+        let infra = FullInfra::new();
+        infra
+            .batches_by_status
+            .lock()
+            .unwrap()
+            .insert("ready".to_string(), vec![batch.clone()]);
+        let infra = Arc::new(infra);
+        let svc = OrchRegionManagement::new(infra.clone());
+        let got = svc
+            .get_batches_by_status(BatchStatus::Ready)
+            .await
+            .expect("ok");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, batch.id);
+        // Cache was populated.
+        let c = infra.cache.lock().unwrap();
+        assert!(c.contains_key(&cache_keys::batches_by_status("ready")));
+    }
+
+    // TEST: get_region_name success path reads the mapping.
+    #[tokio::test]
+    async fn region_mgmt_get_region_name_success() {
+        let region_id = Uuid::new_v4();
+        let infra = FullInfra::new();
+        *infra.region_mapping.lock().unwrap() = Some(RegionMapping {
+            id: region_id,
+            region_id: 1,
+            name: "thalamus".into(),
+            acronym: None,
+            red: None,
+            green: None,
+            blue: None,
+            structure_order: None,
+            parent_region_id: None,
+            parent_acronym: None,
+        });
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        let name = svc.get_region_name(region_id).await.expect("ok");
+        assert_eq!(name, "thalamus");
+    }
+
+    // TEST: get_region_name returns NotFound when mapping absent.
+    #[tokio::test]
+    async fn region_mgmt_get_region_name_not_found() {
+        let svc = OrchRegionManagement::new(Arc::new(FullInfra::new()));
+        let err = svc
+            .get_region_name(Uuid::new_v4())
+            .await
+            .expect_err("not found");
+        assert!(matches!(err, ServiceError::NotFound));
+    }
+
+    // TEST: simple scalar delegations (total regions, without-batches, actively-fetching).
+    #[tokio::test]
+    async fn region_mgmt_scalar_delegations() {
+        let infra = FullInfra::new();
+        *infra.total_region_count.lock().unwrap() = 7;
+        *infra.regions_without_batches.lock().unwrap() = 3;
+        *infra.actively_fetching_regions.lock().unwrap() = 2;
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        assert_eq!(svc.get_total_regions().await.unwrap(), 7);
+        assert_eq!(svc.count_regions_without_batches().await.unwrap(), 3);
+        assert_eq!(svc.count_actively_fetching_regions().await.unwrap(), 2);
+    }
+
+    // TEST: get_latest_active_summary_age returns the configured value.
+    #[tokio::test]
+    async fn region_mgmt_get_latest_active_summary_age_returns_value() {
+        let ts = chrono::NaiveDateTime::parse_from_str(
+            "2026-04-20 10:00:00",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        .unwrap();
+        let infra = FullInfra::new();
+        *infra.latest_active_summary_age.lock().unwrap() = Some(ts);
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        let got = svc
+            .get_latest_active_summary_age(Uuid::new_v4())
+            .await
+            .expect("ok");
+        assert_eq!(got, Some(ts));
+    }
+
+    // TEST: get_summary_freshness parses staleness_days config and uses default when absent.
+    #[tokio::test]
+    async fn region_mgmt_get_summary_freshness_uses_default_when_config_absent() {
+        let infra = FullInfra::new();
+        *infra.summary_freshness.lock().unwrap() = SummaryFreshnessCounts {
+            fresh: 10,
+            stale: 5,
+            no_summary: 2,
+            staleness_days: 0,
+        };
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        let got = svc.get_summary_freshness().await.expect("ok");
+        assert_eq!(got.fresh, 10);
+        assert_eq!(got.stale, 5);
+        assert_eq!(got.no_summary, 2);
+        assert_eq!(got.staleness_days, 30); // default fallback
+    }
+
+    // TEST: get_summary_freshness parses custom staleness_days from config.
+    #[tokio::test]
+    async fn region_mgmt_get_summary_freshness_honours_config() {
+        let infra = FullInfra::new().with_config(ConfigKey::SummaryStalenessDays, "7");
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        let got = svc.get_summary_freshness().await.expect("ok");
+        assert_eq!(got.staleness_days, 7);
+    }
+
+    // TEST: get_query_generation_limit parses config or returns None.
+    #[tokio::test]
+    async fn region_mgmt_get_query_generation_limit_parses_and_defaults() {
+        let infra = FullInfra::new();
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        // No config → None.
+        let got = svc.get_query_generation_limit().await.expect("ok");
+        assert!(got.is_none());
+
+        let infra2 = FullInfra::new().with_config(ConfigKey::QueryGenerationLimit, "12");
+        let svc2 = OrchRegionManagement::new(Arc::new(infra2));
+        let got2 = svc2.get_query_generation_limit().await.expect("ok");
+        assert_eq!(got2, Some(12));
+
+        // Non-parseable string → None.
+        let infra3 = FullInfra::new().with_config(ConfigKey::QueryGenerationLimit, "oops");
+        let svc3 = OrchRegionManagement::new(Arc::new(infra3));
+        let got3 = svc3.get_query_generation_limit().await.expect("ok");
+        assert!(got3.is_none());
+    }
+
+    // TEST: get_all_regions maps DB records to domain::Region, caches through,
+    // and populates color when all three channels are present.
+    #[tokio::test]
+    async fn region_mgmt_get_all_regions_maps_color_and_caches() {
+        let region_id = Uuid::new_v4();
+        let infra = FullInfra::new();
+        *infra.all_regions.lock().unwrap() = vec![
+            RegionMapping {
+                id: region_id,
+                region_id: 1,
+                name: "a".into(),
+                acronym: None,
+                red: Some(10),
+                green: Some(20),
+                blue: Some(30),
+                structure_order: None,
+                parent_region_id: None,
+                parent_acronym: None,
+            },
+            RegionMapping {
+                id: Uuid::new_v4(),
+                region_id: 2,
+                name: "b".into(),
+                acronym: None,
+                red: None,
+                green: Some(20),
+                blue: Some(30),
+                structure_order: None,
+                parent_region_id: None,
+                parent_acronym: None,
+            },
+        ];
+        let infra = Arc::new(infra);
+        let svc = OrchRegionManagement::new(infra.clone());
+        let got = svc.get_all_regions().await.expect("ok");
+        assert_eq!(got.len(), 2);
+        // Row with full RGB gets color; missing red → no color.
+        assert!(got[0].color.is_some());
+        assert!(got[1].color.is_none());
+        let color = got[0].color.as_ref().unwrap();
+        assert_eq!(color.red, 10);
+        assert_eq!(color.green, 20);
+        assert_eq!(color.blue, 30);
+        // Cache populated.
+        let c = infra.cache.lock().unwrap();
+        assert!(c.contains_key(&cache_keys::all_regions()));
+    }
+
+    // TEST: delete_queries invalidates region caches.
+    #[tokio::test]
+    async fn region_mgmt_delete_queries_invalidates_caches() {
+        let region_id = Uuid::new_v4();
+        let infra = Arc::new(FullInfra::new());
+        let svc = OrchRegionManagement::new(infra.clone());
+        svc.delete_queries(region_id).await.expect("ok");
+        let deleted = infra.deleted_queries.lock().unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0], region_id);
+        let dels = infra.cache_dels.lock().unwrap().clone();
+        assert!(dels.iter().any(|k| k == &cache_keys::region_summaries(region_id)));
+        assert!(dels.iter().any(|k| k == &cache_keys::region_status(region_id)));
+        assert!(dels.iter().any(|k| k == &cache_keys::pipeline_stats()));
+    }
+
+    // TEST: delete_all_queries returns count and invalidates pipeline cache.
+    #[tokio::test]
+    async fn region_mgmt_delete_all_queries_returns_count() {
+        let infra = FullInfra::new();
+        *infra.delete_all_count.lock().unwrap() = 42;
+        let infra = Arc::new(infra);
+        let svc = OrchRegionManagement::new(infra.clone());
+        let n = svc.delete_all_queries().await.expect("ok");
+        assert_eq!(n, 42);
+        let dels = infra.cache_dels.lock().unwrap().clone();
+        assert!(dels.iter().any(|k| k == &cache_keys::pipeline_stats()));
+    }
+
+    // TEST: get_chunk_source uses env URL, caches, and returns the upstream JSON.
+    #[tokio::test]
+    async fn region_mgmt_get_chunk_source_uses_env_url_and_caches() {
+        let chunk_id = Uuid::new_v4();
+        let expected = serde_json::json!({
+            "chunk_id": chunk_id,
+            "chunk_text": "hello",
+            "source_s3_key": "k",
+            "source_pmc_id": "PMC1",
+            "source_uid": "U1",
+            "source_query": "q",
+            "char_start": null,
+            "char_end": null,
+        });
+        let infra = FullInfra::new()
+            .with_env("BRAINATLAS_HTTP_ADDR", "http://brain:8082")
+            .with_http_response(
+                &format!("/brainatlas-be/api/chunks/{}/source", chunk_id),
+                expected.clone(),
+            );
+        let infra = Arc::new(infra);
+        let svc = OrchRegionManagement::new(infra.clone());
+        let _got = svc.get_chunk_source(chunk_id).await.expect("ok");
+        // Cache populated for this chunk_id.
+        let c = infra.cache.lock().unwrap();
+        assert!(c.contains_key(&cache_keys::chunk_source(chunk_id)));
+    }
+
+    // TEST: get_chunk_source config fallback when env missing.
+    #[tokio::test]
+    async fn region_mgmt_get_chunk_source_config_fallback_when_env_missing() {
+        let chunk_id = Uuid::new_v4();
+        let expected = serde_json::json!({
+            "chunk_id": chunk_id,
+            "chunk_text": "x",
+            "source_s3_key": "k",
+            "source_pmc_id": null,
+            "source_uid": null,
+            "source_query": null,
+            "char_start": null,
+            "char_end": null
+        });
+        let infra = FullInfra::new()
+            .without_env("BRAINATLAS_HTTP_ADDR")
+            .with_config(ConfigKey::BrainatlasBaseUrl, "http://cfg:9999")
+            .with_http_response(
+                &format!("/brainatlas-be/api/chunks/{}/source", chunk_id),
+                expected,
+            );
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        svc.get_chunk_source(chunk_id).await.expect("ok");
+    }
+
+    // TEST: get_chunk_source returns ConfigNotFound when neither env nor config set.
+    #[tokio::test]
+    async fn region_mgmt_get_chunk_source_config_not_found() {
+        let infra = FullInfra::new().without_env("BRAINATLAS_HTTP_ADDR");
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        let err = svc
+            .get_chunk_source(Uuid::new_v4())
+            .await
+            .expect_err("must fail");
+        match err {
+            ServiceError::ConfigNotFound { key } => {
+                assert_eq!(key, "brainatlas_base_url")
+            }
+            other => panic!("expected ConfigNotFound, got {:?}", other),
+        }
+    }
+
+    // TEST: reverse_search honours the configured search limit and returns hits.
+    #[tokio::test]
+    async fn region_mgmt_reverse_search_maps_hits() {
+        let hit = SearchHitRecord {
+            region_uuid: Uuid::new_v4(),
+            region_id: 1,
+            name: "amygdala".into(),
+            acronym: Some("AMG".into()),
+            summary_snippet: Some("snippet".into()),
+            match_source: "name".into(),
+            rank: 0.9,
+        };
+        let infra = FullInfra::new().with_config(ConfigKey::SearchResultLimit, "3");
+        *infra.search_results.lock().unwrap() = (vec![hit.clone()], 42);
+        let infra = Arc::new(infra);
+        let svc = OrchRegionManagement::new(infra.clone());
+        let resp = svc.reverse_search("amyg").await.expect("ok");
+        assert_eq!(resp.query, "amyg");
+        assert_eq!(resp.total_found, 42);
+        assert_eq!(resp.results.len(), 1);
+        assert_eq!(resp.results[0].name, "amygdala");
+        // Cache populated.
+        let c = infra.cache.lock().unwrap();
+        assert!(c.contains_key(&cache_keys::search_results("amyg")));
+    }
+
+    // TEST: reverse_search falls back to limit=5 when config is missing / invalid.
+    #[tokio::test]
+    async fn region_mgmt_reverse_search_defaults_limit_on_missing_config() {
+        let infra = FullInfra::new();
+        *infra.search_results.lock().unwrap() = (vec![], 0);
+        let svc = OrchRegionManagement::new(Arc::new(infra));
+        // No config set → should default to 5 with no error.
+        let r = svc.reverse_search("foo").await.expect("ok");
+        assert_eq!(r.total_found, 0);
+        assert!(r.results.is_empty());
+    }
+
+    // TEST: resolve_evals_base_url prefers env var over config (normalizes 0.0.0.0).
+    #[tokio::test]
+    async fn resolve_evals_base_url_prefers_env_and_normalizes() {
+        let infra = FullInfra::new().with_env("EVALS_BASE_URL", "0.0.0.0:7777");
+        let url = resolve_evals_base_url(&infra, "postgres://mock")
+            .await
+            .expect("ok");
+        assert_eq!(url, "http://localhost:7777");
+    }
+
+    // TEST: resolve_evals_base_url falls through to config when env missing.
+    #[tokio::test]
+    async fn resolve_evals_base_url_falls_back_to_config() {
+        let infra = FullInfra::new()
+            .without_env("EVALS_BASE_URL")
+            .with_config(ConfigKey::EvalsBaseUrl, "http://evals:8083");
+        let url = resolve_evals_base_url(&infra, "postgres://mock")
+            .await
+            .expect("ok");
+        assert_eq!(url, "http://evals:8083");
+    }
+
+    // TEST: resolve_evals_base_url returns ConfigNotFound without env or config.
+    #[tokio::test]
+    async fn resolve_evals_base_url_config_not_found() {
+        let infra = FullInfra::new().without_env("EVALS_BASE_URL");
+        let err = resolve_evals_base_url(&infra, "postgres://mock")
+            .await
+            .expect_err("must fail");
+        assert!(matches!(err, ServiceError::ConfigNotFound { .. }));
+    }
+
+    // TEST: resolve_brainatlas_base_url prefers env var.
+    #[tokio::test]
+    async fn resolve_brainatlas_base_url_prefers_env() {
+        let infra = FullInfra::new().with_env("BRAINATLAS_HTTP_ADDR", "http://brain:8082");
+        let url = resolve_brainatlas_base_url(&infra, "postgres://mock")
+            .await
+            .expect("ok");
+        assert_eq!(url, "http://brain:8082");
+    }
+
+    // TEST: resolve_brainatlas_base_url falls through to config.
+    #[tokio::test]
+    async fn resolve_brainatlas_base_url_config_fallback() {
+        let infra = FullInfra::new()
+            .without_env("BRAINATLAS_HTTP_ADDR")
+            .with_config(ConfigKey::BrainatlasBaseUrl, "0.0.0.0:9000");
+        let url = resolve_brainatlas_base_url(&infra, "postgres://mock")
+            .await
+            .expect("ok");
+        assert_eq!(url, "http://localhost:9000");
+    }
+
+    // TEST: resolve_brainatlas_base_url errors when neither is set.
+    #[tokio::test]
+    async fn resolve_brainatlas_base_url_config_not_found() {
+        let infra = FullInfra::new().without_env("BRAINATLAS_HTTP_ADDR");
+        let err = resolve_brainatlas_base_url(&infra, "postgres://mock")
+            .await
+            .expect_err("must fail");
+        assert!(matches!(err, ServiceError::ConfigNotFound { .. }));
+    }
+
+    // TEST: poll-style env error — any trait method without DATABASE_URL surfaces InfraError.
+    #[tokio::test]
+    async fn region_mgmt_env_error_surfaces_infra_error() {
+        let infra = Arc::new(FullInfra::new().without_env("DATABASE_URL"));
+        let svc = OrchRegionManagement::new(infra);
+        let err = svc.get_total_regions().await.expect_err("must fail");
+        assert!(matches!(err, ServiceError::InfraError(_)));
     }
 }

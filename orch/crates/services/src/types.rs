@@ -77,6 +77,21 @@ pub struct ProcessRegionResponse {
     pub detail: String,
 }
 
+/// Knowledge-only summary request — used when NCBI returns zero papers for a
+/// region. Brainatlas generates a structured summary from the LLM's own
+/// general knowledge (no chunks, no citations) so every region ends up with
+/// at least one summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessNoPapersRequest {
+    pub region_id: UuidWrapper,
+    pub batch_id: UuidWrapper,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_model: Option<String>,
+    /// Correlation id for cost tracking; typical value is `batch:{batch_uuid}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateQueriesRequest {
     pub region_name: String,

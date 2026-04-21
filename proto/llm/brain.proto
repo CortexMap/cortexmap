@@ -123,6 +123,29 @@ message ProcessRegionResponse {
   string detail    = 2;
 }
 
+// Called by orch when a region has zero NCBI search results. Generates a
+// structured summary from the LLM's own general/textbook knowledge (no
+// retrieved papers, no chunk citations). Guarantees that every region
+// ends up with at least one summary.
+message ProcessNoPapersRequest {
+  // UUID from region_mapping — identifies the region.
+  Uuid region_id = 1;
+  // UUID of the batch that triggered this processing. May be absent; the
+  // server will generate a fresh one if not supplied.
+  Uuid batch_id = 2;
+  // Optional: LLM model for chat/summarization (e.g. "openai/gpt-4o-mini").
+  optional string chat_model = 3;
+  // Optional opaque correlation id for LLM cost attribution. Typical value
+  // is `batch:<batch_uuid>`.
+  optional string correlation_id = 4;
+}
+
+message ProcessNoPapersResponse {
+  Uuid region_id = 1;
+  // Human-readable detail (e.g. "stored knowledge-only summary for region 49").
+  string detail = 2;
+}
+
 // Called by orch to generate search queries for a brain region using LLM.
 // This allows orch to get intelligent, context-aware queries instead of using templates.
 message GenerateQueriesRequest {
@@ -186,6 +209,16 @@ service BrainRegionService {
   rpc ProcessRegion(ProcessRegionRequest) returns (ProcessRegionResponse) {
     option (google.api.http) = {
       post: "/api/process"
+      body: "*"
+    };
+  }
+
+  // Called by orch when a region has zero NCBI search results.
+  // Generates a knowledge-only summary (no chunk citations) so every
+  // region ends up with at least one summary.
+  rpc ProcessRegionNoPapers(ProcessNoPapersRequest) returns (ProcessNoPapersResponse) {
+    option (google.api.http) = {
+      post: "/api/process-no-papers"
       body: "*"
     };
   }

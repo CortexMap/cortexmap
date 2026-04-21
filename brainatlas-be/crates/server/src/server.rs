@@ -11,7 +11,8 @@ use domain::rpc_types::evals::{
     JudgeGroundednessRequest, JudgeRubricRequest, UsageAggregateQuery,
 };
 use domain::rpc_types::{
-    GenerateQueriesRequest, ProcessRegionRequest, SearchBrainRegionRequest, StatusRequest,
+    GenerateQueriesRequest, ProcessNoPapersRequest, ProcessRegionRequest, SearchBrainRegionRequest,
+    StatusRequest,
 };
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -77,6 +78,10 @@ where
             .route("/api/search", post(search_brain_region_handler::<S>))
             .route("/api/status", post(status_handler::<S>))
             .route("/api/process", post(process_region_handler::<S>))
+            .route(
+                "/api/process-no-papers",
+                post(process_region_no_papers_handler::<S>),
+            )
             .route("/api/generate-queries", post(generate_queries_handler::<S>))
             .route("/api/llm/embed", post(llm_embed_handler::<S>))
             .route(
@@ -204,6 +209,29 @@ where
             body.skip_summarization.unwrap_or(false),
             body.correlation_id,
         )
+        .await
+        .map_err(ServerError)?;
+    Ok(Json(resp))
+}
+
+/// POST /brainatlas-be/api/process-no-papers  body: { "region_id": { "value": "<uuid>" }, "batch_id": { "value": "<uuid>" }, "correlation_id": "..." }
+async fn process_region_no_papers_handler<S>(
+    State(server): State<BrainAtlasServer<S>>,
+    Json(body): Json<ProcessNoPapersRequest>,
+) -> Result<impl IntoResponse, ServerError<<S as Services>::Error>>
+where
+    S: Services + 'static,
+    <S as Services>::Error: std::error::Error + Send + Sync + 'static,
+{
+    let region_id = body
+        .region_id
+        .and_then(|u| u.value.parse::<uuid::Uuid>().ok());
+    let batch_id = body
+        .batch_id
+        .and_then(|u| u.value.parse::<uuid::Uuid>().ok());
+    let resp = server
+        .api
+        .process_region_no_papers(region_id, batch_id, body.chat_model, body.correlation_id)
         .await
         .map_err(ServerError)?;
     Ok(Json(resp))
