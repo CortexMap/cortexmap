@@ -51,6 +51,13 @@ ENV EVALS_HTTP_ADDR=${EVALS_HTTP_ADDR}
 
 COPY --from=builder /app/evals-be/target/release/evals-server /usr/local/bin/evals-be
 
+# Run as an unprivileged user instead of the default root.
+# The service binds to an unprivileged port (>1024), so no extra capabilities
+# are required.
+RUN groupadd --system --gid 10001 app \
+ && useradd  --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+USER app:app
+
 EXPOSE 8083
 
 ENTRYPOINT ["/usr/local/bin/evals-be"]
