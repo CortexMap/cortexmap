@@ -1011,10 +1011,10 @@ mod http_handler_tests {
         let query_ids: Vec<Uuid> = (0..2).map(|_| Uuid::new_v4()).collect();
         for q_id in &query_ids {
             diesel::sql_query(
-                "INSERT INTO region_queries (id, region_id, query) VALUES ($1, $2, $3)",
+                "INSERT INTO region_queries (id, region_id, query_text) VALUES ($1, $2, $3)",
             )
             .bind::<diesel::sql_types::Uuid, _>(*q_id)
-            .bind::<diesel::sql_types::Uuid, _>(region_uuid)
+            .bind::<diesel::sql_types::Int4, _>(region_id)
             .bind::<diesel::sql_types::Text, _>(&format!("test query {}", q_id))
             .execute(&mut conn)
             .expect("insert region_queries row");
