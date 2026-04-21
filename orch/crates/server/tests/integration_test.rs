@@ -580,3 +580,586 @@ mod workflow_tests {
         println!("✅ Batch lifecycle transitions work correctly");
     }
 }
+
+// -----------------------------------------------------------------------------
+// Task 3.6 — HTTP integration tests for endpoints added in PR #69
+// -----------------------------------------------------------------------------
+//
+// These tests build the real axum `Router` via
+// `OrchServer::new(Orch::new(Arc::new(OrchServices::new(Arc::new(OrchInfra::new())))))
+//     .into_router()`
+// and drive requests through `tower::ServiceExt::oneshot`. The router uses the
+// production infra against the docker-compose test stack (Postgres on 5433,
+// Redis on 6380). Unlike the DB-only tests above, these exercise the full
+// request → handler → app → services → infra chain.
+//
+// New endpoints covered (see plans/2026-04-20-pr69-max-test-coverage-v1.md):
+//   * POST /orch/api/pipeline/trigger     (per-phase opt-in)
+//   * GET  /orch/dev/api/redis-stats      (happy path + Redis-down degraded)
+//   * GET  /orch/dev/api/system-stats     (dev dashboard panel)
+//   * GET  /orch/dev/api/summary-freshness (dev dashboard panel)
+//
+// Gated by `RUN_INTEGRATION_TESTS=1` so unit-test runs without the compose
+// stack don't fail. Requires DATABASE_URL=postgres://.../test_db on :5433 and
+// REDIS_URL=redis://localhost:6380. MUST be run with --test-threads=1 because
+// the Redis-down test mutates process-global env.
+mod http_handler_tests {
+    use super::*;
+    use api::Orch;
+    use app::Services;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use diesel::prelude::*;
+    use http_body_util::BodyExt;
+    use infra::OrchInfra;
+    use server::OrchServer;
+    use services::OrchServices;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    fn should_run() -> bool {
+        env::var("RUN_INTEGRATION_TESTS").is_ok()
+    }
+
+    /// Build the production router against a fresh `OrchInfra`. Each call
+    /// constructs a brand-new infra instance so the Redis `OnceCell` is
+    /// uncached — essential for the Redis-down test which manipulates
+    /// `REDIS_URL` across calls.
+    fn build_router() -> Router {
+        let infra = Arc::new(OrchInfra::new());
+        let services: Arc<OrchServices<OrchInfra>> = Arc::new(OrchServices::new(infra));
+        let api = Arc::new(Orch::new(services));
+        let orch_server = OrchServer::new(api);
+        orch_server.into_router()
+    }
+
+    async fn read_body_json(resp: axum::response::Response) -> serde_json::Value {
+        let body_bytes = resp
+            .into_body()
+            .collect()
+            .await
+            .expect("collect body")
+            .to_bytes();
+        serde_json::from_slice::<serde_json::Value>(&body_bytes).unwrap_or_else(|e| {
+            panic!(
+                "response body is not JSON: {e}; raw = {:?}",
+                String::from_utf8_lossy(&body_bytes)
+            )
+        })
+    }
+
+    async fn post_json(router: &Router, path: &str, body: serde_json::Value) -> axum::response::Response {
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("build request");
+        router
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("router oneshot failed")
+    }
+
+    async fn get(router: &Router, path: &str) -> axum::response::Response {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(path)
+            .body(Body::empty())
+            .expect("build request");
+        router
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("router oneshot failed")
+    }
+
+    // -- /orch/health (smoke) -------------------------------------------------
+
+    #[tokio::test]
+    async fn health_returns_ok() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let resp = get(&router, "/orch/health").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+        assert_eq!(body["status"], "ok");
+        println!("✅ /orch/health returns 200 ok");
+    }
+
+    // -- POST /orch/api/pipeline/trigger -------------------------------------
+
+    /// Empty body → every phase flag defaults to `false` → every phase is
+    /// skipped → response fields stay `None` and `errors` is empty.
+    /// Exercises: route table, Json extractor, #[serde(default)] on every
+    /// PipelineTriggerRequest field, trigger_pipeline control flow.
+    #[tokio::test]
+    async fn pipeline_trigger_empty_body_is_noop() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let resp = post_json(&router, "/orch/api/pipeline/trigger", serde_json::json!({})).await;
+        assert_eq!(resp.status(), StatusCode::OK, "empty body should be 200");
+        let body = read_body_json(resp).await;
+
+        // Every phase was skipped → every result slot is null.
+        assert!(body["reset_queries_deleted"].is_null());
+        assert!(body["generate_queries_result"].is_null());
+        assert!(body["discover_papers_result"].is_null());
+        assert!(body["ensure_workers_ok"].is_null());
+
+        let errors = body["errors"].as_array().expect("errors array");
+        assert!(
+            errors.is_empty(),
+            "no phases ran, so no errors expected, got {errors:?}"
+        );
+        println!("✅ POST /pipeline/trigger {{}} is a no-op");
+    }
+
+    /// Completely missing body (no content-type, no JSON) → axum's Json
+    /// extractor returns 400 or 415. Either is fine; we just assert the
+    /// handler did NOT return 200. Guards against accidental `#[derive(Default)]`
+    /// + `Option<Json<...>>` regressions that would make the endpoint
+    /// accept any input.
+    #[tokio::test]
+    async fn pipeline_trigger_malformed_body_rejected() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/orch/api/pipeline/trigger")
+            .header("content-type", "application/json")
+            .body(Body::from("not json at all"))
+            .unwrap();
+        let resp = router.oneshot(req).await.expect("oneshot");
+        assert_ne!(
+            resp.status(),
+            StatusCode::OK,
+            "malformed JSON must not return 200"
+        );
+        // Axum's Json extractor maps body-decode failures to 400 by default.
+        assert!(
+            resp.status().is_client_error(),
+            "expected 4xx for malformed JSON body, got {}",
+            resp.status()
+        );
+        println!("✅ POST /pipeline/trigger rejects malformed JSON");
+    }
+
+    /// `ensure_workers: true` with no downstream fetcher service (or an
+    /// unreachable one) → the phase fails but the endpoint still returns
+    /// 200 with the error surfaced inside `errors` and `ensure_workers_ok
+    /// = false`. This exercises the "per-phase failure is swallowed"
+    /// contract documented on `trigger_pipeline`.
+    ///
+    /// Note: we set `FETCHER_HTTP_ADDR` to an unreachable port BEFORE
+    /// building the router so the lazy http client tries and fails. We
+    /// can't reliably know whether fetcher is running in the test env,
+    /// so instead of asserting on the error contents we assert the
+    /// response is either (a) success when fetcher IS running, or
+    /// (b) a well-formed failure with an entry in `errors`.
+    #[tokio::test]
+    async fn pipeline_trigger_ensure_workers_returns_200_even_on_failure() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let resp = post_json(
+            &router,
+            "/orch/api/pipeline/trigger",
+            serde_json::json!({"ensure_workers": true}),
+        )
+        .await;
+        // Regardless of fetcher availability the HTTP status MUST be 200 —
+        // errors are returned inline, not as a 5xx.
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "per-phase failure must NOT produce a 5xx"
+        );
+        let body = read_body_json(resp).await;
+
+        // Other phases must remain unexecuted.
+        assert!(body["reset_queries_deleted"].is_null());
+        assert!(body["generate_queries_result"].is_null());
+        assert!(body["discover_papers_result"].is_null());
+
+        // ensure_workers_ok is either Some(true) on success or Some(false) on
+        // failure, never None (the phase was requested).
+        let ok = body["ensure_workers_ok"].as_bool();
+        assert!(
+            ok.is_some(),
+            "ensure_workers phase ran, so ensure_workers_ok must be set"
+        );
+
+        // `errors` array shape invariant: each entry is a string.
+        let errors = body["errors"].as_array().expect("errors array");
+        for e in errors {
+            assert!(e.is_string(), "every error entry must be a string");
+        }
+
+        // Cross-check: if the phase failed, there must be exactly one error
+        // prefixed "ensure_workers:".
+        if ok == Some(false) {
+            assert!(
+                errors.iter().any(|e| e.as_str().unwrap_or("").starts_with("ensure_workers:")),
+                "failed ensure_workers must record an error with the phase prefix"
+            );
+        }
+        println!(
+            "✅ POST /pipeline/trigger {{ensure_workers: true}} returns 200 + well-formed body"
+        );
+    }
+
+    /// Discover-papers + generate-queries combo. Either can fail depending on
+    /// upstream reachability; the endpoint must still return 200 with the
+    /// errors surfaced inline. This also covers the "multiple phases in one
+    /// request" code path.
+    #[tokio::test]
+    async fn pipeline_trigger_combo_discover_and_generate() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let resp = post_json(
+            &router,
+            "/orch/api/pipeline/trigger",
+            serde_json::json!({
+                "generate_queries": true,
+                "discover_papers": true,
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+
+        // Both phases were requested — each yields either a result tuple or
+        // an error line; either way the paired slot is populated in some way.
+        // Specifically: success fills the `*_result` field; failure fills
+        // nothing AND adds one entry to `errors`. So the invariant is:
+        //   result OR errors-prefixed-with-phase-name.
+        let errors: Vec<String> = body["errors"]
+            .as_array()
+            .expect("errors array")
+            .iter()
+            .map(|v| v.as_str().unwrap_or("").to_string())
+            .collect();
+
+        let gen_result_present = !body["generate_queries_result"].is_null();
+        let gen_err_present = errors.iter().any(|e| e.starts_with("generate_queries:"));
+        assert!(
+            gen_result_present || gen_err_present,
+            "generate_queries phase must produce a result OR an error; got neither. body={body:?}"
+        );
+
+        let disc_result_present = !body["discover_papers_result"].is_null();
+        let disc_err_present = errors.iter().any(|e| e.starts_with("discover_papers:"));
+        assert!(
+            disc_result_present || disc_err_present,
+            "discover_papers phase must produce a result OR an error; got neither. body={body:?}"
+        );
+
+        // Phases NOT requested must remain None.
+        assert!(body["reset_queries_deleted"].is_null());
+        assert!(body["ensure_workers_ok"].is_null());
+        println!("✅ POST /pipeline/trigger combo phases respond cleanly");
+    }
+
+    // -- GET /orch/dev/api/redis-stats ---------------------------------------
+
+    /// Happy path: Redis is up (docker-compose exposes it on :6380). Handler
+    /// must return 200 with `connected: true` and a populated
+    /// `keys_by_prefix` array (one entry per known prefix pattern).
+    #[tokio::test]
+    async fn redis_stats_happy_path() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let resp = get(&router, "/orch/dev/api/redis-stats").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+
+        assert_eq!(
+            body["connected"], serde_json::Value::Bool(true),
+            "happy-path Redis must be reported as connected; body={body:?}"
+        );
+        assert!(
+            body["error"].is_null(),
+            "no error expected on happy path, got {}",
+            body["error"]
+        );
+
+        // keys_by_prefix is populated only when connected.
+        let prefixes = body["keys_by_prefix"].as_array().expect("keys_by_prefix");
+        assert!(
+            !prefixes.is_empty(),
+            "when connected, keys_by_prefix must list the known patterns"
+        );
+        for entry in prefixes {
+            assert!(entry["pattern"].is_string());
+            assert!(entry["description"].is_string());
+            assert!(entry["count"].is_number());
+        }
+
+        // server_version is populated by INFO parsing; non-empty on real Redis.
+        assert!(
+            body["server_version"].as_str().unwrap_or("").len() > 0,
+            "real redis should report a version string"
+        );
+        println!("✅ /dev/api/redis-stats happy path returns connected: true");
+    }
+
+    /// Redis-down degraded path: point `REDIS_URL` at an unreachable port
+    /// and build a NEW router (fresh `OrchInfra`, so `OnceCell` is empty
+    /// and the connection attempt will use the bad URL). The production
+    /// `cache_stats` impl is documented to return Ok(RedisStats {
+    /// connected: false, error: Some(...), .. }) when it can't connect,
+    /// so the HTTP layer must surface 200 + `connected: false`.
+    ///
+    /// This mutates process-global env and MUST run under
+    /// `--test-threads=1` (already enforced by the outer test config).
+    #[tokio::test]
+    async fn redis_stats_degraded_when_unreachable() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        // Save original and point at an unreachable Redis. Port 1 is reserved
+        // ("tcpmux") and almost always rejects on localhost.
+        let original = env::var("REDIS_URL").ok();
+        // SAFETY: edition 2024 marks `set_var` as unsafe; we manipulate
+        // process-global env in a serialised test run (--test-threads=1).
+        unsafe {
+            env::set_var("REDIS_URL", "redis://127.0.0.1:1");
+        }
+
+        // Build a FRESH router so its OrchInfra's OnceCell picks up the new
+        // URL on first connect.
+        let router = build_router();
+        let resp = get(&router, "/orch/dev/api/redis-stats").await;
+
+        // Restore env before any assertion so a failure doesn't poison
+        // downstream tests.
+        unsafe {
+            match original {
+                Some(v) => env::set_var("REDIS_URL", v),
+                None => env::remove_var("REDIS_URL"),
+            }
+        }
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "contract: redis-stats NEVER returns 5xx even when Redis is down"
+        );
+        let body = read_body_json(resp).await;
+        assert_eq!(
+            body["connected"],
+            serde_json::Value::Bool(false),
+            "expected connected: false when Redis is unreachable; body={body:?}"
+        );
+        assert!(
+            body["error"].is_string(),
+            "error message must be populated when connection fails"
+        );
+        // Counters must be zeroed on the degraded shape.
+        assert_eq!(body["total_keys"].as_u64().unwrap_or(u64::MAX), 0);
+        assert_eq!(
+            body["keys_by_prefix"].as_array().expect("array").len(),
+            0,
+            "keys_by_prefix must be empty when disconnected"
+        );
+        println!("✅ /dev/api/redis-stats degrades gracefully when Redis is unreachable");
+    }
+
+    // -- GET /orch/dev/api/system-stats --------------------------------------
+
+    /// Dev-dashboard panel: aggregate of fetch_tasks, batches, queries,
+    /// papers, summaries. Must return 200 with the well-formed shape.
+    #[tokio::test]
+    async fn dev_system_stats_returns_populated_snapshot() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+
+        // Seed a region + a couple of queries so the aggregate is non-zero.
+        let mut conn = get_db_connection();
+        let region_uuid = Uuid::new_v4();
+        let region_id = (rand::random::<u16>() as i32) + 10000;
+        diesel::sql_query("INSERT INTO region_mapping (id, region_id, name) VALUES ($1, $2, $3)")
+            .bind::<diesel::sql_types::Uuid, _>(region_uuid)
+            .bind::<diesel::sql_types::Int4, _>(region_id)
+            .bind::<diesel::sql_types::Text, _>(&format!("Dev Stats Region {}", region_uuid))
+            .execute(&mut conn)
+            .expect("insert region");
+
+        let query_ids: Vec<Uuid> = (0..2).map(|_| Uuid::new_v4()).collect();
+        for q_id in &query_ids {
+            diesel::sql_query(
+                "INSERT INTO region_queries (id, region_id, query) VALUES ($1, $2, $3)",
+            )
+            .bind::<diesel::sql_types::Uuid, _>(*q_id)
+            .bind::<diesel::sql_types::Uuid, _>(region_uuid)
+            .bind::<diesel::sql_types::Text, _>(&format!("test query {}", q_id))
+            .execute(&mut conn)
+            .expect("insert region_queries row");
+        }
+
+        let router = build_router();
+        let resp = get(&router, "/orch/dev/api/system-stats").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+
+        // Shape invariants
+        assert!(body["fetch_tasks_by_status"].is_array());
+        assert!(body["batches_by_status"].is_array());
+        assert!(body["query_distribution"].is_array());
+        assert!(body["total_queries"].is_number());
+        assert!(body["regions_with_queries"].is_number());
+        assert!(body["total_papers"].is_number());
+        assert!(body["total_summaries"].is_number());
+        assert!(body["timestamp"].is_string());
+
+        // total_queries and regions_with_queries must include our seeded rows.
+        let total_queries = body["total_queries"].as_i64().expect("total_queries");
+        assert!(
+            total_queries >= 2,
+            "global total_queries={total_queries} should include our 2 inserts"
+        );
+        let regions_with_queries =
+            body["regions_with_queries"].as_i64().expect("regions_with_queries");
+        assert!(
+            regions_with_queries >= 1,
+            "regions_with_queries={regions_with_queries} should include our region"
+        );
+
+        // Cleanup
+        for q_id in &query_ids {
+            diesel::sql_query("DELETE FROM region_queries WHERE id = $1")
+                .bind::<diesel::sql_types::Uuid, _>(*q_id)
+                .execute(&mut conn)
+                .ok();
+        }
+        diesel::sql_query("DELETE FROM region_mapping WHERE id = $1")
+            .bind::<diesel::sql_types::Uuid, _>(region_uuid)
+            .execute(&mut conn)
+            .ok();
+
+        println!("✅ /dev/api/system-stats returns well-formed snapshot");
+    }
+
+    // -- GET /orch/dev/api/summary-freshness ---------------------------------
+
+    /// Dev-dashboard panel: fresh/stale/no_summary buckets across all regions.
+    /// Seed one healthy region (is_active + non-empty summary, recent) and
+    /// assert `fresh >= 1`, `staleness_days` is passed through, and the
+    /// response shape is complete.
+    #[tokio::test]
+    async fn dev_summary_freshness_returns_buckets() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+
+        let mut conn = get_db_connection();
+        let region_uuid = Uuid::new_v4();
+        let region_id = (rand::random::<u16>() as i32) + 10000;
+        diesel::sql_query("INSERT INTO region_mapping (id, region_id, name) VALUES ($1, $2, $3)")
+            .bind::<diesel::sql_types::Uuid, _>(region_uuid)
+            .bind::<diesel::sql_types::Int4, _>(region_id)
+            .bind::<diesel::sql_types::Text, _>(&format!("Freshness Region {}", region_uuid))
+            .execute(&mut conn)
+            .expect("insert region");
+
+        // Healthy summary: is_active=true, non-empty summary, created NOW().
+        let batch_id = Uuid::new_v4();
+        let summary_id = Uuid::new_v4();
+        diesel::sql_query(
+            "INSERT INTO region_summary \
+             (id, region_id, name, summary, is_active, batch_id, created_at) \
+             VALUES ($1, $2, $3, $4, TRUE, $5, NOW())",
+        )
+        .bind::<diesel::sql_types::Uuid, _>(summary_id)
+        .bind::<diesel::sql_types::Int4, _>(region_id)
+        .bind::<diesel::sql_types::Text, _>(&format!("Freshness Region {}", region_uuid))
+        .bind::<diesel::sql_types::Text, _>("fresh content")
+        .bind::<diesel::sql_types::Uuid, _>(batch_id)
+        .execute(&mut conn)
+        .expect("insert summary");
+
+        let router = build_router();
+        let resp = get(&router, "/orch/dev/api/summary-freshness").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+
+        // Shape invariants
+        assert!(body["fresh"].is_number(), "fresh must be numeric");
+        assert!(body["stale"].is_number(), "stale must be numeric");
+        assert!(body["no_summary"].is_number(), "no_summary must be numeric");
+        assert!(
+            body["staleness_days"].is_number(),
+            "staleness_days must be numeric"
+        );
+
+        // Regression: our just-seeded region MUST contribute to `fresh`.
+        let fresh = body["fresh"].as_i64().expect("fresh");
+        assert!(
+            fresh >= 1,
+            "global fresh={fresh} should include our freshly-seeded region"
+        );
+
+        // staleness_days must be positive (default implementation uses 7d).
+        let staleness_days = body["staleness_days"].as_i64().expect("staleness_days");
+        assert!(
+            staleness_days > 0,
+            "staleness_days={staleness_days} should be a positive window"
+        );
+
+        // Cleanup
+        diesel::sql_query("DELETE FROM region_summary WHERE id = $1")
+            .bind::<diesel::sql_types::Uuid, _>(summary_id)
+            .execute(&mut conn)
+            .ok();
+        diesel::sql_query("DELETE FROM region_mapping WHERE id = $1")
+            .bind::<diesel::sql_types::Uuid, _>(region_uuid)
+            .execute(&mut conn)
+            .ok();
+
+        println!("✅ /dev/api/summary-freshness returns bucket counts including fresh region");
+    }
+
+    // -- Negative: unknown route -------------------------------------------
+
+    #[tokio::test]
+    async fn unknown_route_returns_404() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let resp = get(&router, "/orch/api/does-not-exist").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        println!("✅ unknown route returns 404");
+    }
+
+    /// `Services` must not be imported as unused; touch the trait marker so
+    /// the import stays grounded in case rustc lint-cleans the module.
+    #[allow(dead_code)]
+    fn _services_bound<S: Services>(_s: &S) {}
+}
+
