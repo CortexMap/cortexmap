@@ -2765,6 +2765,7 @@ dependencies = [
  "async-trait",
  "aws-sdk-s3",
  "axum",
+ "bigdecimal",
  "chrono",
  "diesel",
  "domain",

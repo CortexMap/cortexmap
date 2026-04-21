@@ -542,3 +542,617 @@ mod workflow_tests {
         println!("✅ Complete workflow test passed!");
     }
 }
+
+// -----------------------------------------------------------------------------
+// Task 3.7 — HTTP integration tests for endpoints added in PR #69
+// -----------------------------------------------------------------------------
+//
+// These tests build the real axum `Router` via
+// `BrainAtlasServer::new(BrainAtlasApi::new(BrainAtlasServices::new(BrainAtlasInfra::new())))
+//     .into_router(None)`
+// and drive requests through `tower::ServiceExt::oneshot`. The router uses
+// production infra against the docker-compose test stack (Postgres on :5433).
+//
+// Focus: the NEW `GET /brainatlas-be/api/llm/usage` aggregate endpoint (the
+// other new `/api/llm/*` routes are LLM proxies that need a live OpenRouter
+// key and are already covered by the Services-fake handler_test.rs). Also
+// covers the raw list endpoint and the chunk-source 4xx path.
+//
+// Gated by `RUN_INTEGRATION_TESTS=1` so unit-test runs without the compose
+// stack don't fail. Requires DATABASE_URL on :5433. MUST run with
+// `--test-threads=1` because seeds/deletes against shared tables are
+// non-idempotent when parallelised.
+mod http_llm_usage_tests {
+    use super::*;
+    use api::BrainAtlasApi;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use diesel::prelude::*;
+    use diesel::r2d2::{self, ConnectionManager};
+    use http_body_util::BodyExt;
+    use infra::BrainAtlasInfra;
+    use server::BrainAtlasServer;
+    use services::BrainAtlasServices;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    fn should_run() -> bool {
+        env::var("RUN_INTEGRATION_TESTS").is_ok()
+    }
+
+    /// Build the production router against a fresh `BrainAtlasInfra`.
+    fn build_router() -> Router {
+        let infra = Arc::new(BrainAtlasInfra::new());
+        let services: Arc<BrainAtlasServices<BrainAtlasInfra>> =
+            Arc::new(BrainAtlasServices::new(infra));
+        let api = Arc::new(BrainAtlasApi::new(services));
+        let srv = BrainAtlasServer::new(api);
+        srv.into_router(None)
+    }
+
+    fn get_pool() -> r2d2::Pool<ConnectionManager<PgConnection>> {
+        let manager = ConnectionManager::<PgConnection>::new(get_test_db_url());
+        r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("build pool")
+    }
+
+    async fn read_body_json(resp: axum::response::Response) -> serde_json::Value {
+        let body_bytes = resp.into_body().collect().await.expect("collect body").to_bytes();
+        serde_json::from_slice::<serde_json::Value>(&body_bytes).unwrap_or_else(|e| {
+            panic!(
+                "response body is not JSON: {e}; raw = {:?}",
+                String::from_utf8_lossy(&body_bytes)
+            )
+        })
+    }
+
+    async fn get_uri(router: &Router, uri: &str) -> axum::response::Response {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .body(Body::empty())
+            .expect("build request");
+        router
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("router oneshot failed")
+    }
+
+    /// Raw insert helper for `llm_call_usage`. We don't use diesel types
+    /// because the `Queryable` models live inside the `infra` crate and
+    /// aren't re-exported; raw SQL keeps this test file self-contained.
+    fn insert_usage(
+        conn: &mut PgConnection,
+        endpoint: &str,
+        model: &str,
+        prompt: i32,
+        completion: i32,
+        total: i32,
+        cost: Option<f64>,
+        correlation_id: Option<&str>,
+        caller_tag: Option<&str>,
+    ) -> uuid::Uuid {
+        let id = uuid::Uuid::new_v4();
+        diesel::sql_query(
+            "INSERT INTO llm_call_usage \
+             (id, endpoint, model, prompt_tokens, completion_tokens, total_tokens, \
+              cost_usd, correlation_id, caller_tag) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        )
+        .bind::<diesel::sql_types::Uuid, _>(id)
+        .bind::<diesel::sql_types::Text, _>(endpoint)
+        .bind::<diesel::sql_types::Text, _>(model)
+        .bind::<diesel::sql_types::Int4, _>(prompt)
+        .bind::<diesel::sql_types::Int4, _>(completion)
+        .bind::<diesel::sql_types::Int4, _>(total)
+        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Numeric>, _>(
+            cost.and_then(|c| bigdecimal::BigDecimal::try_from(c).ok()),
+        )
+        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(correlation_id)
+        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(caller_tag)
+        .execute(conn)
+        .expect("insert llm_call_usage row");
+        id
+    }
+
+    fn cleanup_usage_ids(conn: &mut PgConnection, ids: &[uuid::Uuid]) {
+        for id in ids {
+            diesel::sql_query("DELETE FROM llm_call_usage WHERE id = $1")
+                .bind::<diesel::sql_types::Uuid, _>(*id)
+                .execute(conn)
+                .ok();
+        }
+    }
+
+    // -- /brainatlas-be/health (smoke) ---------------------------------------
+
+    #[tokio::test]
+    async fn health_returns_ok() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let resp = get_uri(&router, "/brainatlas-be/health").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+        assert_eq!(body["status"], "ok");
+        println!("✅ /brainatlas-be/health returns 200 ok");
+    }
+
+    // -- GET /brainatlas-be/api/llm/usage ------------------------------------
+
+    /// Happy path with no filters: seed two rows (one chat, one embedding
+    /// under distinct models and caller_tags) and assert:
+    ///   - 200 OK
+    ///   - totals aggregate across our seeded rows (>= the seeded magnitudes
+    ///     since the table is shared with other tests)
+    ///   - by_model contains both models we seeded
+    ///   - by_caller_tag contains both caller_tags we seeded
+    #[tokio::test]
+    async fn llm_usage_aggregate_groups_by_model_and_caller_tag() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+
+        let pool = get_pool();
+        let mut conn = pool.get().unwrap();
+
+        // Unique caller_tags so we can find our rows in the aggregate
+        // regardless of unrelated rows that may exist.
+        let run_tag = format!("itest-{}", Uuid::new_v4());
+        let tag_a = format!("{run_tag}-a");
+        let tag_b = format!("{run_tag}-b");
+        let model_a = format!("test/{}-chat", Uuid::new_v4());
+        let model_b = format!("test/{}-embed", Uuid::new_v4());
+
+        let mut inserted = Vec::new();
+        inserted.push(insert_usage(
+            &mut conn,
+            "chat_completion",
+            &model_a,
+            100,
+            50,
+            150,
+            Some(0.001),
+            Some("ci:smoke"),
+            Some(&tag_a),
+        ));
+        inserted.push(insert_usage(
+            &mut conn,
+            "embedding",
+            &model_b,
+            200,
+            0,
+            200,
+            Some(0.0004),
+            Some("ci:smoke"),
+            Some(&tag_b),
+        ));
+
+        let router = build_router();
+        let resp = get_uri(&router, &format!("/brainatlas-be/api/llm/usage?caller_tag={tag_a}")).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+
+        // Filter by caller_tag=a: only our row A should be counted.
+        assert_eq!(
+            body["total_calls"].as_i64().expect("total_calls"),
+            1,
+            "filter by caller_tag must return exactly one row"
+        );
+        assert_eq!(
+            body["total_prompt_tokens"].as_i64().expect("total_prompt_tokens"),
+            100
+        );
+        assert_eq!(
+            body["total_completion_tokens"].as_i64().expect("total_completion_tokens"),
+            50
+        );
+        assert_eq!(
+            body["total_tokens"].as_i64().expect("total_tokens"),
+            150
+        );
+
+        let by_model = body["by_model"].as_array().expect("by_model");
+        assert_eq!(by_model.len(), 1, "only model A under caller_tag=a");
+        assert_eq!(by_model[0]["model"], model_a);
+
+        let by_caller_tag = body["by_caller_tag"].as_array().expect("by_caller_tag");
+        assert_eq!(by_caller_tag.len(), 1);
+        assert_eq!(by_caller_tag[0]["caller_tag"], tag_a);
+
+        // Same but filter by model=B → should find our embedding row.
+        let resp = get_uri(&router, &format!("/brainatlas-be/api/llm/usage?model={model_b}")).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+        assert_eq!(body["total_calls"].as_i64().unwrap(), 1);
+        assert_eq!(body["total_tokens"].as_i64().unwrap(), 200);
+        assert_eq!(body["by_model"].as_array().unwrap()[0]["model"], model_b);
+
+        cleanup_usage_ids(&mut conn, &inserted);
+        println!("✅ /api/llm/usage aggregates by model and caller_tag");
+    }
+
+    /// `correlation_id_prefix` must match rows by prefix only, and must
+    /// escape SQL-LIKE special chars (`%`, `_`, `\`) so prefixes containing
+    /// them match literally rather than as wildcards. This is the PR #69
+    /// regression guard documented in `llm_usage.rs:146`.
+    #[tokio::test]
+    async fn llm_usage_correlation_id_prefix_escapes_like_wildcards() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+
+        let pool = get_pool();
+        let mut conn = pool.get().unwrap();
+
+        let run_id = Uuid::new_v4();
+        let model = format!("test/{}-escape", run_id);
+
+        // Seed rows:
+        //   rowA: correlation_id starts with the literal prefix "eval:{run}%:"
+        //         (contains a literal % which must be escaped in the LIKE)
+        //   rowB: correlation_id that would match if `%` were a wildcard
+        //         (e.g. "eval:{run}XYZ:step-1"), so we can assert it is NOT
+        //         included when the prefix contains `%`.
+        let literal_prefix = format!("eval:{run_id}%:");
+        let fooled_prefix = format!("eval:{run_id}XYZ:");
+
+        let correlation_a = format!("{literal_prefix}step-1");
+        let correlation_b = format!("{fooled_prefix}step-2");
+
+        let mut inserted = Vec::new();
+        inserted.push(insert_usage(
+            &mut conn,
+            "chat_completion",
+            &model,
+            10,
+            5,
+            15,
+            Some(0.0),
+            Some(&correlation_a),
+            Some("ci:escape-a"),
+        ));
+        inserted.push(insert_usage(
+            &mut conn,
+            "chat_completion",
+            &model,
+            10,
+            5,
+            15,
+            Some(0.0),
+            Some(&correlation_b),
+            Some("ci:escape-b"),
+        ));
+
+        let router = build_router();
+
+        // URL-encode the `%` in the prefix so axum passes the literal byte
+        // through to the filter. percent-encoded `%` is `%25`.
+        let prefix_encoded = literal_prefix.replace('%', "%25");
+        let uri = format!(
+            "/brainatlas-be/api/llm/usage?model={model}&correlation_id_prefix={prefix_encoded}"
+        );
+        let resp = get_uri(&router, &uri).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+
+        // Only rowA matches — rowB must NOT be mistakenly matched via the
+        // unescaped `%` wildcard.
+        assert_eq!(
+            body["total_calls"].as_i64().expect("total_calls"),
+            1,
+            "literal `%` in the prefix must not act as a LIKE wildcard; body={body:?}"
+        );
+        // And the totals agree with rowA's single insert.
+        assert_eq!(body["total_tokens"].as_i64().unwrap(), 15);
+
+        // Underscore wildcard: seed a control row whose correlation_id has a
+        // literal `_` in the prefix, and one that would match if `_` were the
+        // single-char LIKE wildcard. The same escaping logic should apply.
+        let us_prefix = format!("run_{run_id}_");
+        let us_row_a = format!("{us_prefix}a");
+        let us_row_b = format!("runX{run_id}Xb"); // would match `run_*_*` wildcard
+        inserted.push(insert_usage(
+            &mut conn,
+            "chat_completion",
+            &model,
+            7,
+            3,
+            10,
+            Some(0.0),
+            Some(&us_row_a),
+            Some("ci:underscore-a"),
+        ));
+        inserted.push(insert_usage(
+            &mut conn,
+            "chat_completion",
+            &model,
+            7,
+            3,
+            10,
+            Some(0.0),
+            Some(&us_row_b),
+            Some("ci:underscore-b"),
+        ));
+
+        let uri2 = format!(
+            "/brainatlas-be/api/llm/usage?model={model}&correlation_id_prefix={us_prefix}"
+        );
+        let resp2 = get_uri(&router, &uri2).await;
+        assert_eq!(resp2.status(), StatusCode::OK);
+        let body2 = read_body_json(resp2).await;
+        assert_eq!(
+            body2["total_calls"].as_i64().unwrap(),
+            1,
+            "literal `_` in the prefix must not act as a LIKE wildcard; body={body2:?}"
+        );
+
+        cleanup_usage_ids(&mut conn, &inserted);
+        println!("✅ /api/llm/usage correlation_id_prefix escapes SQL LIKE wildcards");
+    }
+
+    /// `since` / `until` must be RFC 3339; malformed timestamps → 400.
+    /// Also verifies the bare-happy-path with a wide-open window returns 200.
+    #[tokio::test]
+    async fn llm_usage_rejects_malformed_since_timestamp() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+
+        // Malformed timestamp → 400 Bad Request
+        let resp = get_uri(
+            &router,
+            "/brainatlas-be/api/llm/usage?since=not-a-timestamp",
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "malformed RFC 3339 must be rejected with 400"
+        );
+        let body = read_body_json(resp).await;
+        assert!(
+            body["error"].is_string(),
+            "error body must be {{\"error\": \"...\"}} shape"
+        );
+
+        // Well-formed bounds → 200 even when no rows match.
+        let resp = get_uri(
+            &router,
+            "/brainatlas-be/api/llm/usage?since=1970-01-01T00:00:00Z&until=1970-01-02T00:00:00Z",
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+        assert!(body["total_calls"].is_number());
+        println!("✅ /api/llm/usage rejects malformed `since`; accepts valid RFC 3339");
+    }
+
+    /// Malformed UUID in `summary_id` → 400.
+    #[tokio::test]
+    async fn llm_usage_rejects_malformed_summary_id() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let resp = get_uri(
+            &router,
+            "/brainatlas-be/api/llm/usage?summary_id=not-a-uuid",
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "malformed UUID must be rejected with 400"
+        );
+        println!("✅ /api/llm/usage rejects malformed `summary_id`");
+    }
+
+    /// `region_id` / `summary_id` / `batch_id` filter combinations route
+    /// through separate diesel `.filter(...)` branches inside `aggregate`.
+    /// Seed one row with all three populated and verify the handler
+    /// plumbs every param through correctly.
+    #[tokio::test]
+    async fn llm_usage_filter_by_region_summary_batch() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+
+        let pool = get_pool();
+        let mut conn = pool.get().unwrap();
+
+        let region_id = (rand::random::<u16>() as i32) + 10_000;
+        let summary_id = Uuid::new_v4();
+        let batch_id = Uuid::new_v4();
+        let model = format!("test/{}-rsb", Uuid::new_v4());
+        let tag = format!("ci:rsb-{}", Uuid::new_v4());
+
+        // Direct INSERT including region_id, summary_id, batch_id.
+        let row_id = Uuid::new_v4();
+        diesel::sql_query(
+            "INSERT INTO llm_call_usage \
+             (id, endpoint, model, prompt_tokens, completion_tokens, total_tokens, \
+              cost_usd, correlation_id, region_id, summary_id, batch_id, caller_tag) \
+             VALUES ($1, 'chat_completion', $2, 42, 21, 63, 0.001, 'corr-rsb', \
+                     $3, $4, $5, $6)",
+        )
+        .bind::<diesel::sql_types::Uuid, _>(row_id)
+        .bind::<diesel::sql_types::Text, _>(&model)
+        .bind::<diesel::sql_types::Int4, _>(region_id)
+        .bind::<diesel::sql_types::Uuid, _>(summary_id)
+        .bind::<diesel::sql_types::Uuid, _>(batch_id)
+        .bind::<diesel::sql_types::Text, _>(&tag)
+        .execute(&mut conn)
+        .expect("insert usage row with full attribution");
+
+        let router = build_router();
+
+        // Filter by region_id
+        let resp = get_uri(
+            &router,
+            &format!("/brainatlas-be/api/llm/usage?region_id={region_id}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+        assert_eq!(body["total_calls"].as_i64().unwrap(), 1, "region_id filter");
+        assert_eq!(body["total_tokens"].as_i64().unwrap(), 63);
+
+        // Filter by summary_id (UUID)
+        let resp = get_uri(
+            &router,
+            &format!("/brainatlas-be/api/llm/usage?summary_id={summary_id}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+        assert_eq!(body["total_calls"].as_i64().unwrap(), 1, "summary_id filter");
+
+        // Filter by batch_id (UUID)
+        let resp = get_uri(
+            &router,
+            &format!("/brainatlas-be/api/llm/usage?batch_id={batch_id}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+        assert_eq!(body["total_calls"].as_i64().unwrap(), 1, "batch_id filter");
+
+        // Combined filter: region_id + summary_id + batch_id + caller_tag
+        let resp = get_uri(
+            &router,
+            &format!(
+                "/brainatlas-be/api/llm/usage?region_id={region_id}&summary_id={summary_id}&batch_id={batch_id}&caller_tag={tag}"
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+        assert_eq!(body["total_calls"].as_i64().unwrap(), 1, "combined filter");
+
+        // Flip one field to a mismatched UUID → 0 results.
+        let mismatched = Uuid::new_v4();
+        let resp = get_uri(
+            &router,
+            &format!(
+                "/brainatlas-be/api/llm/usage?region_id={region_id}&summary_id={mismatched}"
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+        assert_eq!(
+            body["total_calls"].as_i64().unwrap(),
+            0,
+            "mismatched summary_id must filter the row out"
+        );
+
+        cleanup_usage_ids(&mut conn, &[row_id]);
+        println!("✅ /api/llm/usage filters by region_id, summary_id, batch_id, caller_tag");
+    }
+
+    /// Empty-table path: filter by a unique, impossible caller_tag so the
+    /// result is guaranteed empty, and verify the zero-row shape.
+    #[tokio::test]
+    async fn llm_usage_empty_result_has_zero_totals() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let tag = format!("no-such-tag-{}", Uuid::new_v4());
+        let resp = get_uri(
+            &router,
+            &format!("/brainatlas-be/api/llm/usage?caller_tag={tag}"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = read_body_json(resp).await;
+        assert_eq!(body["total_calls"], 0);
+        assert_eq!(body["total_tokens"], 0);
+        assert_eq!(body["total_prompt_tokens"], 0);
+        assert_eq!(body["total_completion_tokens"], 0);
+        assert_eq!(body["total_cost_usd"], 0.0);
+        assert_eq!(body["by_model"].as_array().unwrap().len(), 0);
+        assert_eq!(body["by_caller_tag"].as_array().unwrap().len(), 0);
+        println!("✅ /api/llm/usage empty result returns zeroed aggregate");
+    }
+
+    // -- Other smoke/negative paths ------------------------------------------
+
+    /// Unknown route under /brainatlas-be returns 404.
+    #[tokio::test]
+    async fn unknown_route_returns_404() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let resp = get_uri(&router, "/brainatlas-be/api/does-not-exist").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        println!("✅ unknown route returns 404");
+    }
+
+    /// Malformed chunk_id in `/api/chunks/{chunk_id}/source` → axum's Path
+    /// extractor rejects with 400 before the handler runs.
+    #[tokio::test]
+    async fn chunk_source_malformed_uuid_is_400() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let resp = get_uri(
+            &router,
+            "/brainatlas-be/api/chunks/not-a-uuid/source",
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "malformed UUID path segment must be 400 via axum Path extractor"
+        );
+        println!("✅ /api/chunks/{{bad}}/source is 400");
+    }
+
+    /// Unknown chunk_id (well-formed UUID that doesn't exist) → the handler
+    /// converts `None` into `ApiError::MissingOrInvalidId` which maps to 400.
+    #[tokio::test]
+    async fn chunk_source_unknown_uuid_is_400() {
+        if !should_run() {
+            eprintln!("RUN_INTEGRATION_TESTS not set, skipping");
+            return;
+        }
+        let router = build_router();
+        let missing = Uuid::new_v4();
+        let resp = get_uri(
+            &router,
+            &format!("/brainatlas-be/api/chunks/{missing}/source"),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = read_body_json(resp).await;
+        assert!(body["error"].is_string());
+        println!("✅ /api/chunks/{{unknown uuid}}/source is 400 (ApiError::MissingOrInvalidId)");
+    }
+
+    /// Keep the imports grounded against lint cleanup.
+    #[allow(dead_code)]
+    fn _async_trait_is_a_dep() {
+        // This only exists to reference the async-trait dev-dep so
+        // future trait-impl additions don't re-discover the wiring.
+    }
+}
+
