@@ -961,10 +961,7 @@ mod tests {
     impl HttpClient for HelperInfra {
         type Error = MockErr;
 
-        async fn get<T: DeserializeOwned + Send>(
-            &self,
-            url: &str,
-        ) -> Result<T, Self::Error> {
+        async fn get<T: DeserializeOwned + Send>(&self, url: &str) -> Result<T, Self::Error> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             self.in_flight.fetch_add(1, Ordering::SeqCst);
             let cur = self.in_flight.load(Ordering::SeqCst);
@@ -972,11 +969,15 @@ mod tests {
 
             let delay = self.delay_ms.load(Ordering::SeqCst);
             if delay > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(delay as u64))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
             }
 
-            let err = self.error_urls.lock().unwrap().iter().any(|p| url.contains(p));
+            let err = self
+                .error_urls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|p| url.contains(p));
             let result = if err {
                 Err(MockErr(format!("staged error for {}", url)))
             } else {
@@ -991,8 +992,9 @@ mod tests {
                     }
                 }
                 match best {
-                    Some(v) => serde_json::from_value(v)
-                        .map_err(|e| MockErr(format!("decode: {}", e))),
+                    Some(v) => {
+                        serde_json::from_value(v).map_err(|e| MockErr(format!("decode: {}", e)))
+                    }
                     None => Err(MockErr(format!("no responder: {}", url))),
                 }
             };
@@ -1025,8 +1027,7 @@ mod tests {
             .unwrap()
             .push("/scores/".to_string());
         let sid = Uuid::new_v4();
-        let result =
-            fetch_summary_eval_scores(&infra, "http://evals:8083", sid).await;
+        let result = fetch_summary_eval_scores(&infra, "http://evals:8083", sid).await;
         assert!(result.is_none());
     }
 
@@ -1038,8 +1039,7 @@ mod tests {
             format!("/scores/{}", sid),
             serde_json::json!({"summary_id": sid, "scores": []}),
         );
-        let result =
-            fetch_summary_eval_scores(&infra, "http://evals:8083", sid).await;
+        let result = fetch_summary_eval_scores(&infra, "http://evals:8083", sid).await;
         assert!(result.is_none());
     }
 
@@ -1061,8 +1061,7 @@ mod tests {
                 ]
             }),
         );
-        let result =
-            fetch_summary_eval_scores(&infra, "http://evals:8083", sid).await;
+        let result = fetch_summary_eval_scores(&infra, "http://evals:8083", sid).await;
         let r = result.expect("some");
         assert_eq!(r.eval_version, "v2");
         assert_eq!(r.scores.len(), 2);
@@ -1124,9 +1123,7 @@ mod tests {
         let _results: Vec<_> = stream::iter(ids)
             .map(|sid| {
                 let infra = &infra;
-                async move {
-                    fetch_summary_eval_scores(infra, "http://evals:8083", sid).await
-                }
+                async move { fetch_summary_eval_scores(infra, "http://evals:8083", sid).await }
             })
             .buffer_unordered(EVAL_SCORES_FETCH_CONCURRENCY)
             .collect()
@@ -1227,18 +1224,10 @@ mod tests {
         ) -> Result<(), Self::Error> {
             unimplemented!()
         }
-        async fn get_all_config(
-            &self,
-            _: &str,
-        ) -> Result<Vec<OrchConfig>, Self::Error> {
+        async fn get_all_config(&self, _: &str) -> Result<Vec<OrchConfig>, Self::Error> {
             unimplemented!()
         }
-        async fn update_config(
-            &self,
-            _: &str,
-            _: ConfigKey,
-            _: &str,
-        ) -> Result<(), Self::Error> {
+        async fn update_config(&self, _: &str, _: ConfigKey, _: &str) -> Result<(), Self::Error> {
             unimplemented!()
         }
     }
@@ -1321,11 +1310,7 @@ mod tests {
         ) -> Result<Vec<ProcessingBatch>, Self::Error> {
             unimplemented!()
         }
-        async fn count_completed_tasks(
-            &self,
-            _: &str,
-            _: &[i64],
-        ) -> Result<usize, Self::Error> {
+        async fn count_completed_tasks(&self, _: &str, _: &[i64]) -> Result<usize, Self::Error> {
             unimplemented!()
         }
         async fn get_completed_task_ids(
@@ -1335,11 +1320,7 @@ mod tests {
         ) -> Result<Vec<i64>, Self::Error> {
             unimplemented!()
         }
-        async fn get_task_s3_keys(
-            &self,
-            _: &str,
-            _: &[i64],
-        ) -> Result<Vec<String>, Self::Error> {
+        async fn get_task_s3_keys(&self, _: &str, _: &[i64]) -> Result<Vec<String>, Self::Error> {
             unimplemented!()
         }
         async fn get_task_paper_metadata(
@@ -1387,10 +1368,7 @@ mod tests {
         ) -> Result<Option<RegionMapping>, Self::Error> {
             Ok(self.region_mapping.lock().unwrap().clone())
         }
-        async fn get_all_regions(
-            &self,
-            _: &str,
-        ) -> Result<Vec<RegionMapping>, Self::Error> {
+        async fn get_all_regions(&self, _: &str) -> Result<Vec<RegionMapping>, Self::Error> {
             unimplemented!()
         }
         async fn get_total_region_count(&self, _: &str) -> Result<i64, Self::Error> {
@@ -1399,10 +1377,7 @@ mod tests {
         async fn count_regions_without_batches(&self, _: &str) -> Result<i64, Self::Error> {
             unimplemented!()
         }
-        async fn count_actively_fetching_regions(
-            &self,
-            _: &str,
-        ) -> Result<i64, Self::Error> {
+        async fn count_actively_fetching_regions(&self, _: &str) -> Result<i64, Self::Error> {
             unimplemented!()
         }
         async fn get_region_summaries(
@@ -1462,10 +1437,7 @@ mod tests {
         ) -> Result<SummaryFreshnessCounts, Self::Error> {
             unimplemented!()
         }
-        async fn get_system_stats(
-            &self,
-            _: &str,
-        ) -> Result<SystemStatsRaw, Self::Error> {
+        async fn get_system_stats(&self, _: &str) -> Result<SystemStatsRaw, Self::Error> {
             unimplemented!()
         }
     }
@@ -1477,12 +1449,7 @@ mod tests {
             self.cache_gets.lock().unwrap().push(key.to_string());
             Ok(self.cache.lock().unwrap().get(key).cloned())
         }
-        async fn cache_set(
-            &self,
-            key: &str,
-            val: &str,
-            _ttl: u64,
-        ) -> Result<(), Self::Error> {
+        async fn cache_set(&self, key: &str, val: &str, _ttl: u64) -> Result<(), Self::Error> {
             self.cache
                 .lock()
                 .unwrap()

@@ -617,11 +617,7 @@ mod tests {
         }
     }
 
-    fn mk_batch(
-        id: Uuid,
-        status: BatchStatus,
-        fetch_task_ids: Vec<i64>,
-    ) -> ProcessingBatch {
+    fn mk_batch(id: Uuid, status: BatchStatus, fetch_task_ids: Vec<i64>) -> ProcessingBatch {
         ProcessingBatch {
             id,
             region_id: Uuid::new_v4(),
@@ -683,18 +679,10 @@ mod tests {
         ) -> Result<(), Self::Error> {
             unimplemented!()
         }
-        async fn get_all_config(
-            &self,
-            _: &str,
-        ) -> Result<Vec<OrchConfig>, Self::Error> {
+        async fn get_all_config(&self, _: &str) -> Result<Vec<OrchConfig>, Self::Error> {
             unimplemented!()
         }
-        async fn update_config(
-            &self,
-            _: &str,
-            _: ConfigKey,
-            _: &str,
-        ) -> Result<(), Self::Error> {
+        async fn update_config(&self, _: &str, _: ConfigKey, _: &str) -> Result<(), Self::Error> {
             unimplemented!()
         }
     }
@@ -759,12 +747,7 @@ mod tests {
         ) -> Result<usize, Self::Error> {
             let mut key = task_ids.to_vec();
             key.sort();
-            Ok(*self
-                .completed_count
-                .lock()
-                .unwrap()
-                .get(&key)
-                .unwrap_or(&0))
+            Ok(*self.completed_count.lock().unwrap().get(&key).unwrap_or(&0))
         }
 
         async fn update_batch_status(
@@ -795,20 +778,12 @@ mod tests {
             Ok(())
         }
 
-        async fn complete_batch(
-            &self,
-            _: &str,
-            batch_id: Uuid,
-        ) -> Result<(), Self::Error> {
+        async fn complete_batch(&self, _: &str, batch_id: Uuid) -> Result<(), Self::Error> {
             self.recorder.completes.lock().unwrap().push(batch_id);
             Ok(())
         }
 
-        async fn get_task_s3_keys(
-            &self,
-            _: &str,
-            ids: &[i64],
-        ) -> Result<Vec<String>, Self::Error> {
+        async fn get_task_s3_keys(&self, _: &str, ids: &[i64]) -> Result<Vec<String>, Self::Error> {
             let mut key = ids.to_vec();
             key.sort();
             Ok(self
@@ -857,12 +832,7 @@ mod tests {
         async fn delete_all_queries(&self, _: &str) -> Result<i64, Self::Error> {
             unimplemented!()
         }
-        async fn create_batch(
-            &self,
-            _: &str,
-            _: Uuid,
-            _: i32,
-        ) -> Result<Uuid, Self::Error> {
+        async fn create_batch(&self, _: &str, _: Uuid, _: i32) -> Result<Uuid, Self::Error> {
             unimplemented!()
         }
         async fn add_tasks_to_batch(
@@ -918,12 +888,7 @@ mod tests {
         async fn cache_get(&self, _key: &str) -> Result<Option<String>, Self::Error> {
             Ok(None)
         }
-        async fn cache_set(
-            &self,
-            _key: &str,
-            _val: &str,
-            _ttl: u64,
-        ) -> Result<(), Self::Error> {
+        async fn cache_set(&self, _key: &str, _val: &str, _ttl: u64) -> Result<(), Self::Error> {
             Ok(())
         }
         async fn cache_del(&self, key: &str) -> Result<(), Self::Error> {

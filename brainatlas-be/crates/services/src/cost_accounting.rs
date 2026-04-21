@@ -483,11 +483,7 @@ mod tests {
     }
 
     impl tracing::field::Visit for FieldVisitor {
-        fn record_debug(
-            &mut self,
-            field: &tracing::field::Field,
-            value: &dyn std::fmt::Debug,
-        ) {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
             if !self.fields.is_empty() {
                 self.fields.push(' ');
             }
@@ -532,8 +528,8 @@ mod tests {
     /// `cargo test --lib -- --test-threads=1` if you see flakes.
     #[tokio::test(flavor = "current_thread")]
     async fn tracing_event_contains_all_contract_field_names() {
-        use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::Registry;
+        use tracing_subscriber::layer::SubscriberExt;
 
         let store = CaptureStore::default();
         let subscriber = Registry::default().with(CaptureLayer {
