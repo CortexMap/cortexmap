@@ -145,6 +145,11 @@ where
 
 /// Probe the `eval_scores` cache for all 5 rubric metrics. Returns `true` if
 /// all 5 are cached (and pushes them to `out`), `false` otherwise.
+///
+/// Also additively surfaces the 5 `rubric_*_gated` derived metrics when they
+/// exist, so a full cache hit returns them on the `Done` response. Missing
+/// gated rows do NOT gate the state machine — they'll be written by
+/// `advance_rubric` on the next fresh-rubric pass.
 pub async fn probe_rubric_cache<DB, E>(
     db: &DB,
     database_url: &str,
@@ -182,6 +187,32 @@ where
             judge_model: row.judge_model,
         });
     }
+
+    // Additively surface gated rubric rows if present. Missing gated rows do
+    // not cause this probe to report a cache miss: the raw rubric rows are
+    // the authoritative cache-hit signal, and gated rows are cheap to
+    // recompute from `raw × claim_groundedness` on any future run.
+    for m in [
+        EvalMetric::RubricRelevanceGated,
+        EvalMetric::RubricCoherenceGated,
+        EvalMetric::RubricSpecificityGated,
+        EvalMetric::RubricClinicalUtilityGated,
+        EvalMetric::RubricTerminologyGated,
+    ] {
+        let row = db
+            .lookup_score_by_hash(database_url, summary_hash, m.as_str(), eval_version)
+            .await
+            .map_err(ServiceError::InfraError)?;
+        if let Some(r) = row {
+            out.push(MetricResult {
+                metric: r.metric,
+                score: r.score,
+                cached: true,
+                judge_model: r.judge_model,
+            });
+        }
+    }
+
     Ok(true)
 }
 

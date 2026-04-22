@@ -618,8 +618,89 @@ where
         });
     }
 
+    // Gated rubric: `rubric_*_gated = rubric_* * claim_groundedness`. The
+    // rubric judge never sees source chunks, so it grades prose style on
+    // its own; multiplying by groundedness weights the rubric by how many
+    // claims are actually backed by evidence. Prevents the "confidently
+    // wrong" pattern (rubric ≥ 0.9 AND hallucination ≥ 0.5) from hiding in
+    // averages. Raw rubric rows are preserved above; these are additive.
+    persist_gated_rubric_metrics(db, database_url, ctx, &scores, accumulated).await?;
+
     // After rubric → hand off to the citation phase (if claims are available).
     next_citation_or_done(db, database_url, ctx, claims, accumulated).await
+}
+
+/// Persist the 5 `rubric_*_gated` derived metrics. Looks up the already-
+/// persisted `claim_groundedness` row for this summary; if it's missing
+/// (shouldn't happen in the normal flow — groundedness always runs before
+/// rubric) the gated rows are skipped so nothing blocks. No LLM cost.
+async fn persist_gated_rubric_metrics<DB, E>(
+    db: &DB,
+    database_url: &str,
+    ctx: &RunContext<'_>,
+    scores: &RubricScores,
+    accumulated: &mut Vec<MetricResult>,
+) -> Result<(), ServiceError<E>>
+where
+    DB: EvalsDatabase<Error = E>,
+    E: Error + Send + Sync + 'static,
+{
+    let groundedness_row = db
+        .lookup_score_by_hash(
+            database_url,
+            ctx.summary_hash,
+            EvalMetric::ClaimGroundedness.as_str(),
+            ctx.eval_version,
+        )
+        .await
+        .map_err(ServiceError::InfraError)?;
+    let Some(groundedness_row) = groundedness_row else {
+        // Groundedness not persisted yet; can't gate. Skip silently — the
+        // gated rows will be produced on the next eval run once
+        // groundedness lands.
+        return Ok(());
+    };
+    let g = groundedness_row.score;
+
+    for (metric, crit) in [
+        (EvalMetric::RubricRelevanceGated, &scores.relevance),
+        (EvalMetric::RubricCoherenceGated, &scores.coherence),
+        (EvalMetric::RubricSpecificityGated, &scores.specificity),
+        (EvalMetric::RubricClinicalUtilityGated, &scores.clinical_utility),
+        (EvalMetric::RubricTerminologyGated, &scores.terminology),
+    ] {
+        let raw = normalise_1_to_5(crit.score);
+        let gated = raw * g;
+        let details = serde_json::json!({
+            "raw_rubric_score": raw,
+            "claim_groundedness": g,
+            "gated_formula": "rubric * claim_groundedness",
+        });
+        let res = score_with_cache(
+            db,
+            database_url,
+            ctx.summary.id,
+            ctx.summary_hash,
+            metric.as_str(),
+            ctx.eval_version,
+            || async {
+                Ok(ComputedScore {
+                    score: gated,
+                    // Derived metric — not produced by an LLM.
+                    judge_model: None,
+                    details: Some(details.clone()),
+                })
+            },
+        )
+        .await?;
+        accumulated.push(MetricResult {
+            metric: res.row.metric,
+            score: res.row.score,
+            cached: res.cached,
+            judge_model: res.row.judge_model,
+        });
+    }
+    Ok(())
 }
 
 // ---- helpers ----
@@ -2363,6 +2444,138 @@ mod advance_tests {
         // No claims → citations skipped, Done.
         assert!(matches!(state, RunState::Done));
         assert!(matches!(next, NextAction::Done { .. }));
+    }
+
+    /// With `claim_groundedness` already persisted at `g = 0.5`, rubric should
+    /// emit 5 raw rubric_* rows AND 5 `rubric_*_gated` rows where each gated
+    /// value equals `raw * 0.5`. This locks Fix C1: the gating math.
+    #[tokio::test]
+    async fn advance_rubric_emits_gated_metrics_when_groundedness_present() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new();
+        let ctx = ctx_for(&summary, "hash-rubric-gated");
+
+        // Seed claim_groundedness = 0.5 into the cache before rubric runs.
+        db.insert_score(
+            "memory://",
+            NewEvalScore {
+                summary_id: summary.id,
+                summary_hash: ctx.summary_hash.to_string(),
+                metric: EvalMetric::ClaimGroundedness.as_str().to_string(),
+                score: 0.5,
+                judge_model: Some("mock-judge".to_string()),
+                details: None,
+                eval_version: ctx.eval_version.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let c = |s: u8| RubricCriterion {
+            score: s,
+            rationale: "r".into(),
+        };
+        // score=5 → normalised 1.0; score=3 → 0.5; score=1 → 0.0.
+        let response = LlmResponsePayload::Rubric(RubricScores {
+            relevance: c(5),
+            coherence: c(4),
+            specificity: c(3),
+            clinical_utility: c(2),
+            terminology: c(1),
+        });
+        let mut acc = Vec::new();
+        let (_state, _next) = advance_rubric(&db, "memory://", &ctx, response, None, &mut acc)
+            .await
+            .expect("rubric");
+
+        // Raw + gated = 10 rubric rows in the accumulator.
+        let rubric_rows: Vec<_> = acc
+            .iter()
+            .filter(|m| m.metric.starts_with("rubric_"))
+            .collect();
+        assert_eq!(
+            rubric_rows.len(),
+            10,
+            "expected 5 raw + 5 gated rubric rows, got {rubric_rows:?}"
+        );
+
+        // Locking the math: rubric_relevance = 1.0, gated = 0.5.
+        let raw_rel = acc.iter().find(|m| m.metric == "rubric_relevance").unwrap();
+        let gated_rel = acc
+            .iter()
+            .find(|m| m.metric == "rubric_relevance_gated")
+            .unwrap();
+        assert!((raw_rel.score - 1.0).abs() < 1e-6);
+        assert!(
+            (gated_rel.score - 0.5).abs() < 1e-6,
+            "rubric_relevance_gated expected 0.5, got {}",
+            gated_rel.score
+        );
+
+        // rubric_terminology = 0.0, gated = 0.0 (not NaN).
+        let raw_term = acc
+            .iter()
+            .find(|m| m.metric == "rubric_terminology")
+            .unwrap();
+        let gated_term = acc
+            .iter()
+            .find(|m| m.metric == "rubric_terminology_gated")
+            .unwrap();
+        assert!((raw_term.score - 0.0).abs() < 1e-6);
+        assert!((gated_term.score - 0.0).abs() < 1e-6);
+
+        // rubric_specificity = 0.5, gated = 0.25.
+        let gated_spec = acc
+            .iter()
+            .find(|m| m.metric == "rubric_specificity_gated")
+            .unwrap();
+        assert!(
+            (gated_spec.score - 0.25).abs() < 1e-6,
+            "rubric_specificity_gated expected 0.25, got {}",
+            gated_spec.score
+        );
+
+        // Gated rows must have judge_model = None (derived, no LLM).
+        assert!(gated_rel.judge_model.is_none());
+        assert!(gated_term.judge_model.is_none());
+    }
+
+    /// Defensive: if `claim_groundedness` is absent from cache, `advance_rubric`
+    /// must still emit the 5 raw rubric rows and NOT emit any gated rows (they
+    /// will be produced on the next eval run once groundedness lands). Locks
+    /// the silent-skip fallback in `persist_gated_rubric_metrics`.
+    #[tokio::test]
+    async fn advance_rubric_skips_gated_when_groundedness_missing() {
+        let summary = fixture_summary();
+        let db = InMemoryDb::new(); // no groundedness seeded
+        let ctx = ctx_for(&summary, "hash-rubric-nogrounded");
+        let mut acc = Vec::new();
+
+        let c = |s: u8| RubricCriterion {
+            score: s,
+            rationale: "r".into(),
+        };
+        let response = LlmResponsePayload::Rubric(RubricScores {
+            relevance: c(5),
+            coherence: c(5),
+            specificity: c(5),
+            clinical_utility: c(5),
+            terminology: c(5),
+        });
+        let (_state, _next) = advance_rubric(&db, "memory://", &ctx, response, None, &mut acc)
+            .await
+            .expect("rubric");
+
+        let raw_count = acc
+            .iter()
+            .filter(|m| m.metric.starts_with("rubric_") && !m.metric.ends_with("_gated"))
+            .count();
+        let gated_count = acc
+            .iter()
+            .filter(|m| m.metric.ends_with("_gated"))
+            .count();
+        assert_eq!(raw_count, 5);
+        assert_eq!(gated_count, 0);
     }
 
     /// Cached-rubric-but-fresh-groundedness path (TODO at :622-644): when all
