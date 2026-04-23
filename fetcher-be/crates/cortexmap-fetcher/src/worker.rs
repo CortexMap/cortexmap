@@ -1,6 +1,8 @@
 use crate::FetchError;
 use crate::component::{determine_component_key, fetch_component};
-use crate::retry::{compute_task_backoff_delay, is_infra_retryable, with_request_retry};
+use crate::retry::{
+    compute_task_backoff_delay, is_fetch_retryable, is_infra_retryable, with_request_retry,
+};
 use cortexmap_core::blueprint::Blueprint;
 use cortexmap_infra::{
     ComponentType, ContentType, DatabaseInfra, FetchTask, HttpInfra, InfraContext, NewFetchTaskLog,
@@ -113,6 +115,7 @@ where
 
                 match result.into_byte_stream() {
                     Err(e) => {
+                        let is_permanent = !is_fetch_retryable(&e);
                         let error_msg = format!(
                             "Failed to convert {:?} to byte stream: {}",
                             component_type, e
@@ -124,6 +127,7 @@ where
                             &error_msg,
                             new_attempt_count,
                             max_attempts,
+                            is_permanent,
                             &ctx,
                         )
                         .await?;
@@ -198,6 +202,7 @@ where
                                     .ok();
                             }
                             Err(e) => {
+                                let is_permanent = !is_infra_retryable(&e);
                                 let error_msg =
                                     format!("Failed to upload {:?} to S3: {}", component_type, e);
                                 tracing::warn!("{}", error_msg);
@@ -207,6 +212,7 @@ where
                                     &error_msg,
                                     new_attempt_count,
                                     max_attempts,
+                                    is_permanent,
                                     &ctx,
                                 )
                                 .await?;
@@ -216,14 +222,20 @@ where
                 }
             }
             Err(e) => {
+                let is_permanent = !is_fetch_retryable(&e);
                 let error_msg = format!("Failed to fetch {:?}: {}", component_type, e);
-                tracing::warn!("{}", error_msg);
+                if is_permanent {
+                    tracing::warn!("{} (permanent, will not retry)", error_msg);
+                } else {
+                    tracing::warn!("{}", error_msg);
+                }
                 handle_component_failure(
                     task_id,
                     component_type,
                     &error_msg,
                     new_attempt_count,
                     max_attempts,
+                    is_permanent,
                     &ctx,
                 )
                 .await?;
@@ -273,26 +285,41 @@ where
     Ok(())
 }
 
-/// Handle a component failure by either marking it for retry or as permanently failed
+/// Handle a component failure by either marking it for retry or as permanently failed.
+///
+/// If `is_permanent` is true (e.g. HTTP 404, NotFound, InvalidPdfSource), the component
+/// is marked Failed immediately without consuming further retry attempts. This avoids
+/// burning worker time and NCBI quota on resources that will never resolve.
 async fn handle_component_failure<I>(
     task_id: i64,
     component_type: ComponentType,
     error_msg: &str,
     attempt_count: i32,
     max_attempts: i32,
+    is_permanent: bool,
     ctx: &InfraContext<I>,
 ) -> Result<(), FetchError>
 where
     I: TaskQueueInfra + Send + Sync,
 {
-    if attempt_count >= max_attempts {
-        tracing::error!(
-            "Component {:?} for task {} failed after {} attempts: {}",
-            component_type,
-            task_id,
-            max_attempts,
-            error_msg
-        );
+    if is_permanent || attempt_count >= max_attempts {
+        if is_permanent {
+            tracing::error!(
+                "Component {:?} for task {} failed permanently (no retry) on attempt {}: {}",
+                component_type,
+                task_id,
+                attempt_count,
+                error_msg
+            );
+        } else {
+            tracing::error!(
+                "Component {:?} for task {} failed after {} attempts: {}",
+                component_type,
+                task_id,
+                max_attempts,
+                error_msg
+            );
+        }
 
         // Mark as permanently failed
         ctx.infra
@@ -306,18 +333,27 @@ where
             .await?;
 
         // Log permanent failure
+        let message = if is_permanent {
+            format!(
+                "Component {:?} permanently failed (non-retryable error) on attempt {}",
+                component_type, attempt_count
+            )
+        } else {
+            format!(
+                "Component {:?} permanently failed after {} attempts",
+                component_type, max_attempts
+            )
+        };
         ctx.infra
             .log_task_event(NewFetchTaskLog {
                 task_id,
                 component_type: Some(component_type.as_str().to_string()),
                 log_level: "error".to_string(),
-                message: format!(
-                    "Component {:?} permanently failed after {} attempts",
-                    component_type, max_attempts
-                ),
+                message,
                 metadata: Some(serde_json::json!({
                     "error": error_msg,
-                    "attempts": attempt_count
+                    "attempts": attempt_count,
+                    "permanent": is_permanent,
                 })),
             })
             .await
