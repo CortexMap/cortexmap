@@ -270,18 +270,24 @@ fn extract_abstract_from_xml(xml: &str) -> Result<String, FetchError> {
             let mut result = abstract_xml.to_string();
 
             // Add paragraph breaks before common abstract section tags
-            result = result.replace("<sec>", "
+            result = result.replace(
+                "<sec>", "
 
-");
+",
+            );
             result = result.replace("</sec>", "");
             result = result.replace("<title>", "**");
-            result = result.replace("</title>", ":**
+            result = result.replace(
+                "</title>", ":**
 
-");
+",
+            );
             result = result.replace("<p>", "");
-            result = result.replace("</p>", "
+            result = result.replace(
+                "</p>", "
 
-");
+",
+            );
 
             // Remove all remaining XML/HTML tags
             let cleaned = result
@@ -304,9 +310,11 @@ fn extract_abstract_from_xml(xml: &str) -> Result<String, FetchError> {
                 .lines()
                 .filter(|line| !line.trim().is_empty())
                 .collect::<Vec<_>>()
-                .join("
+                .join(
+                    "
 
-");
+",
+                );
 
             if !cleaned.trim().is_empty() {
                 return Ok(cleaned.trim().to_string());
