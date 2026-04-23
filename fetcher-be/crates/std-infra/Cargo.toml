@@ -8,11 +8,12 @@ reqwest.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 diesel.workspace = true
-tokio.workspace = true
 derive_builder.workspace = true
 futures.workspace = true
 aws-sdk-s3.workspace = true
+aws-config.workspace = true
 aws-credential-types.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 aws-smithy-types.workspace = true
 http-body-util.workspace = true
 http-body.workspace = true

@@ -15,9 +15,12 @@ use std::sync::Arc;
 #[derive(derive_builder::Builder)]
 pub struct StdInfraContext {
     pub database_url: String,
-    pub endpoint: String,
-    pub access_key: String,
-    pub secret_key: String,
+    #[builder(default)]
+    pub endpoint: Option<String>,
+    #[builder(default)]
+    pub access_key: Option<String>,
+    #[builder(default)]
+    pub secret_key: Option<String>,
     pub bucket: String,
 }
 
@@ -28,9 +31,9 @@ impl StdInfraContext {
         let env = FetcherEnvInfra::new();
         Ok(Self {
             database_url: env.get_env_var("DATABASE_URL")?,
-            endpoint: env.get_env_var("S3_ENDPOINT")?,
-            access_key: env.get_env_var("S3_ACCESS_KEY")?,
-            secret_key: env.get_env_var("S3_SECRET_KEY")?,
+            endpoint: env.get_env_var("S3_ENDPOINT").ok(),
+            access_key: env.get_env_var("S3_ACCESS_KEY").ok(),
+            secret_key: env.get_env_var("S3_SECRET_KEY").ok(),
             bucket: env.get_env_var("S3_BUCKET")?,
         })
     }
@@ -40,9 +43,9 @@ impl StdInfraContext {
         Ok(InfraContext {
             infra: Arc::new(StdInfra::new(
                 &self.database_url,
-                &self.endpoint,
-                &self.access_key,
-                &self.secret_key,
+                self.endpoint.as_deref(),
+                self.access_key.as_deref(),
+                self.secret_key.as_deref(),
                 &self.bucket,
             )?),
         })

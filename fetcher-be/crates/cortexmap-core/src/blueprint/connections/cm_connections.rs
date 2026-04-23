@@ -24,8 +24,8 @@ pub struct Postgresql {
 
 #[derive(Debug, Clone)]
 pub struct S3Info {
-    pub endpoint: String,
-    pub access_key: String,
-    pub secret_key: String,
+    pub endpoint: Option<String>,
+    pub access_key: Option<String>,
+    pub secret_key: Option<String>,
     pub bucket: String,
 }

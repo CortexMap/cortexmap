@@ -48,17 +48,17 @@ struct Args {
     #[arg(long, env = "DATABASE_URL")]
     database_url: String,
 
-    /// S3 endpoint URL
+    /// S3 endpoint URL (optional; if omitted uses EC2 instance profile)
     #[arg(long, env = "S3_ENDPOINT")]
-    s3_endpoint: String,
+    s3_endpoint: Option<String>,
 
-    /// S3 access key
+    /// S3 access key (optional; if omitted uses EC2 instance profile)
     #[arg(long, env = "S3_ACCESS_KEY")]
-    s3_access_key: String,
+    s3_access_key: Option<String>,
 
-    /// S3 secret key
+    /// S3 secret key (optional; if omitted uses EC2 instance profile)
     #[arg(long, env = "S3_SECRET_KEY")]
-    s3_secret_key: String,
+    s3_secret_key: Option<String>,
 
     /// S3 bucket name
     #[arg(long, env = "S3_BUCKET")]
