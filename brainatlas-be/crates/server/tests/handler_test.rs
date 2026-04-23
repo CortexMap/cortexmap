@@ -127,6 +127,9 @@ impl LlmService for FakeServices {
         &self,
         region_name: &str,
         count: u32,
+        _acronym: Option<&str>,
+        _parent_name: Option<&str>,
+        _parent_acronym: Option<&str>,
         ctx: UsageContext,
     ) -> Result<Vec<String>, Self::Error> {
         self.state.generate_queries_calls.lock().unwrap().push((

@@ -597,6 +597,21 @@
   font-family: 'SF Mono', Menlo, monospace;
 }
 
+.evalGroup {
+  margin-top: 8px;
+}
+.evalGroup:first-of-type {
+  margin-top: 4px;
+}
+.evalGroupLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
 .evalGrid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

@@ -164,14 +164,16 @@ where
             brainatlas_url.trim_end_matches('/')
         );
 
-        // Read concurrency limit from config (reuses max_parallel_process_calls)
+        // Read concurrency limit from config (dedicated query-generation knob;
+        // generate-queries is a single small LLM call so this can fan out much
+        // wider than `/process` parallelism without pressuring the LLM provider)
         let concurrency: usize = self
             .infra
-            .get_config(&database_url, ConfigKey::MaxParallelProcessCalls)
+            .get_config(&database_url, ConfigKey::MaxParallelQueryGeneration)
             .await
             .map_err(ServiceError::InfraError)?
             .and_then(|v| v.parse().ok())
-            .unwrap_or(10);
+            .unwrap_or(30);
 
         tracing::info!(concurrency, "Phase 1: Running parallel query generation");
 
@@ -206,6 +208,9 @@ where
                     region_name: region.name.clone(),
                     count: query_count,
                     correlation_id: Some(format!("region:{}", region.id)),
+                    acronym: region.acronym.clone(),
+                    parent_name: region.parent_name.clone(),
+                    parent_acronym: region.parent_acronym.clone(),
                 };
 
                 // Retry with exponential backoff (max 3 attempts, 1-10s delay)
@@ -1050,6 +1055,9 @@ mod tests {
         RegionInfo {
             id: Uuid::new_v4(),
             name: name.to_string(),
+            acronym: None,
+            parent_acronym: None,
+            parent_name: None,
         }
     }
 
@@ -1315,6 +1323,13 @@ mod tests {
             &self,
             _database_url: &str,
             _region_uuid: Uuid,
+        ) -> Result<Option<RegionMapping>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_region_by_int_id(
+            &self,
+            _database_url: &str,
+            _region_int_id: i32,
         ) -> Result<Option<RegionMapping>, Self::Error> {
             unimplemented!("not used by pipeline_runner Phase-1 tests")
         }

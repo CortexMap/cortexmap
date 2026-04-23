@@ -248,7 +248,14 @@ where
 {
     let resp = server
         .api
-        .generate_queries(body.region_name, body.count, body.correlation_id)
+        .generate_queries(
+            body.region_name,
+            body.count,
+            body.correlation_id,
+            body.acronym,
+            body.parent_name,
+            body.parent_acronym,
+        )
         .await
         .map_err(ServerError)?;
     Ok(Json(resp))

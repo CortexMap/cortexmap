@@ -158,6 +158,19 @@ message GenerateQueriesRequest {
   // orch as `region:<region_id>` so the persisted usage rows can be joined
   // back to the triggering region.
   optional string correlation_id = 3;
+  // Allen acronym for this region (e.g., "TTv", "CA1"). When supplied the
+  // prompt instructs the LLM to include this acronym in every OR group so
+  // the produced PubMed queries actually target the literature for this
+  // specific region rather than papers that merely contain its sub-modifier.
+  optional string acronym = 4;
+  // Parent region's full name (e.g., "Taenia tecta"). Used by the LLM when
+  // the target region is a sub-leaf with sparse direct literature: it can
+  // include the parent's name as an OR alternative.
+  optional string parent_name = 5;
+  // Parent region's Allen acronym (e.g., "TT" for "Taenia tecta"). Used the
+  // same way as `parent_name` — gives the LLM another anchor for sparse-leaf
+  // regions.
+  optional string parent_acronym = 6;
 }
 
 message GenerateQueriesResponse {

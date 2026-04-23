@@ -141,11 +141,22 @@ where
         region_name: String,
         count: u32,
         correlation_id: Option<String>,
+        acronym: Option<String>,
+        parent_name: Option<String>,
+        parent_acronym: Option<String>,
     ) -> Result<GenerateQueriesResponse, Self::Error> {
         // Call the LLM to generate queries
         let queries = self
             .app()
-            .generate_queries(&region_name, count, correlation_id, None)
+            .generate_queries(
+                &region_name,
+                count,
+                correlation_id,
+                None,
+                acronym.as_deref(),
+                parent_name.as_deref(),
+                parent_acronym.as_deref(),
+            )
             .await
             .map_err(ApiError::AppError)?;
 

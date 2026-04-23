@@ -126,9 +126,21 @@ impl LlmClient for BrainAtlasInfra {
         chat_model: &str,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
     ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error> {
         self.llm
-            .generate_queries(base_url, api_key, chat_model, region_name, count)
+            .generate_queries(
+                base_url,
+                api_key,
+                chat_model,
+                region_name,
+                count,
+                acronym,
+                parent_name,
+                parent_acronym,
+            )
             .await
     }
 }

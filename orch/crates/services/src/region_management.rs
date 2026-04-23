@@ -273,10 +273,16 @@ where
         &self,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
     ) -> Result<Vec<String>, Self::Error> {
         tracing::info!(
             region_name,
             count,
+            acronym,
+            parent_name,
+            parent_acronym,
             "Generating queries using LLM via brainatlas"
         );
 
@@ -317,6 +323,9 @@ where
             region_name: region_name.to_string(),
             count,
             correlation_id: None,
+            acronym: acronym.map(|s| s.to_string()),
+            parent_name: parent_name.map(|s| s.to_string()),
+            parent_acronym: parent_acronym.map(|s| s.to_string()),
         };
 
         tracing::info!(url = %url, region_name, count, "Calling brainatlas generate-queries endpoint");
@@ -370,6 +379,46 @@ where
             .ok_or_else(|| ServiceError::NotFound)?;
 
         Ok(region.name)
+    }
+
+    async fn get_region_identity(
+        &self,
+        region_id: Uuid,
+    ) -> Result<app::RegionIdentity, Self::Error> {
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+
+        let region = self
+            .infra
+            .get_region_mapping(&database_url, region_id)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .ok_or_else(|| ServiceError::NotFound)?;
+
+        // Resolve parent_name lazily — only if the region has a parent_region_id.
+        // Falls back to None if the parent row is missing (orphan ontology
+        // entry); the LLM will simply lack one disambiguation hint rather
+        // than the entire call failing.
+        let parent_name = match region.parent_region_id {
+            Some(pid) => self
+                .infra
+                .get_region_by_int_id(&database_url, pid)
+                .await
+                .map_err(ServiceError::InfraError)?
+                .map(|p| p.name),
+            None => None,
+        };
+
+        Ok(app::RegionIdentity {
+            region_id,
+            region_int_id: region.region_id,
+            name: region.name,
+            acronym: region.acronym,
+            parent_name,
+            parent_acronym: region.parent_acronym,
+        })
     }
 
     async fn get_total_regions(&self) -> Result<i64, Self::Error> {
@@ -1488,6 +1537,13 @@ mod tests {
         ) -> Result<Option<RegionMapping>, Self::Error> {
             Ok(self.region_mapping.lock().unwrap().clone())
         }
+        async fn get_region_by_int_id(
+            &self,
+            _: &str,
+            _: i32,
+        ) -> Result<Option<RegionMapping>, Self::Error> {
+            Ok(None)
+        }
         async fn get_all_regions(&self, _: &str) -> Result<Vec<RegionMapping>, Self::Error> {
             Ok(self.all_regions.lock().unwrap().clone())
         }
@@ -1831,7 +1887,10 @@ mod tests {
         );
         let infra = Arc::new(infra.with_env("BRAINATLAS_HTTP_ADDR", "http://brain:8082"));
         let svc = OrchRegionManagement::new(infra);
-        let qs = svc.generate_queries("hippocampus", 2).await.expect("ok");
+        let qs = svc
+            .generate_queries("hippocampus", 2, None, None, None)
+            .await
+            .expect("ok");
         assert_eq!(qs, vec!["q1".to_string(), "q2".to_string()]);
     }
 
@@ -1849,7 +1908,10 @@ mod tests {
                 serde_json::json!({"queries": ["only"]}),
             );
         let svc = OrchRegionManagement::new(Arc::new(infra));
-        let qs = svc.generate_queries("r", 1).await.expect("ok");
+        let qs = svc
+            .generate_queries("r", 1, None, None, None)
+            .await
+            .expect("ok");
         assert_eq!(qs, vec!["only".to_string()]);
     }
 
@@ -1858,7 +1920,10 @@ mod tests {
     async fn region_mgmt_generate_queries_config_not_found_without_url() {
         let infra = FullInfra::new().without_env("BRAINATLAS_HTTP_ADDR");
         let svc = OrchRegionManagement::new(Arc::new(infra));
-        let err = svc.generate_queries("r", 1).await.expect_err("must fail");
+        let err = svc
+            .generate_queries("r", 1, None, None, None)
+            .await
+            .expect_err("must fail");
         match err {
             ServiceError::ConfigNotFound { key } => {
                 assert_eq!(key, "brainatlas_base_url")

@@ -279,6 +279,14 @@ impl services::RegionMappingQueries for OrchInfra {
         self.pg.get_region_mapping(database_url, region_uuid).await
     }
 
+    async fn get_region_by_int_id(
+        &self,
+        database_url: &str,
+        region_id: i32,
+    ) -> Result<Option<services::RegionMapping>, Self::Error> {
+        self.pg.get_region_by_int_id(database_url, region_id).await
+    }
+
     async fn get_all_regions(
         &self,
         database_url: &str,

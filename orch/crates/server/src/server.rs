@@ -71,6 +71,10 @@ where
                 post(generate_summary_handler::<E, S>),
             )
             .route(
+                "/api/regions/{id}/regenerate-queries",
+                post(regenerate_queries_handler::<E, S>),
+            )
+            .route(
                 "/api/regions/{id}/active-batch",
                 get(get_active_batch_handler::<E, S>),
             )
@@ -182,6 +186,22 @@ where
 {
     let result = server.api.generate_summary(id).await?;
     Ok(Json(result))
+}
+
+async fn regenerate_queries_handler<E, S>(
+    State(server): State<OrchServer<S>>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ServerError<E>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+    S: Services<Error = E> + 'static,
+{
+    let queries = server.api.regenerate_queries(id).await?;
+    Ok(Json(serde_json::json!({
+        "region_id": id,
+        "query_count": queries.len(),
+        "queries": queries,
+    })))
 }
 
 async fn get_batch_status_handler<E, S>(
@@ -370,10 +390,52 @@ async fn trigger_pipeline_handler<E, S>(
 ) -> Result<impl IntoResponse, ServerError<E>>
 where
     E: std::error::Error + Send + Sync + 'static,
-    S: Services<Error = E> + 'static,
+    S: Services<Error = E> + Send + Sync + 'static,
 {
-    let result = server.api.trigger_pipeline(body).await?;
-    Ok(Json(result))
+    // Pipeline phases (especially `generate_queries` over ~1,200 regions and
+    // `discover_papers` with `enqueue_page_size = 150`) can take hours and
+    // blow past every reasonable HTTP timeout. Spawn the work into a
+    // background task and return 202 Accepted immediately so the caller (the
+    // dev_stats UI in particular) doesn't hang. Per-phase progress is
+    // observable via tracing::info!/warn! emitted from within
+    // `App::trigger_pipeline`.
+    let api = server.api.clone();
+    let req_summary = format!(
+        "reset={} gen_queries={} discover={} workers={}",
+        body.reset_queries, body.generate_queries, body.discover_papers, body.ensure_workers
+    );
+    let echo = serde_json::json!({
+        "reset_queries":    body.reset_queries,
+        "generate_queries": body.generate_queries,
+        "discover_papers":  body.discover_papers,
+        "ensure_workers":   body.ensure_workers,
+    });
+    tracing::info!(req = %req_summary, "trigger_pipeline: spawning background task");
+    tokio::spawn(async move {
+        match api.trigger_pipeline(body).await {
+            Ok(result) => {
+                tracing::info!(
+                    reset_deleted = ?result.reset_queries_deleted,
+                    gen_queries = ?result.generate_queries_result,
+                    discover = ?result.discover_papers_result,
+                    workers_ok = ?result.ensure_workers_ok,
+                    errors = ?result.errors,
+                    "trigger_pipeline: background task completed"
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "trigger_pipeline: background task failed");
+            }
+        }
+    });
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "status": "accepted",
+            "message": "pipeline trigger spawned in background; watch orch logs for progress",
+            "request": echo,
+        })),
+    ))
 }
 
 async fn dev_redis_stats_handler<E, S>(

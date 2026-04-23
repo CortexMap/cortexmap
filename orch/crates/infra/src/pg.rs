@@ -639,6 +639,27 @@ impl services::RegionMappingQueries for OrchPostgresql {
         Ok(result.map(Into::into))
     }
 
+    async fn get_region_by_int_id(
+        &self,
+        database_url: &str,
+        region_id: i32,
+    ) -> Result<Option<services::RegionMapping>, Self::Error> {
+        use crate::models::RegionMappingRow;
+        use crate::schema::region_mapping;
+
+        let conn = self.pool(database_url).await?.get().await?;
+        let result = conn
+            .interact(move |c| {
+                region_mapping::table
+                    .filter(region_mapping::region_id.eq(region_id))
+                    .first::<RegionMappingRow>(c)
+                    .optional()
+            })
+            .await??;
+
+        Ok(result.map(Into::into))
+    }
+
     async fn get_all_regions(
         &self,
         database_url: &str,
@@ -818,26 +839,62 @@ impl services::RegionMappingQueries for OrchPostgresql {
         &self,
         database_url: &str,
     ) -> Result<Vec<services::RegionInfo>, Self::Error> {
-        use crate::schema::{region_mapping, region_queries};
-        use diesel::dsl::{exists, not};
+        use diesel::sql_types::{Int4, Nullable, Text, Uuid as DieselUuid};
 
         let conn = self.pool(database_url).await?.get().await?;
+
+        // Self-join region_mapping on parent_region_id to also fetch the
+        // parent's name + acronym in a single round-trip. Both are nullable
+        // because root regions have no parent and not every region has an
+        // acronym in the source ontology.
+        #[derive(QueryableByName, Debug)]
+        struct Row {
+            #[diesel(sql_type = DieselUuid)]
+            id: Uuid,
+            #[diesel(sql_type = Text)]
+            name: String,
+            #[diesel(sql_type = Nullable<Text>)]
+            acronym: Option<String>,
+            #[diesel(sql_type = Nullable<Text>)]
+            parent_name: Option<String>,
+            #[diesel(sql_type = Nullable<Text>)]
+            parent_acronym: Option<String>,
+            #[diesel(sql_type = Nullable<Int4>)]
+            #[allow(dead_code)]
+            parent_region_id: Option<i32>,
+        }
+
         let results = conn
             .interact(move |c| {
-                region_mapping::table
-                    .filter(not(exists(
-                        region_queries::table
-                            .filter(region_queries::region_id.eq(region_mapping::id)),
-                    )))
-                    .select((region_mapping::id, region_mapping::name))
-                    .order(region_mapping::name.asc())
-                    .load::<(Uuid, String)>(c)
+                diesel::sql_query(
+                    "SELECT rm.id              AS id,
+                            rm.name            AS name,
+                            rm.acronym         AS acronym,
+                            parent.name        AS parent_name,
+                            parent.acronym     AS parent_acronym,
+                            rm.parent_region_id AS parent_region_id
+                       FROM region_mapping rm
+                       LEFT JOIN region_mapping parent
+                              ON parent.region_id = rm.parent_region_id
+                      WHERE NOT EXISTS (
+                              SELECT 1 FROM region_queries rq
+                               WHERE rq.region_id = rm.id
+                            )
+                      ORDER BY rm.name ASC",
+                )
+                .load::<Row>(c)
             })
             .await??;
 
         Ok(results
             .into_iter()
-            .map(|(id, name)| services::RegionInfo { id, name })
+            .map(|r| services::RegionInfo {
+                id: r.id,
+                name: r.name,
+                acronym: r.acronym,
+                parent_name: r.parent_name,
+                parent_acronym: r.parent_acronym,
+            })
             .collect())
     }
 

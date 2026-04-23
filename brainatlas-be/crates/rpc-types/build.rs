@@ -50,6 +50,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "com.cortexmap.GenerateQueriesRequest.correlation_id",
         "#[serde(default)]",
     );
+    config = config.field_attribute(
+        "com.cortexmap.GenerateQueriesRequest.acronym",
+        "#[serde(default)]",
+    );
+    config = config.field_attribute(
+        "com.cortexmap.GenerateQueriesRequest.parent_name",
+        "#[serde(default)]",
+    );
+    config = config.field_attribute(
+        "com.cortexmap.GenerateQueriesRequest.parent_acronym",
+        "#[serde(default)]",
+    );
 
     // ProcessNoPapersRequest optional fields — default for backward compatibility.
     config = config.field_attribute(

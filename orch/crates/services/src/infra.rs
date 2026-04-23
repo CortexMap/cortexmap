@@ -3,11 +3,19 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
-/// Lightweight region info for pipeline queries
+/// Lightweight region info for pipeline queries.
+///
+/// `acronym`, `parent_name`, and `parent_acronym` are optional context fields
+/// the orchestrator forwards to brainatlas-be's `GenerateQueriesRequest` so
+/// the LLM can produce literature-targeted PubMed queries instead of
+/// hand-wavy OR groups built from sub-modifier tokens.
 #[derive(Debug, Clone)]
 pub struct RegionInfo {
     pub id: Uuid,
     pub name: String,
+    pub acronym: Option<String>,
+    pub parent_name: Option<String>,
+    pub parent_acronym: Option<String>,
 }
 
 pub trait EnvInfra: Send + Sync {
@@ -315,6 +323,16 @@ pub trait RegionMappingQueries: Send + Sync {
         &self,
         database_url: &str,
         region_uuid: Uuid,
+    ) -> Result<Option<RegionMapping>, Self::Error>;
+
+    /// Get region mapping by Allen integer region_id (the ontology id, NOT the
+    /// UUID PK). Used to look up the parent row when only `parent_region_id`
+    /// is known — for example when assembling the identity context for an
+    /// on-demand query-generation call.
+    async fn get_region_by_int_id(
+        &self,
+        database_url: &str,
+        region_id: i32,
     ) -> Result<Option<RegionMapping>, Self::Error>;
 
     /// Get all regions from region_mapping table

@@ -165,10 +165,14 @@ impl RegionManagement for FakeServices {
     ) -> Result<Vec<Uuid>, Self::Error> {
         not_staged("store_queries")
     }
+
     async fn generate_queries(
         &self,
         _region_name: &str,
         _count: u32,
+        _acronym: Option<&str>,
+        _parent_name: Option<&str>,
+        _parent_acronym: Option<&str>,
     ) -> Result<Vec<String>, Self::Error> {
         not_staged("generate_queries")
     }
@@ -196,6 +200,12 @@ impl RegionManagement for FakeServices {
     }
     async fn get_region_name(&self, _region_id: Uuid) -> Result<String, Self::Error> {
         not_staged("get_region_name")
+    }
+    async fn get_region_identity(
+        &self,
+        _region_id: Uuid,
+    ) -> Result<app::RegionIdentity, Self::Error> {
+        not_staged("get_region_identity")
     }
     async fn get_total_regions(&self) -> Result<i64, Self::Error> {
         match self.total_regions.lock().unwrap().take() {

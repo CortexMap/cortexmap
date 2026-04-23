@@ -247,6 +247,9 @@ mod tests {
             _chat_model: &str,
             _region_name: &str,
             _count: u32,
+            _acronym: Option<&str>,
+            _parent_name: Option<&str>,
+            _parent_acronym: Option<&str>,
         ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error> {
             unreachable!()
         }

@@ -74,10 +74,13 @@ where
         &self,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
         ctx: UsageContext,
     ) -> Result<Vec<String>, Self::Error> {
         self.llm_service
-            .generate_queries(region_name, count, ctx)
+            .generate_queries(region_name, count, acronym, parent_name, parent_acronym, ctx)
             .await
     }
 

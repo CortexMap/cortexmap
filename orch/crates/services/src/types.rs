@@ -104,6 +104,18 @@ pub struct GenerateQueriesRequest {
     /// alongside the `llm_call_usage` row. Typical value is `region:{region_id}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
+    /// Allen acronym for this region (e.g., "TTv"). When present, the prompt
+    /// instructs the LLM to include this token in every OR group, so PubMed
+    /// queries actually target the right literature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acronym: Option<String>,
+    /// Parent region's full name (e.g., "Taenia tecta") — useful anchor for
+    /// sparse-leaf regions whose own name rarely appears in literature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_name: Option<String>,
+    /// Parent region's Allen acronym (e.g., "TT").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_acronym: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

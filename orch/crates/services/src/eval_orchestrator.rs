@@ -637,6 +637,7 @@ pub(crate) async fn queue_summary_for_eval_best_effort<E, I>(
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::infra::{NewProcessedFetchTask, OrchConfig, ProcessedFetchTask};

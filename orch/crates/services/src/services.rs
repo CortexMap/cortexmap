@@ -117,9 +117,12 @@ where
         &self,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
     ) -> Result<Vec<String>, Self::Error> {
         self.region_management
-            .generate_queries(region_name, count)
+            .generate_queries(region_name, count, acronym, parent_name, parent_acronym)
             .await
     }
 
@@ -143,6 +146,13 @@ where
 
     async fn get_region_name(&self, region_id: Uuid) -> Result<String, Self::Error> {
         self.region_management.get_region_name(region_id).await
+    }
+
+    async fn get_region_identity(
+        &self,
+        region_id: Uuid,
+    ) -> Result<app::RegionIdentity, Self::Error> {
+        self.region_management.get_region_identity(region_id).await
     }
 
     async fn get_total_regions(&self) -> Result<i64, Self::Error> {

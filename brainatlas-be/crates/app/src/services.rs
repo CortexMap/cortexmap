@@ -50,6 +50,9 @@ pub trait LlmService: Send + Sync {
         &self,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
         ctx: UsageContext,
     ) -> Result<Vec<String>, Self::Error>;
 

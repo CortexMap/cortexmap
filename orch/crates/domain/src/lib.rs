@@ -80,6 +80,10 @@ pub enum ConfigKey {
     /// stale-batch watcher marks it `failed` (default 1800 = 30 minutes).
     /// Recovers batches abandoned by a brainatlas-be crash/restart.
     ProcessingBatchTimeoutSecs,
+    /// Max parallel calls to `brainatlas-be /api/generate-queries` during
+    /// Phase 1 of the pipeline. Lighter than `/process` so this can fan out
+    /// much wider; default 30.
+    MaxParallelQueryGeneration,
 }
 
 /// Result of polling for completed fetch tasks
@@ -175,6 +179,7 @@ mod tests {
             CostGuardrailEnabled,
             CostGuardrailPollIntervalSecs,
             ProcessingBatchTimeoutSecs,
+            MaxParallelQueryGeneration,
         ];
         all.into_iter()
             .map(|k| {
@@ -210,6 +215,7 @@ mod tests {
                     CostGuardrailEnabled => "cost_guardrail_enabled",
                     CostGuardrailPollIntervalSecs => "cost_guardrail_poll_interval_secs",
                     ProcessingBatchTimeoutSecs => "processing_batch_timeout_secs",
+                    MaxParallelQueryGeneration => "max_parallel_query_generation",
                 };
                 (k, s)
             })

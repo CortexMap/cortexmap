@@ -492,82 +492,106 @@ function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?:
 
 // ─── Eval scores strip (rendered at the bottom of each scored summary) ──
 
-const METRIC_DISPLAY: { key: string; label: string; invert?: boolean; description: string }[] = [
-  {
-    key: 'rubric_relevance',
-    label: 'Relevance',
-    description: 'Rubric judge (gpt-4o): does the summary actually describe the named region rather than drifting to neighbouring or parent structures?',
-  },
-  {
-    key: 'rubric_coherence',
-    label: 'Coherence',
-    description: 'Rubric judge (gpt-4o): is the prose well-organised, internally consistent, and free of contradiction or redundancy?',
-  },
-  {
-    key: 'rubric_specificity',
-    label: 'Specificity',
-    description: 'Rubric judge (gpt-4o): does it contain concrete neuroanatomical detail (cell types, layers, connections) rather than generic filler?',
-  },
-  {
-    key: 'rubric_clinical_utility',
-    label: 'Utility',
-    description: 'Rubric judge (gpt-4o): would a clinician or neuroscientist find the summary actionable — named pathologies, functional roles, diagnostic relevance?',
-  },
-  {
-    key: 'rubric_terminology',
-    label: 'Terminology',
-    description: 'Rubric judge (gpt-4o): does it use correct, standard neuroanatomical terminology (canonical Latin/Greek names, standard pathway labels)?',
-  },
+type MetricGroup = 'truth' | 'structure' | 'style';
+
+const METRIC_DISPLAY: { key: string; label: string; group: MetricGroup; invert?: boolean; description: string }[] = [
+  // ─── HEADLINE: truth & evidence ─────────────────────────────────────
+  // These are the metrics we optimise the pipeline for. Higher correlation
+  // with actual factual quality. Hallucination and groundedness are r=−0.90.
   {
     key: 'claim_groundedness',
     label: 'Groundedness',
+    group: 'truth',
     description: 'Groundedness judge (gpt-4o-mini): extracts atomic factual claims, retrieves the top-k most-similar source chunks, asks the judge whether each claim is supported. Score = fraction rated "supported".',
   },
   {
     key: 'hallucination_rate',
     label: 'Hallucination',
+    group: 'truth',
     invert: true,
     description: 'Inverse of groundedness: the fraction of atomic claims the judge rated unsupported or partial. Low = good.',
   },
   {
+    key: 'citation_scope',
+    label: 'Cite Scope',
+    group: 'truth',
+    description: 'Citation check (no LLM): of the valid UUIDs, fraction that belong to this summary\u2019s own retrieval corpus (not leaked from a different summary).',
+  },
+  {
+    key: 'citation_validity',
+    label: 'Cite Validity',
+    group: 'truth',
+    description: 'Citation check (no LLM): of the chunk UUIDs referenced, fraction that resolve to a real row in brain_region_embeddings. Catches orphan/fabricated UUIDs.',
+  },
+  {
+    key: 'citation_support',
+    label: 'Cite Support',
+    group: 'truth',
+    description: 'Citation judge (LLM, opt-in): of the valid in-scope citations, fraction where the cited chunk text actually supports the adjacent claim. The true "citation correctness" check.',
+  },
+  {
+    key: 'citation_presence',
+    label: 'Cite Presence',
+    group: 'truth',
+    description: 'Citation check (no LLM): fraction of factual claims that include at least one [chunk:UUID] marker attributing the source. Measures how often the writer bothered to cite at all.',
+  },
+  // ─── STRUCTURE: free, mechanical checks ─────────────────────────────
+  {
     key: 'section_completeness',
     label: 'Completeness',
+    group: 'structure',
     description: 'Structural check (no LLM): fraction of required markdown sections present — Overview, Anatomy & Connectivity, Function, Clinical Relevance.',
   },
   {
     key: 'length_in_range',
     label: 'Length',
+    group: 'structure',
     description: 'Structural check (no LLM): binary score confirming the summary word count falls within an acceptable window (not too short or bloated).',
   },
   {
     key: 'acronym_mention',
     label: 'Acronyms',
+    group: 'structure',
     description: 'Structural check (no LLM): verifies the region\u2019s acronym (e.g. "IPN") appears at least once in the summary body.',
   },
   {
     key: 'no_placeholder_text',
     label: 'No Placeholders',
+    group: 'structure',
     description: 'Structural check (no LLM): scans for LLM failure strings like "I cannot", "insufficient information", [TODO], etc. 0 if any found, 1 otherwise.',
   },
+  // ─── STYLE: rubric judge — anti-correlated with groundedness (r=−0.08) ───
+  // Kept visible as a context-free style signal but de-emphasised in the
+  // overall score so we don't reward confident-sounding fabrication.
   {
-    key: 'citation_presence',
-    label: 'Cite Presence',
-    description: 'Citation check (no LLM): fraction of factual claims that include at least one [chunk:UUID] marker attributing the source. Measures how often the writer bothered to cite at all.',
+    key: 'rubric_relevance',
+    label: 'Relevance',
+    group: 'style',
+    description: 'Rubric judge (gpt-4o): does the summary actually describe the named region rather than drifting to neighbouring or parent structures?',
   },
   {
-    key: 'citation_validity',
-    label: 'Cite Validity',
-    description: 'Citation check (no LLM): of the chunk UUIDs referenced, fraction that resolve to a real row in brain_region_embeddings. Catches orphan/fabricated UUIDs.',
+    key: 'rubric_coherence',
+    label: 'Coherence',
+    group: 'style',
+    description: 'Rubric judge (gpt-4o): is the prose well-organised, internally consistent, and free of contradiction or redundancy?',
   },
   {
-    key: 'citation_scope',
-    label: 'Cite Scope',
-    description: 'Citation check (no LLM): of the valid UUIDs, fraction that belong to this summary\u2019s own retrieval corpus (not leaked from a different summary).',
+    key: 'rubric_specificity',
+    label: 'Specificity',
+    group: 'style',
+    description: 'Rubric judge (gpt-4o): does it contain concrete neuroanatomical detail (cell types, layers, connections) rather than generic filler?',
   },
   {
-    key: 'citation_support',
-    label: 'Cite Support',
-    description: 'Citation judge (LLM, opt-in): of the valid in-scope citations, fraction where the cited chunk text actually supports the adjacent claim. The true "citation correctness" check.',
+    key: 'rubric_clinical_utility',
+    label: 'Utility',
+    group: 'style',
+    description: 'Rubric judge (gpt-4o): would a clinician or neuroscientist find the summary actionable — named pathologies, functional roles, diagnostic relevance?',
+  },
+  {
+    key: 'rubric_terminology',
+    label: 'Terminology',
+    group: 'style',
+    description: 'Rubric judge (gpt-4o): does it use correct, standard neuroanatomical terminology (canonical Latin/Greek names, standard pathway labels)?',
   },
 ];
 
@@ -588,8 +612,53 @@ function EvalScoresBar({ scores }: { scores: SummaryEvalScores }) {
 
   if (entries.length === 0) return null;
 
-  // Overall score: mean of displayed metrics, flipping "invert" metrics to a "higher is better" scale.
-  const overall = entries.reduce((acc, m) => acc + (m.invert ? 1 - (m.value as number) : (m.value as number)), 0) / entries.length;
+  // Overall score: mean of TRUTH metrics only. Style metrics are visible
+  // but excluded from the headline because they are anti-correlated with
+  // groundedness (r = -0.08 across 2.5k summaries) and reward fluent
+  // fabrication. Structure metrics are excluded because they are mostly
+  // 1.0 by construction once basic checks pass.
+  const truthEntries = entries.filter((m) => m.group === 'truth');
+  const headlineEntries = truthEntries.length > 0 ? truthEntries : entries;
+  const overall = headlineEntries.reduce(
+    (acc, m) => acc + (m.invert ? 1 - (m.value as number) : (m.value as number)),
+    0,
+  ) / headlineEntries.length;
+
+  const groupEntries = (g: MetricGroup) => entries.filter((m) => m.group === g);
+  const truthGroup = groupEntries('truth');
+  const structureGroup = groupEntries('structure');
+  const styleGroup = groupEntries('style');
+
+  const renderGroup = (label: string, items: typeof entries) => {
+    if (items.length === 0) return null;
+    return (
+      <div className={styles.evalGroup}>
+        <div className={styles.evalGroupLabel}>{label}</div>
+        <div className={styles.evalGrid}>
+          {items.map((m) => {
+            const color = scoreColor(m.value as number, !!m.invert);
+            const pct = Math.round(((m.value as number)) * 100);
+            return (
+              <div
+                key={m.key}
+                className={styles.evalMetric}
+                title={`${m.label}: ${(m.value as number).toFixed(3)}${scores.judge_models[m.key] ? ` \u2014 judge: ${scores.judge_models[m.key]}` : ''}\n\n${m.description}`}
+              >
+                <span className={styles.evalLabel}>{m.label}</span>
+                <span className={styles.evalValue} style={{ color }}>{pct}%</span>
+                <span className={styles.evalTrack}>
+                  <span
+                    className={styles.evalFill}
+                    style={{ width: `${(m.value as number) * 100}%`, backgroundColor: color }}
+                  />
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className={styles.evalBar} title={`Eval version: ${scores.eval_version}`}>
@@ -633,34 +702,17 @@ function EvalScoresBar({ scores }: { scores: SummaryEvalScores }) {
             ))}
           </dl>
           <div className={styles.evalInfoFooter}>
-            Overall = mean of all present metrics (hallucination flipped so higher = better).
+            Overall = mean of TRUTH metrics only (hallucination flipped so higher = better).
+            Style metrics are displayed for context but excluded from the
+            headline score because they are anti-correlated with groundedness.
             Green &#8805; 80%, amber 50\u201379%, red &lt; 50%.
           </div>
         </div>
       )}
 
-      <div className={styles.evalGrid}>
-        {entries.map((m) => {
-          const color = scoreColor(m.value as number, !!m.invert);
-          const pct = Math.round(((m.value as number)) * 100);
-          return (
-            <div
-              key={m.key}
-              className={styles.evalMetric}
-              title={`${m.label}: ${(m.value as number).toFixed(3)}${scores.judge_models[m.key] ? ` \u2014 judge: ${scores.judge_models[m.key]}` : ''}\n\n${m.description}`}
-            >
-              <span className={styles.evalLabel}>{m.label}</span>
-              <span className={styles.evalValue} style={{ color }}>{pct}%</span>
-              <span className={styles.evalTrack}>
-                <span
-                  className={styles.evalFill}
-                  style={{ width: `${(m.value as number) * 100}%`, backgroundColor: color }}
-                />
-              </span>
-            </div>
-          );
-        })}
-      </div>
+      {renderGroup('Truth & evidence', truthGroup)}
+      {renderGroup('Structure', structureGroup)}
+      {renderGroup('Style', styleGroup)}
     </div>
   );
 }

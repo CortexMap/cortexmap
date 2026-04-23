@@ -195,6 +195,12 @@ pub trait LlmClient: Send + Sync {
     ///
     /// `base_url` is the gateway's API base — see
     /// [`EmbeddingGenerator::generate_embedding`].
+    ///
+    /// `acronym`, `parent_name`, and `parent_acronym` are optional context
+    /// substituted into the system prompt so the LLM can produce
+    /// literature-targeted PubMed queries (always include the region's own
+    /// acronym in OR groups, never use a sub-modifier like "ventral part" as
+    /// a standalone synonym, etc.).
     async fn generate_queries(
         &self,
         base_url: &str,
@@ -202,6 +208,9 @@ pub trait LlmClient: Send + Sync {
         chat_model: &str,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
     ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error>;
 }
 
