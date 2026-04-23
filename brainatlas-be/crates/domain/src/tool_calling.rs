@@ -66,7 +66,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(args.top_k, 12);
-        assert_eq!(args.fallback_policy, Some(RetrievalFallbackPolicy::ActiveSummary));
+        assert_eq!(
+            args.fallback_policy,
+            Some(RetrievalFallbackPolicy::ActiveSummary)
+        );
     }
 
     #[test]

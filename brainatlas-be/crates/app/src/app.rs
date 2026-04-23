@@ -1,8 +1,8 @@
 use crate::{AppError, Services};
 use domain::{
-    BrainRegionEntry, ChunkSource, LlmResponse, NewEmbedding, NewRegionSummary,
-    RegionMapping, RetrievalFallbackPolicy, RetrievalScope, SearchEmbeddingsArgs, SimilarChunk,
-    UsageContext, compute_hash, rpc_types::PaperMetadata,
+    BrainRegionEntry, ChunkSource, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping,
+    RetrievalFallbackPolicy, RetrievalScope, SearchEmbeddingsArgs, SimilarChunk, UsageContext,
+    compute_hash, rpc_types::PaperMetadata,
 };
 use futures::future::join_all;
 use schemars::schema_for;
@@ -54,7 +54,8 @@ struct SearchEmbeddingsToolResult {
 
 fn render_region_context_block(region: &RegionMapping) -> String {
     let identity = RegionIdentityContext::from(region);
-    let identity_json = serde_json::to_string_pretty(&identity).unwrap_or_else(|_| "{}".to_string());
+    let identity_json =
+        serde_json::to_string_pretty(&identity).unwrap_or_else(|_| "{}".to_string());
     format!(
         "**Region identity metadata (authoritative):**\n```json\n{}\n```\nTreat `ontology_extension` as reserved for future ontology-backed enrichment; if it is null, do not infer missing type metadata.",
         identity_json
@@ -585,7 +586,8 @@ where
                             retrieval_scope: effective_scope,
                             results: similar_chunks,
                         };
-                        let result_content = serde_json::to_string(&tool_result).unwrap_or_default();
+                        let result_content =
+                            serde_json::to_string(&tool_result).unwrap_or_default();
 
                         messages.push(serde_json::json!({
                             "role": "tool",
@@ -738,8 +740,8 @@ mod tests {
     use domain::{
         BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
         LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RetrievalFallbackPolicy,
-        RetrievalScope, RubricScores, SimilarChunk, ToolCall, UsageAggregate,
-        UsageAggregateFilter, rpc_types::PaperMetadata,
+        RetrievalScope, RubricScores, SimilarChunk, ToolCall, UsageAggregate, UsageAggregateFilter,
+        rpc_types::PaperMetadata,
     };
     use std::sync::Mutex;
 
@@ -1429,7 +1431,10 @@ mod tests {
         assert_eq!(calls.searches.len(), 1);
         assert_eq!(calls.searches[0].1, 3, "top_k propagated");
         assert_eq!(calls.searches[0].0.region_id, 2);
-        assert_eq!(calls.searches[0].0.fallback_policy, RetrievalFallbackPolicy::ActiveSummary);
+        assert_eq!(
+            calls.searches[0].0.fallback_policy,
+            RetrievalFallbackPolicy::ActiveSummary
+        );
     }
 
     #[tokio::test]
@@ -1683,8 +1688,7 @@ mod tests {
     /// contain any unresolved `{{...}}` placeholder.
     #[test]
     fn knowledge_system_prompt_no_unresolved_placeholders() {
-        let region = RegionMapping::new(8, "Cerebellum".to_string())
-            .with_acronym("CB".to_string());
+        let region = RegionMapping::new(8, "Cerebellum".to_string()).with_acronym("CB".to_string());
 
         let block = render_region_context_block(&region);
         let prompt = KNOWLEDGE_SUMMARIZE_SYSTEM_TEMPLATE
@@ -1695,8 +1699,14 @@ mod tests {
             !prompt.contains("{{"),
             "all placeholders must be substituted in knowledge system prompt"
         );
-        assert!(prompt.contains("Cerebellum"), "region name must appear in prompt");
-        assert!(prompt.contains("\"CB\""), "acronym must appear via context block");
+        assert!(
+            prompt.contains("Cerebellum"),
+            "region name must appear in prompt"
+        );
+        assert!(
+            prompt.contains("\"CB\""),
+            "acronym must appear via context block"
+        );
     }
 
     // ---------- Tests: retrieval scope contract (Task 4 app-layer) ----------
@@ -1795,8 +1805,7 @@ mod tests {
             .enqueue_summarize_ok(LlmResponse::ToolCalls(vec![ToolCall {
                 id: "t".to_string(),
                 name: "search_embeddings".to_string(),
-                arguments: r#"{"query":"function","top_k":5,"fallback_policy":"none"}"#
-                    .to_string(),
+                arguments: r#"{"query":"function","top_k":5,"fallback_policy":"none"}"#.to_string(),
             }]))
             .enqueue_summarize_ok(LlmResponse::Final("done".to_string()));
         let svc = Arc::new(svc);
@@ -1864,19 +1873,24 @@ mod tests {
         .unwrap();
 
         let calls = svc.calls.lock().unwrap();
-        assert_eq!(calls.searches.len(), 2, "two tool calls must yield two searches");
+        assert_eq!(
+            calls.searches.len(),
+            2,
+            "two tool calls must yield two searches"
+        );
         for (i, (scope, _)) in calls.searches.iter().enumerate() {
             assert_eq!(
                 scope.summary_id, expected_summary_id,
                 "search {i}: summary_id must be consistent"
             );
-            assert_eq!(scope.region_id, 11, "search {i}: region_id must be consistent");
+            assert_eq!(
+                scope.region_id, 11,
+                "search {i}: region_id must be consistent"
+            );
         }
         assert_eq!(calls.searches[0].1, 2, "first call: top_k = 2");
         assert_eq!(calls.searches[1].1, 3, "second call: top_k = 3");
     }
-
-
 
     #[tokio::test]
     async fn process_region_default_correlation_id_is_batch_prefix() {

@@ -1,7 +1,7 @@
 use domain::{
     BrainRegionEntry, ChunkSource, ExistingSummary, LlmCallOutcome, LlmPricing, LlmProvider,
-    LlmResponse, NewEmbedding, NewLlmCallUsage, NewRegionSummary, RegionMapping,
-    RetrievalScope, SimilarChunk, UsageAggregate, UsageAggregateFilter,
+    LlmResponse, NewEmbedding, NewLlmCallUsage, NewRegionSummary, RegionMapping, RetrievalScope,
+    SimilarChunk, UsageAggregate, UsageAggregateFilter,
 };
 use uuid::Uuid;
 

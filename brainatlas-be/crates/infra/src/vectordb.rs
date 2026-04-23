@@ -217,7 +217,9 @@ impl VectorDatabase for BrainAtlasVectorDB {
 
         self.run_blocking(database_url, move |conn| {
             let search_for_summary =
-                |conn: &mut PgConnection, summary_id_param: Uuid| -> Result<Vec<SimilarChunkRow>, diesel::result::Error> {
+                |conn: &mut PgConnection,
+                 summary_id_param: Uuid|
+                 -> Result<Vec<SimilarChunkRow>, diesel::result::Error> {
                     diesel::sql_query(
                         "SELECT id, chunk_index, chunk_text, \
                          1.0 - (embedding <=> $1::vector) AS similarity_score, \
@@ -396,9 +398,12 @@ mod retrieval_scope_integration_tests {
             .expect("insert target summary");
 
         // Insert a chunk for the target summary
-        db.insert_embeddings(&url, vec![make_embedding(region_id, target_summary_id, "target chunk")])
-            .await
-            .expect("insert target chunk");
+        db.insert_embeddings(
+            &url,
+            vec![make_embedding(region_id, target_summary_id, "target chunk")],
+        )
+        .await
+        .expect("insert target chunk");
 
         // Insert a second summary for the same region (it becomes active, target is now inactive)
         let other_summary = NewRegionSummary {
@@ -414,9 +419,12 @@ mod retrieval_scope_integration_tests {
             .await
             .expect("insert other summary");
 
-        db.insert_embeddings(&url, vec![make_embedding(region_id, other_summary_id, "other chunk")])
-            .await
-            .expect("insert other chunk");
+        db.insert_embeddings(
+            &url,
+            vec![make_embedding(region_id, other_summary_id, "other chunk")],
+        )
+        .await
+        .expect("insert other chunk");
 
         // Search strictly scoped to the target (now inactive) summary
         let scope = RetrievalScope::current_summary(region_id, target_summary_id);
@@ -458,9 +466,12 @@ mod retrieval_scope_integration_tests {
             .await
             .expect("insert active summary");
 
-        db.insert_embeddings(&url, vec![make_embedding(region_id, active_id, "active chunk")])
-            .await
-            .expect("insert active chunk");
+        db.insert_embeddings(
+            &url,
+            vec![make_embedding(region_id, active_id, "active chunk")],
+        )
+        .await
+        .expect("insert active chunk");
 
         // Synthesise a phantom summary_id that has no embeddings at all
         let phantom_id = Uuid::new_v4();
@@ -507,9 +518,12 @@ mod retrieval_scope_integration_tests {
             .await
             .expect("insert active summary");
 
-        db.insert_embeddings(&url, vec![make_embedding(region_id, active_id, "should not appear")])
-            .await
-            .expect("insert chunk");
+        db.insert_embeddings(
+            &url,
+            vec![make_embedding(region_id, active_id, "should not appear")],
+        )
+        .await
+        .expect("insert chunk");
 
         // Use a phantom summary_id with None fallback policy
         let phantom_id = Uuid::new_v4();
