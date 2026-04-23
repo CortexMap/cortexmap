@@ -37,10 +37,7 @@ pub trait EvalsApi: Send + Sync {
         eval_version: Option<String>,
         limit: i64,
     ) -> Result<UnscoredResponse, Self::Error>;
-    async fn batch_eval(
-        &self,
-        req: BatchEvalRequest,
-    ) -> Result<BatchEvalResponse, Self::Error>;
+    async fn batch_eval(&self, req: BatchEvalRequest) -> Result<BatchEvalResponse, Self::Error>;
 }
 
 pub struct Evals<DB, EN, E>
@@ -123,10 +120,7 @@ where
             .map_err(ApiError::AppError)
     }
 
-    async fn batch_eval(
-        &self,
-        req: BatchEvalRequest,
-    ) -> Result<BatchEvalResponse, Self::Error> {
+    async fn batch_eval(&self, req: BatchEvalRequest) -> Result<BatchEvalResponse, Self::Error> {
         self.app
             .clone()
             .batch_eval(req)
