@@ -4,8 +4,7 @@ use crate::schema;
 use diesel::prelude::*;
 use diesel::sql_types::{Float8, Int4, Text};
 use domain::{
-    ChunkSource, ExistingSummary, NewEmbedding, NewRegionSummary,
-    RetrievalScope, SimilarChunk,
+    ChunkSource, ExistingSummary, NewEmbedding, NewRegionSummary, RetrievalScope, SimilarChunk,
 };
 use services::infra::VectorDatabase;
 use std::sync::{Arc, Mutex, OnceLock};
