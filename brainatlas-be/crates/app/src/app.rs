@@ -359,11 +359,24 @@ where
         let chunk_overlap: usize = 200;
 
         for key in &s3_keys {
-            let content = self
+            let content = match self
                 .services
                 .download(key)
                 .await
-                .map_err(AppError::ServiceError)?;
+                .map_err(AppError::ServiceError)?
+            {
+                Some(c) => c,
+                None => {
+                    tracing::warn!(
+                        region = %region.name,
+                        region_id = region.region_id,
+                        batch_id = %batch_id,
+                        s3_key = %key,
+                        "process_region: S3 key missing, skipping"
+                    );
+                    continue;
+                }
+            };
 
             let start_idx = all_chunks.len();
             let key_chunks = self.services.chunk(&content, chunk_size, chunk_overlap);
@@ -1416,7 +1429,7 @@ mod tests {
     #[async_trait::async_trait]
     impl S3Storage for FakeServices {
         type Error = FakeErr;
-        async fn download(&self, key: &str) -> Result<String, Self::Error> {
+        async fn download(&self, key: &str) -> Result<Option<String>, Self::Error> {
             {
                 let mut c = self.calls.lock().unwrap();
                 if self.download_error_on_first && c.downloads.is_empty() {
@@ -1425,10 +1438,7 @@ mod tests {
                 }
                 c.downloads.push(key.to_string());
             }
-            self.downloads
-                .get(key)
-                .cloned()
-                .ok_or(FakeErr("s3 key not found"))
+            Ok(self.downloads.get(key).cloned())
         }
     }
 

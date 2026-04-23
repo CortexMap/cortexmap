@@ -245,8 +245,8 @@ impl EmbeddingService for FakeServices {
 #[async_trait]
 impl S3Storage for FakeServices {
     type Error = FakeErr;
-    async fn download(&self, _key: &str) -> Result<String, Self::Error> {
-        Ok(String::new())
+    async fn download(&self, _key: &str) -> Result<Option<String>, Self::Error> {
+        Ok(Some(String::new()))
     }
 }
 

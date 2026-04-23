@@ -26,14 +26,23 @@ pub struct StdInfraContext {
 
 impl StdInfraContext {
     /// Create from runtime environment variables (collected once, reused).
+    ///
+    /// Empty env-var values are treated as absent: passing `Some("")` to the
+    /// AWS SDK causes `endpoint_url`/`credentials_provider` to be called with
+    /// an empty string, which breaks request dispatch. Filter them out here.
     #[allow(clippy::result_large_err)]
     pub fn from_env() -> Result<Self, InfraError> {
         let env = FetcherEnvInfra::new();
+        let non_empty = |key: &str| -> Option<String> {
+            env.get_env_var(key)
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        };
         Ok(Self {
             database_url: env.get_env_var("DATABASE_URL")?,
-            endpoint: env.get_env_var("S3_ENDPOINT").ok(),
-            access_key: env.get_env_var("S3_ACCESS_KEY").ok(),
-            secret_key: env.get_env_var("S3_SECRET_KEY").ok(),
+            endpoint: non_empty("S3_ENDPOINT"),
+            access_key: non_empty("S3_ACCESS_KEY"),
+            secret_key: non_empty("S3_SECRET_KEY"),
             bucket: env.get_env_var("S3_BUCKET")?,
         })
     }

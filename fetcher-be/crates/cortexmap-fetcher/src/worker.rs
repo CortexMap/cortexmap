@@ -433,6 +433,11 @@ where
 
     // Track consecutive failures to escalate backoff
     let mut consecutive_failures: u32 = 0;
+    // Only one worker per instance should run maintenance. Use a counter so
+    // each worker only runs reset_stale_tasks once every N empty-queue cycles.
+    let mut empty_queue_cycles: u64 = 0;
+    // Stagger by hashing worker_id so not all workers reset at the same tick.
+    let stale_reset_interval: u64 = 10;
 
     loop {
         // Try to claim next pending task
@@ -527,6 +532,27 @@ where
             Ok(None) => {
                 // No tasks available -- reset failure counter since this isn't a failure
                 consecutive_failures = 0;
+                empty_queue_cycles += 1;
+
+                // Periodically reset stale in_progress tasks so dead-worker tasks
+                // don't get stuck forever. Only runs on every stale_reset_interval
+                // empty cycles to avoid DB churn.
+                if empty_queue_cycles % stale_reset_interval == 0 {
+                    match ctx.infra.reset_stale_tasks(timeout_secs).await {
+                        Ok(n) if n > 0 => tracing::warn!(
+                            "Worker {} reset {} stale tasks",
+                            worker_id,
+                            n
+                        ),
+                        Err(e) => tracing::error!(
+                            "Worker {} failed to reset stale tasks: {}",
+                            worker_id,
+                            e
+                        ),
+                        _ => {}
+                    }
+                }
+
                 tracing::debug!(
                     "No tasks available, sleeping for {}s",
                     empty_queue_sleep_secs

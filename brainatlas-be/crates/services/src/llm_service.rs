@@ -502,7 +502,7 @@ mod tests {
     #[async_trait::async_trait]
     impl S3Storage for MockInfra {
         type Error = MockErr;
-        async fn download(&self, _key: &str) -> Result<String, Self::Error> {
+        async fn download(&self, _key: &str) -> Result<Option<String>, Self::Error> {
             unreachable!("S3Storage::download not used in llm_service tests")
         }
     }

@@ -203,7 +203,7 @@ where
 {
     type Error = ServiceError<E>;
 
-    async fn download(&self, key: &str) -> Result<String, Self::Error> {
+    async fn download(&self, key: &str) -> Result<Option<String>, Self::Error> {
         self.infra
             .download(key)
             .await

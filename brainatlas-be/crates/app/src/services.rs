@@ -119,7 +119,10 @@ pub trait EmbeddingService: Send + Sync {
 pub trait S3Storage: Send + Sync {
     type Error: Error + Send + Sync;
 
-    async fn download(&self, key: &str) -> Result<String, Self::Error>;
+    /// Download file from S3 as UTF-8 string.
+    /// Returns `Ok(None)` when the key does not exist so callers can skip
+    /// missing data rather than failing the entire pipeline.
+    async fn download(&self, key: &str) -> Result<Option<String>, Self::Error>;
 }
 
 /// Vector database service

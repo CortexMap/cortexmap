@@ -23,11 +23,20 @@ impl StdS3Infra {
         secret_key: Option<&str>,
         bucket: &str,
     ) -> Self {
+        // Treat `Some("")` as absent. Passing an empty string to
+        // `endpoint_url` or `Credentials::from_keys` produces a broken SDK
+        // client (dispatch failures, empty-endpoint URLs). The helper here
+        // means callers can't accidentally wire an empty env var through.
+        let non_empty = |v: Option<&str>| -> Option<String> {
+            v.map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
         Self {
             client: OnceCell::new(),
-            endpoint: endpoint.map(str::to_owned),
-            access_key: access_key.map(str::to_owned),
-            secret_key: secret_key.map(str::to_owned),
+            endpoint: non_empty(endpoint),
+            access_key: non_empty(access_key),
+            secret_key: non_empty(secret_key),
             bucket: bucket.to_owned(),
         }
     }

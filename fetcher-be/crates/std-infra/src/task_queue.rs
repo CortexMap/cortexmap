@@ -337,17 +337,49 @@ impl TaskQueueInfra for StdTaskQueue {
 
     async fn reset_stale_tasks(&self, timeout_secs: u64) -> Result<usize, InfraError> {
         self.run_blocking(move |conn| {
-            // Reset tasks that have been in_progress for more than timeout_secs * 3
             let stale_timeout = timeout_secs * 3;
-            let query = format!(
-                "UPDATE fetch_tasks 
-                 SET status = 'pending', started_at = NULL 
-                 WHERE status = 'in_progress' 
-                   AND started_at < NOW() - INTERVAL '{} seconds'",
-                stale_timeout
-            );
+            conn.transaction(|conn| {
+                // Step 1: For tasks where all components are terminal (completed/failed),
+                // mark the task itself as completed instead of resetting it.
+                let completed_query = format!(
+                    "UPDATE fetch_tasks
+                     SET status = 'completed', completed_at = NOW()
+                     WHERE status = 'in_progress'
+                       AND started_at < NOW() - INTERVAL '{stale} seconds'
+                       AND NOT EXISTS (
+                         SELECT 1 FROM fetch_task_components ftc
+                         WHERE ftc.task_id = fetch_tasks.id
+                           AND ftc.status NOT IN ('completed', 'failed')
+                       )",
+                    stale = stale_timeout
+                );
+                diesel::sql_query(&completed_query).execute(conn)?;
 
-            diesel::sql_query(&query).execute(conn)
+                // Step 2: Reset any in_progress components belonging to stale tasks
+                // back to pending so the next worker can re-attempt them.
+                let components_query = format!(
+                    "UPDATE fetch_task_components
+                     SET status = 'pending', attempt_count = 0
+                     WHERE status = 'in_progress'
+                       AND task_id IN (
+                         SELECT id FROM fetch_tasks
+                         WHERE status = 'in_progress'
+                           AND started_at < NOW() - INTERVAL '{stale} seconds'
+                       )",
+                    stale = stale_timeout
+                );
+                diesel::sql_query(&components_query).execute(conn)?;
+
+                // Step 3: Reset the stale tasks themselves back to pending.
+                let tasks_query = format!(
+                    "UPDATE fetch_tasks
+                     SET status = 'pending', started_at = NULL, worker_id = NULL
+                     WHERE status = 'in_progress'
+                       AND started_at < NOW() - INTERVAL '{stale} seconds'",
+                    stale = stale_timeout
+                );
+                diesel::sql_query(&tasks_query).execute(conn)
+            })
         })
         .await
     }

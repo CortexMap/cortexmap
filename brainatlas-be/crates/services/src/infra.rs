@@ -143,8 +143,10 @@ pub struct S3Creds {
 pub trait S3Storage: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    /// Download file from S3 as UTF-8 string (reads credentials from env internally)
-    async fn download(&self, key: &str) -> Result<String, Self::Error>;
+    /// Download file from S3 as UTF-8 string (reads credentials from env internally).
+    /// Returns `Ok(None)` when the key does not exist so callers can skip missing
+    /// data rather than failing the entire pipeline.
+    async fn download(&self, key: &str) -> Result<Option<String>, Self::Error>;
 }
 
 /// Embedding generation
