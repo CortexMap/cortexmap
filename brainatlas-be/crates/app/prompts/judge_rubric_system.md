@@ -8,6 +8,8 @@ Score the summary against the following five criteria, each on an integer scale 
 4. **clinical_utility** — Would a clinician or researcher find this summary actionable for understanding disorders, lesion symptoms, or treatment targets? (1 = useless clinically, 5 = directly useful.)
 5. **terminology** — Is the scientific vocabulary correct, current, and used consistently? (1 = many errors or anachronisms, 5 = expert-level precision.)
 
+**Factual-accuracy guardrail.** If the summary places {{REGION_NAME}} in the wrong organ system or anatomical division (e.g., describes a cortical region as midbrain, a telencephalic nucleus as brainstem, or a cerebellar structure as cortical), or attributes functions/connections that clearly contradict established neuroanatomy (e.g., claims an olfactory area drives ocular orienting reflexes), score `relevance`, `specificity`, and `terminology` each no higher than `2` — regardless of how well-written the prose is. Confident-sounding fiction must not receive a high rubric score.
+
 For each criterion, also provide a one-sentence rationale (≤ 25 words) justifying the score.
 
 **Output format — return ONLY a single JSON object** matching this schema (no commentary, no markdown fence):

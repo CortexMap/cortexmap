@@ -61,18 +61,66 @@ pub fn length_in_range(summary: &str) -> f32 {
     1.0 - ((len as f32 - LENGTH_HIGH as f32) / (LENGTH_CEIL as f32 - LENGTH_HIGH as f32))
 }
 
-/// 1.0 if the acronym appears at least once in the summary text, else 0.0.
-/// If `acronym` is `None` (regions without one) this is vacuously 1.0.
+/// Score for acronym presence in the summary text.
+///
+/// Matching strategy (first match wins, highest score returned):
+///  1. **Exact substring** (case-insensitive) → `1.0`
+///  2. **Dotted / hyphenated form** — e.g. `HPC` matches `H.P.C.` or `H-P-C` → `1.0`
+///  3. **Fuzzy word match** — any whitespace-delimited token within Levenshtein
+///     distance ≤ `max(1, acronym.len() / 3)` of the acronym → `0.5`
+///
+/// If `acronym` is `None` or blank, returns `1.0` (vacuously satisfied).
 pub fn acronym_mention(summary: &str, acronym: Option<&str>) -> f32 {
     match acronym {
         None => 1.0,
-        Some(a) if a.trim().is_empty() => 1.0,
         Some(a) => {
-            if summary.contains(a) {
-                1.0
-            } else {
-                0.0
+            let a = a.trim();
+            if a.is_empty() {
+                return 1.0;
             }
+            let summary_lower = summary.to_ascii_lowercase();
+            let acronym_lower = a.to_ascii_lowercase();
+
+            // 1. Exact case-insensitive substring.
+            if summary_lower.contains(&acronym_lower) {
+                return 1.0;
+            }
+
+            // 2. Dotted / hyphenated form (e.g. "H.P.C." or "H-P-C" for "HPC").
+            if acronym_lower.len() >= 2 {
+                let dotted: String = acronym_lower
+                    .chars()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>()
+                    .join("[.\\-]?");
+                if let Ok(re) = regex::Regex::new(&format!("(?i){dotted}"))
+                    && re.is_match(summary)
+                {
+                    return 1.0;
+                }
+            }
+
+            // 3. Fuzzy word-level match via Levenshtein distance.
+            let max_dist = (acronym_lower.len() / 3).max(1);
+            for token in summary_lower.split_whitespace() {
+                // Strip common trailing punctuation so "HPC," or "(HPC)" don't
+                // inflate edit distance.
+                let token = token.trim_matches(|c: char| !c.is_alphanumeric());
+                if token.is_empty() {
+                    continue;
+                }
+                // Skip tokens whose length differs too much — they can never be
+                // within `max_dist`.
+                let len_diff = token.len().abs_diff(acronym_lower.len());
+                if len_diff > max_dist {
+                    continue;
+                }
+                if strsim::levenshtein(token, &acronym_lower) <= max_dist {
+                    return 0.5;
+                }
+            }
+
+            0.0
         }
     }
 }
@@ -165,6 +213,69 @@ mod tests {
         assert_eq!(
             acronym_mention("The HPC supports memory.", Some("HPC")),
             1.0
+        );
+    }
+
+    #[test]
+    fn acronym_mention_case_insensitive() {
+        assert_eq!(
+            acronym_mention("The hpc supports memory.", Some("HPC")),
+            1.0
+        );
+        assert_eq!(
+            acronym_mention("The HPC supports memory.", Some("hpc")),
+            1.0
+        );
+    }
+
+    #[test]
+    fn acronym_mention_trims_whitespace() {
+        assert_eq!(
+            acronym_mention("The HPC supports memory.", Some(" HPC ")),
+            1.0
+        );
+        assert_eq!(
+            acronym_mention("The HPC supports memory.", Some("  HPC\t")),
+            1.0
+        );
+    }
+
+    #[test]
+    fn acronym_mention_dotted_form() {
+        assert_eq!(
+            acronym_mention("The H.P.C. supports memory.", Some("HPC")),
+            1.0
+        );
+        assert_eq!(
+            acronym_mention("The H-P-C supports memory.", Some("HPC")),
+            1.0
+        );
+    }
+
+    #[test]
+    fn acronym_mention_fuzzy_one_char_off() {
+        // "HPC" vs "HRC" — edit distance 1, within threshold max(1, 3/3)=1
+        assert_eq!(
+            acronym_mention("The HRC supports memory.", Some("HPC")),
+            0.5
+        );
+    }
+
+    #[test]
+    fn acronym_mention_fuzzy_too_distant() {
+        // "HPC" vs "XYZ" — edit distance 3, exceeds threshold
+        assert_eq!(
+            acronym_mention("The XYZ supports memory.", Some("HPC")),
+            0.0
+        );
+    }
+
+    #[test]
+    fn acronym_mention_fuzzy_with_punctuation() {
+        // Token "(HRC)" should be stripped to "HRC" then fuzzy-matched
+        assert_eq!(
+            acronym_mention("The (HRC) supports memory.", Some("HPC")),
+            0.5
         );
     }
 

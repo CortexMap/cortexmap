@@ -175,6 +175,36 @@ pub struct UnscoredResponse {
     pub summary_ids: Vec<Uuid>,
 }
 
+// ---- POST /api/evals/batch ----
+
+/// Queue eval runs for a list of summaries.
+///
+/// Each `summary_id` is marked `queued` in `eval_runs` for the effective eval
+/// version, and orch later picks it up via `/api/evals/unscored` to drive the
+/// full `init -> step -> ... -> done` loop. Repeated calls refresh the
+/// `(summary_id, eval_version)` row back to `queued` rather than spawning a
+/// second in-process worker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchEvalRequest {
+    /// One or more summary IDs to evaluate. Must be non-empty.
+    pub summary_ids: Vec<Uuid>,
+    /// Optional eval version override. Defaults to the server-configured
+    /// `EVAL_VERSION` env var when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_version: Option<String>,
+}
+
+/// Immediate response returned before any background eval task has completed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchEvalResponse {
+    /// Ephemeral correlation UUID generated server-side. Useful for log
+    /// correlation — not persisted and not queryable after this response.
+    pub batch_eval_id: Uuid,
+    /// Echo of every `summary_id` that was accepted into the background queue,
+    /// in the order they were received.
+    pub accepted: Vec<Uuid>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

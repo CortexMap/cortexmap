@@ -16,3 +16,4 @@ brainatlas-rpc-types.workspace = true
 rpc-types.workspace = true
 tokio.workspace = true
 regex.workspace = true
+strsim.workspace = true

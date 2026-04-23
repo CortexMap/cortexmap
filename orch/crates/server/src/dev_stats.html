@@ -172,6 +172,32 @@
 
   .error-msg { color: var(--red); font-size: 0.8rem; padding: 0.5rem; }
 
+  .input-label {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-bottom: 0.35rem;
+  }
+  .text-input, .text-area {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    padding: 0.55rem 0.7rem;
+  }
+  .text-input:focus, .text-area:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .text-area {
+    min-height: 110px;
+    resize: vertical;
+    line-height: 1.45;
+  }
+
   /* tooltips */
   [data-tip] {
     position: relative;
@@ -353,6 +379,20 @@
     <h2>Evals <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim); margin-left: 0.5rem;" data-tip="Phase-4 quality evaluation: structural metrics + LLM-judged groundedness/rubric over generated region summaries.">automated quality scoring</span></h2>
     <div id="evalStatus" style="margin-bottom: 0.8rem"></div>
     <div class="stat-row" id="evalOverview" style="margin-bottom: 0.8rem"></div>
+    <h3 style="margin-top: 1rem; font-size: 1rem;">Batch queue <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim);" data-tip="Posts to /api/evals/batch. Each summary ID is marked queued and the eval orchestrator later drains it via the unscored route.">enqueue eval runs</span></h3>
+    <div style="display: grid; grid-template-columns: minmax(260px, 1fr) minmax(180px, 260px); gap: 0.9rem; margin-top: 0.7rem; align-items: start;">
+      <div>
+        <label class="input-label" for="evalBatchIds">Summary IDs <span style="color: var(--text-dim);">(one UUID per line, comma-separated also works)</span></label>
+        <textarea id="evalBatchIds" class="text-area" spellcheck="false" placeholder="11111111-1111-1111-1111-111111111111&#10;22222222-2222-2222-2222-222222222222"></textarea>
+      </div>
+      <div>
+        <label class="input-label" for="evalBatchVersion">Eval version override <span style="color: var(--text-dim);">(optional)</span></label>
+        <input id="evalBatchVersion" class="text-input" type="text" spellcheck="false" placeholder="v-batch">
+        <button id="evalBatchBtn" style="margin-top: 0.9rem; width: 100%; padding: 0.65rem 1rem; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Queue Eval Batch</button>
+        <div style="margin-top: 0.6rem; font-size: 0.76rem; color: var(--text-dim);" data-tip="This only queues eval_runs rows. It does not synchronously execute scoring in the browser request.">Returns HTTP 202 on success.</div>
+      </div>
+    </div>
+    <div id="evalBatchResult" style="margin-top: 0.8rem; font-family: var(--mono); font-size: 0.8rem; color: var(--text-dim); white-space: pre-wrap; display: none;"></div>
     <h3 style="margin-top: 1rem; font-size: 1rem;">Worst offenders by groundedness <span style="font-weight: normal; font-size: 0.8rem; color: var(--text-dim);" data-tip="Lowest groundedness scores: indicates summaries with claims poorly supported by retrieved chunks.">(top 10)</span></h3>
     <div id="evalWorst" style="overflow-x:auto"></div>
   </div>
@@ -567,6 +607,16 @@ function renderQueryDist(items) {
   $('queryDist').innerHTML = html;
 }
 
+function parseUuidList(raw) {
+  if (!raw) return [];
+  return [...new Set(
+    raw
+      .split(/[\s,]+/)
+      .map(s => s.trim())
+      .filter(Boolean)
+  )];
+}
+
 async function safeFetch(url) {
   try {
     const r = await fetch(url);
@@ -757,6 +807,58 @@ $('triggerBtn').addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = 'Trigger Pipeline';
+  }
+});
+
+// Eval batch trigger button
+$('evalBatchBtn').addEventListener('click', async () => {
+  const ids = parseUuidList($('evalBatchIds').value);
+  const evalVersionRaw = $('evalBatchVersion').value.trim();
+  const out = $('evalBatchResult');
+  const btn = $('evalBatchBtn');
+
+  if (ids.length === 0) {
+    out.style.display = 'block';
+    out.style.color = 'var(--red)';
+    out.textContent = 'Provide at least one summary UUID.';
+    return;
+  }
+
+  const body = {
+    summary_ids: ids,
+    ...(evalVersionRaw ? { eval_version: evalVersionRaw } : {})
+  };
+
+  btn.disabled = true;
+  btn.textContent = 'Queueing...';
+  out.style.display = 'block';
+  out.style.color = 'var(--text-dim)';
+  out.textContent = 'POST ' + BASE + '/api/evals/batch\n' + JSON.stringify(body, null, 2);
+
+  try {
+    const res = await fetch(BASE + '/api/evals/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const text = await res.text();
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = text;
+    }
+    out.style.color = res.ok ? 'var(--accent)' : 'var(--red)';
+    out.textContent = 'HTTP ' + res.status + '\n' + (typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2));
+    if (res.ok) {
+      poll();
+    }
+  } catch (e) {
+    out.style.color = 'var(--red)';
+    out.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Queue Eval Batch';
   }
 });
 

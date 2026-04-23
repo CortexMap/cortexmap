@@ -10,9 +10,9 @@ use crate::run_eval::{
 };
 use domain::{EvalRunStatus, compute_hash};
 use rpc_types::{
-    EvalSummaryResponse, InitScoreRequest, InitScoreResponse, LlmEndpoint, MetricResult,
-    MetricStats, NextAction, ScoreEntry, ScoresForSummaryResponse, StepRequest, StepResponse,
-    UnscoredResponse, WorstOffender, WorstOffendersResponse,
+    BatchEvalRequest, BatchEvalResponse, EvalSummaryResponse, InitScoreRequest, InitScoreResponse,
+    LlmEndpoint, MetricResult, MetricStats, NextAction, ScoreEntry, ScoresForSummaryResponse,
+    StepRequest, StepResponse, UnscoredResponse, WorstOffender, WorstOffendersResponse,
 };
 use services::state_machine::{self, RunContext, RunState};
 use services::{EnvInfra, EvalsDatabase, ServiceError};
@@ -519,8 +519,12 @@ where
         })
     }
 
-    /// Active summary IDs that have no `complete` `eval_runs` row for the
-    /// given `eval_version`. Used by the orch eval-orchestrator to find work.
+    /// Summary IDs explicitly queued for evaluation for the given
+    /// `eval_version`. Used by the orch eval-orchestrator to find work.
+    ///
+    /// Only summaries with an existing `eval_runs` row are returned:
+    /// queued rows are runnable immediately, and stale running rows are
+    /// returned for recovery after worker interruption.
     pub async fn list_unscored_summary_ids(
         &self,
         eval_version: Option<String>,
@@ -537,6 +541,59 @@ where
             eval_version: ver,
             limit,
             summary_ids: ids,
+        })
+    }
+
+    /// Queue eval runs for a list of summaries.
+    ///
+    /// Each `summary_id` is marked `queued` in `eval_runs` for the effective
+    /// eval version, and orch later picks it up via `/api/evals/unscored` to
+    /// drive the full `init -> step -> ... -> done` loop. This method returns
+    /// immediately (HTTP 202) after the queue rows are written. The returned
+    /// `batch_eval_id` is an ephemeral correlation UUID useful for log tracing;
+    /// it is not persisted.
+    ///
+    /// Repeated calls are idempotent at the `(summary_id, eval_version)`
+    /// level: the existing `eval_runs` row is refreshed back to `queued`.
+    ///
+    /// # Errors
+    /// Returns `AppError::InvalidArg` if `summary_ids` is empty.
+    pub async fn batch_eval(
+        self: Arc<Self>,
+        req: BatchEvalRequest,
+    ) -> Result<BatchEvalResponse, AppError<E>>
+    where
+        DB: 'static,
+        EN: 'static,
+    {
+        if req.summary_ids.is_empty() {
+            return Err(AppError::InvalidArg(
+                "summary_ids must not be empty".to_string(),
+            ));
+        }
+
+        let batch_eval_id = Uuid::new_v4();
+        let eval_version = req
+            .eval_version
+            .clone()
+            .unwrap_or_else(|| self.config.eval_version.clone());
+
+        for &summary_id in &req.summary_ids {
+            self.db
+                .upsert_run(
+                    &self.config.database_url,
+                    summary_id,
+                    &eval_version,
+                    EvalRunStatus::Queued,
+                    None,
+                )
+                .await
+                .map_err(ServiceError::InfraError)?;
+        }
+
+        Ok(BatchEvalResponse {
+            batch_eval_id,
+            accepted: req.summary_ids,
         })
     }
 }
@@ -577,6 +634,7 @@ mod tests {
     use async_trait::async_trait;
     use chrono::NaiveDateTime;
     use domain::{EvalRun, EvalRunStatus, EvalScore, NewEvalScore};
+    use rpc_types::BatchEvalRequest;
     use services::{
         ChunkRow, EnvInfra, EvalAggregate, EvalsDatabase, LoadedRunState, MetricStatsRaw,
         RetrievedChunk, SummaryRow, WorstOffenderRow,
@@ -777,6 +835,134 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct QueueingDb {
+        queued: Mutex<Vec<(Uuid, String, EvalRunStatus)>>,
+    }
+
+    #[async_trait]
+    impl EvalsDatabase for QueueingDb {
+        type Error = MockErr;
+
+        async fn lookup_score_by_hash(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<EvalScore>, MockErr> {
+            unimplemented!("queueing tests never hit lookup_score_by_hash")
+        }
+        async fn insert_score(&self, _: &str, _: NewEvalScore) -> Result<EvalScore, MockErr> {
+            unimplemented!("queueing tests never hit insert_score")
+        }
+        async fn get_summary(&self, _: &str, _: Uuid) -> Result<Option<SummaryRow>, MockErr> {
+            unimplemented!("queueing tests never hit get_summary")
+        }
+        async fn get_scores_for_summary(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Vec<EvalScore>, MockErr> {
+            unimplemented!("queueing tests never hit get_scores_for_summary")
+        }
+        async fn get_eval_aggregate(&self, _: &str, _: &str) -> Result<EvalAggregate, MockErr> {
+            unimplemented!("queueing tests never hit get_eval_aggregate")
+        }
+        async fn get_worst_offenders(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: i64,
+        ) -> Result<Vec<WorstOffenderRow>, MockErr> {
+            unimplemented!("queueing tests never hit get_worst_offenders")
+        }
+        async fn upsert_run(
+            &self,
+            _: &str,
+            summary_id: Uuid,
+            eval_version: &str,
+            status: EvalRunStatus,
+            _: Option<String>,
+        ) -> Result<EvalRun, MockErr> {
+            self.queued
+                .lock()
+                .unwrap()
+                .push((summary_id, eval_version.to_string(), status));
+            Ok(EvalRun {
+                id: Uuid::new_v4(),
+                summary_id,
+                eval_version: eval_version.to_string(),
+                status,
+                error_message: None,
+                started_at: None,
+                completed_at: None,
+                created_at: NaiveDateTime::default(),
+            })
+        }
+        async fn list_unscored_summary_ids(
+            &self,
+            _: &str,
+            _: &str,
+            _: i64,
+        ) -> Result<Vec<Uuid>, MockErr> {
+            unimplemented!("queueing tests never hit list_unscored_summary_ids")
+        }
+        async fn retrieve_chunks_for_summary(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: &[f32],
+            _: i64,
+            _: f32,
+        ) -> Result<Vec<RetrievedChunk>, MockErr> {
+            unimplemented!("queueing tests never hit retrieve_chunks_for_summary")
+        }
+        async fn load_chunks_by_ids(&self, _: &str, _: &[Uuid]) -> Result<Vec<ChunkRow>, MockErr> {
+            unimplemented!("queueing tests never hit load_chunks_by_ids")
+        }
+        async fn insert_run_state(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: &str,
+            _: &serde_json::Value,
+            _: Option<Uuid>,
+            _: Option<&str>,
+        ) -> Result<Uuid, MockErr> {
+            unimplemented!("queueing tests never hit insert_run_state")
+        }
+        async fn load_run_state(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Option<LoadedRunState>, MockErr> {
+            unimplemented!("queueing tests never hit load_run_state")
+        }
+        async fn save_run_state(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: &serde_json::Value,
+            _: Option<Uuid>,
+            _: Option<&str>,
+        ) -> Result<(), MockErr> {
+            unimplemented!("queueing tests never hit save_run_state")
+        }
+        async fn delete_run_state(&self, _: &str, _: Uuid) -> Result<(), MockErr> {
+            unimplemented!("queueing tests never hit delete_run_state")
+        }
+        async fn delete_run_states_for_summary(
+            &self,
+            _: &str,
+            _: Uuid,
+            _: &str,
+        ) -> Result<(), MockErr> {
+            unimplemented!("queueing tests never hit delete_run_states_for_summary")
+        }
+    }
+
     fn min_config() -> EvalRuntimeConfig {
         EvalRuntimeConfig {
             database_url: "memory://".to_string(),
@@ -792,6 +978,14 @@ mod tests {
     }
 
     fn make_app(db: Arc<ReadOnlyDb>) -> EvalsApp<ReadOnlyDb, StubEnv, MockErr> {
+        EvalsApp {
+            db,
+            env: Arc::new(StubEnv::new()),
+            config: min_config(),
+        }
+    }
+
+    fn make_queueing_app(db: Arc<QueueingDb>) -> EvalsApp<QueueingDb, StubEnv, MockErr> {
         EvalsApp {
             db,
             env: Arc::new(StubEnv::new()),
@@ -1022,10 +1216,11 @@ mod tests {
         assert_eq!(resp.entries[0].region_name.as_deref(), Some("Hippocampus"));
     }
 
-    /// `list_unscored_summary_ids` surfaces the raw Uuid list and echoes
-    /// back the effective version (the override when set).
+    /// `list_unscored_summary_ids` surfaces only explicitly queued or
+    /// stale-in-flight summary IDs and echoes back the effective version
+    /// (the override when set).
     #[tokio::test]
-    async fn list_unscored_summary_ids_echoes_version_and_limit() {
+    async fn list_unscored_summary_ids_echoes_version_limit_and_preserves_queue_order() {
         let db = Arc::new(ReadOnlyDb::default());
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
@@ -1077,6 +1272,51 @@ mod tests {
             }
             other => panic!("expected InvalidArg, got {other:?}"),
         }
+    }
+
+    /// `batch_eval` rejects an empty request body rather than silently doing
+    /// nothing, which keeps the HTTP 400 contract stable.
+    #[tokio::test]
+    async fn batch_eval_empty_ids_is_invalid_arg() {
+        let db = Arc::new(QueueingDb::default());
+        let app = Arc::new(make_queueing_app(db));
+        let err = app
+            .batch_eval(BatchEvalRequest {
+                summary_ids: vec![],
+                eval_version: None,
+            })
+            .await
+            .expect_err("empty batch must error");
+        match err {
+            AppError::InvalidArg(msg) => assert!(msg.contains("summary_ids must not be empty")),
+            other => panic!("expected InvalidArg, got {other:?}"),
+        }
+    }
+
+    /// `batch_eval` writes one queued run per requested summary using the
+    /// effective eval version that orch later drains via `/unscored`.
+    #[tokio::test]
+    async fn batch_eval_marks_each_summary_as_queued() {
+        let db = Arc::new(QueueingDb::default());
+        let app = Arc::new(make_queueing_app(db.clone()));
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+
+        let resp = app
+            .batch_eval(BatchEvalRequest {
+                summary_ids: vec![a, b],
+                eval_version: Some("v-batch".to_string()),
+            })
+            .await
+            .expect("batch_eval must succeed");
+
+        assert_eq!(resp.accepted, vec![a, b]);
+        assert_ne!(resp.batch_eval_id, Uuid::nil());
+
+        let queued = db.queued.lock().unwrap();
+        assert_eq!(queued.len(), 2);
+        assert_eq!(queued[0], (a, "v-batch".to_string(), EvalRunStatus::Queued));
+        assert_eq!(queued[1], (b, "v-batch".to_string(), EvalRunStatus::Queued));
     }
 
     // ---- Private helpers ----

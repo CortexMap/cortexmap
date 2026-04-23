@@ -120,8 +120,12 @@ pub trait EvalsDatabase: Send + Sync {
         error_message: Option<String>,
     ) -> Result<EvalRun, Self::Error>;
 
-    /// Active summaries that have no `complete` run for the current
+    /// Summary IDs explicitly queued for evaluation for the given
     /// `eval_version`. Used by orch to find work.
+    ///
+    /// Only rows already present in `eval_runs` participate: `queued`
+    /// rows are normal work, and stale `running` rows are returned for
+    /// recovery after worker interruption.
     async fn list_unscored_summary_ids(
         &self,
         database_url: &str,

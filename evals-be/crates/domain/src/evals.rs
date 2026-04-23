@@ -85,6 +85,20 @@ pub enum EvalMetric {
     RubricClinicalUtility,
     RubricTerminology,
 
+    // ---- Rubric gated by groundedness (derived, no LLM) ----
+    //
+    // Each `rubric_*_gated = rubric_* * claim_groundedness`.
+    // The rubric judge sees no source chunks, so it grades prose style
+    // conditional on the prose being trusted. Multiplying by groundedness
+    // converts "writing quality" into "writing quality weighted by whether
+    // the facts are grounded in evidence", preventing confidently-wrong
+    // summaries from hiding behind a near-1.0 rubric score.
+    RubricRelevanceGated,
+    RubricCoherenceGated,
+    RubricSpecificityGated,
+    RubricClinicalUtilityGated,
+    RubricTerminologyGated,
+
     // ---- Citation (deterministic + optional LLM support judge) ----
     CitationPresence,
     CitationValidity,
@@ -108,6 +122,11 @@ impl EvalMetric {
             RubricSpecificity,
             RubricClinicalUtility,
             RubricTerminology,
+            RubricRelevanceGated,
+            RubricCoherenceGated,
+            RubricSpecificityGated,
+            RubricClinicalUtilityGated,
+            RubricTerminologyGated,
             CitationPresence,
             CitationValidity,
             CitationScope,
@@ -153,12 +172,24 @@ mod tests {
         assert_eq!(EvalMetric::CitationValidity.as_str(), "citation_validity");
         assert_eq!(EvalMetric::CitationScope.as_str(), "citation_scope");
         assert_eq!(EvalMetric::CitationSupport.as_str(), "citation_support");
+        assert_eq!(
+            EvalMetric::RubricRelevanceGated.as_str(),
+            "rubric_relevance_gated"
+        );
+        assert_eq!(
+            EvalMetric::RubricClinicalUtilityGated.as_str(),
+            "rubric_clinical_utility_gated"
+        );
+        assert_eq!(
+            EvalMetric::RubricTerminologyGated.as_str(),
+            "rubric_terminology_gated"
+        );
     }
 
     #[test]
-    fn metric_all_covers_fifteen_metrics() {
-        // 11 legacy + 4 new citation metrics = 15.
-        assert_eq!(EvalMetric::all().len(), 15);
+    fn metric_all_covers_twenty_metrics() {
+        // 11 legacy + 4 citation + 5 gated rubric = 20.
+        assert_eq!(EvalMetric::all().len(), 20);
     }
 
     #[test]

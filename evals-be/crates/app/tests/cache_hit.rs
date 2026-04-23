@@ -441,7 +441,7 @@ async fn run_to_done(
 }
 
 #[tokio::test]
-async fn init_and_step_score_produce_14_metrics_first_run_cache_hit_second() {
+async fn init_and_step_score_produce_19_metrics_first_run_cache_hit_second() {
     let summary = fixture_summary();
     let summary_id = summary.id;
 
@@ -453,8 +453,8 @@ async fn init_and_step_score_produce_14_metrics_first_run_cache_hit_second() {
 
     assert_eq!(
         first_metrics.len(),
-        14,
-        "first run must produce 14 metrics (4 structural + 2 groundedness + 5 rubric + 3 deterministic citation), got {}",
+        19,
+        "first run must produce 19 metrics (4 structural + 2 groundedness + 5 rubric + 5 gated rubric + 3 deterministic citation), got {}",
         first_metrics.len()
     );
     assert!(
@@ -477,8 +477,8 @@ async fn init_and_step_score_produce_14_metrics_first_run_cache_hit_second() {
     );
     assert_eq!(
         second_metrics.len(),
-        14,
-        "second run must also produce 14 metrics"
+        19,
+        "second run must also produce 19 metrics"
     );
     assert!(
         second_metrics.iter().all(|m| m.cached),
