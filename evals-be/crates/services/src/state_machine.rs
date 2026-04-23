@@ -666,7 +666,10 @@ where
         (EvalMetric::RubricRelevanceGated, &scores.relevance),
         (EvalMetric::RubricCoherenceGated, &scores.coherence),
         (EvalMetric::RubricSpecificityGated, &scores.specificity),
-        (EvalMetric::RubricClinicalUtilityGated, &scores.clinical_utility),
+        (
+            EvalMetric::RubricClinicalUtilityGated,
+            &scores.clinical_utility,
+        ),
         (EvalMetric::RubricTerminologyGated, &scores.terminology),
     ] {
         let raw = normalise_1_to_5(crit.score);
@@ -2570,10 +2573,7 @@ mod advance_tests {
             .iter()
             .filter(|m| m.metric.starts_with("rubric_") && !m.metric.ends_with("_gated"))
             .count();
-        let gated_count = acc
-            .iter()
-            .filter(|m| m.metric.ends_with("_gated"))
-            .count();
+        let gated_count = acc.iter().filter(|m| m.metric.ends_with("_gated")).count();
         assert_eq!(raw_count, 5);
         assert_eq!(gated_count, 0);
     }

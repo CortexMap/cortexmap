@@ -93,11 +93,10 @@ pub fn acronym_mention(summary: &str, acronym: Option<&str>) -> f32 {
                     .map(|c| c.to_string())
                     .collect::<Vec<_>>()
                     .join("[.\\-]?");
-                if let Ok(re) = regex::Regex::new(&format!("(?i){dotted}")) {
-                    if re.is_match(summary) {
+                if let Ok(re) = regex::Regex::new(&format!("(?i){dotted}"))
+                    && re.is_match(summary) {
                         return 1.0;
                     }
-                }
             }
 
             // 3. Fuzzy word-level match via Levenshtein distance.
