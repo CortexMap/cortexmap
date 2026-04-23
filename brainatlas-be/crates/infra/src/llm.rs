@@ -43,24 +43,16 @@ fn render_region_identity_context(
     let mut lines = Vec::new();
     lines.push(format!("- Full region name: {}", region_name));
     match acronym {
-        Some(a) if !a.trim().is_empty() => {
-            lines.push(format!("- Region acronym: {}", a))
-        }
-        _ => lines
-            .push("- Region acronym: (none in source ontology)".to_string()),
+        Some(a) if !a.trim().is_empty() => lines.push(format!("- Region acronym: {}", a)),
+        _ => lines.push("- Region acronym: (none in source ontology)".to_string()),
     }
     match parent_name {
-        Some(p) if !p.trim().is_empty() => {
-            lines.push(format!("- Parent region name: {}", p))
-        }
+        Some(p) if !p.trim().is_empty() => lines.push(format!("- Parent region name: {}", p)),
         _ => lines.push("- Parent region name: (root region)".to_string()),
     }
     match parent_acronym {
-        Some(pa) if !pa.trim().is_empty() => {
-            lines.push(format!("- Parent region acronym: {}", pa))
-        }
-        _ => lines
-            .push("- Parent region acronym: (root region)".to_string()),
+        Some(pa) if !pa.trim().is_empty() => lines.push(format!("- Parent region acronym: {}", pa)),
+        _ => lines.push("- Parent region acronym: (root region)".to_string()),
     }
     lines.join("\n")
 }
@@ -406,12 +398,8 @@ impl LlmClient for OpenAiCompatibleClient {
         // Build a structured identity context block. The prompt template
         // substitutes {{REGION_CONTEXT_BLOCK}} with this so the LLM has
         // every anchor it needs to construct on-target OR groups.
-        let region_context_block = render_region_identity_context(
-            region_name,
-            acronym,
-            parent_name,
-            parent_acronym,
-        );
+        let region_context_block =
+            render_region_identity_context(region_name, acronym, parent_name, parent_acronym);
 
         let system_prompt = render_template(
             load_prompt("generate_queries_tool_system"),
@@ -431,7 +419,9 @@ impl LlmClient for OpenAiCompatibleClient {
              Use the create_pubmed_query tool for each query.",
             count,
             region_name,
-            acronym.map(|a| format!(" (acronym: {})", a)).unwrap_or_default(),
+            acronym
+                .map(|a| format!(" (acronym: {})", a))
+                .unwrap_or_default(),
         );
 
         // Generate JSON schema for BooleanQuery using schemars

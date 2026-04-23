@@ -36,10 +36,7 @@ pub trait OrchApi: Send + Sync {
     /// Use this admin endpoint to recover from regions whose stored queries
     /// were generated with an older prompt or insufficient context (e.g. the
     /// pre-Phase-1 `("taenia tecta" OR "ventral part") AND ...` problem).
-    async fn regenerate_queries(
-        &self,
-        region_id: Uuid,
-    ) -> Result<Vec<String>, Self::Error>;
+    async fn regenerate_queries(&self, region_id: Uuid) -> Result<Vec<String>, Self::Error>;
 
     /// Get the status of a specific batch
     async fn get_batch_status(&self, batch_id: Uuid) -> Result<BatchStatusResult, Self::Error>;

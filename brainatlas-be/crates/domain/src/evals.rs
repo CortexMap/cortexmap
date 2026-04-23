@@ -42,7 +42,10 @@ where
     D: Deserializer<'de>,
 {
     let raw: Vec<String> = Vec::deserialize(deserializer)?;
-    Ok(raw.into_iter().filter_map(|s| Uuid::parse_str(s.trim()).ok()).collect())
+    Ok(raw
+        .into_iter()
+        .filter_map(|s| Uuid::parse_str(s.trim()).ok())
+        .collect())
 }
 
 /// Top-level response from the claim-extraction prompt.

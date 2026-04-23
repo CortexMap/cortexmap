@@ -999,16 +999,9 @@ mod tests {
         infra.enqueue_generate_ok(vec!["q".into()]);
         let svc = make_service(infra.clone());
 
-        svc.generate_queries(
-            "hippocampus",
-            1,
-            None,
-            None,
-            None,
-            UsageContext::default(),
-        )
-        .await
-        .unwrap();
+        svc.generate_queries("hippocampus", 1, None, None, None, UsageContext::default())
+            .await
+            .unwrap();
 
         let calls = infra.take_llm_calls();
         assert_eq!(calls.len(), 1);

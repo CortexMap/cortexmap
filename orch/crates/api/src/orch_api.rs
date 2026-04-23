@@ -58,10 +58,7 @@ where
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
-    async fn regenerate_queries(
-        &self,
-        region_id: Uuid,
-    ) -> Result<Vec<String>, Self::Error> {
+    async fn regenerate_queries(&self, region_id: Uuid) -> Result<Vec<String>, Self::Error> {
         self.app()
             .regenerate_queries(region_id)
             .await

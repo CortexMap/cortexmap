@@ -194,16 +194,14 @@ fn text_mentions_region(text: &str, region: &RegionMapping) -> bool {
     if !name_lower.is_empty() && text_lower.contains(&name_lower) {
         return true;
     }
-    if let Some(acro) = region.acronym.as_deref() {
-        if acronym_matches(text, acro) {
+    if let Some(acro) = region.acronym.as_deref()
+        && acronym_matches(text, acro) {
             return true;
         }
-    }
-    if let Some(parent_acro) = region.parent_acronym.as_deref() {
-        if acronym_matches(text, parent_acro) {
+    if let Some(parent_acro) = region.parent_acronym.as_deref()
+        && acronym_matches(text, parent_acro) {
             return true;
         }
-    }
     false
 }
 
@@ -1012,7 +1010,14 @@ where
             .with_correlation(correlation_id)
             .with_region(region_id);
         self.services
-            .generate_queries(region_name, count, acronym, parent_name, parent_acronym, ctx)
+            .generate_queries(
+                region_name,
+                count,
+                acronym,
+                parent_name,
+                parent_acronym,
+                ctx,
+            )
             .await
             .map_err(AppError::ServiceError)
     }
@@ -2219,7 +2224,8 @@ mod tests {
             .enqueue_summarize_ok(LlmResponse::ToolCalls(vec![ToolCall {
                 id: "t".to_string(),
                 name: "search_embeddings".to_string(),
-                arguments: r#"{"query":"Cortex function","top_k":5,"fallback_policy":"none"}"#.to_string(),
+                arguments: r#"{"query":"Cortex function","top_k":5,"fallback_policy":"none"}"#
+                    .to_string(),
             }]))
             .enqueue_summarize_ok(LlmResponse::Final("done".to_string()));
         let svc = Arc::new(svc);
@@ -2380,10 +2386,7 @@ mod tests {
             "the HIPPOCAMPUS plays a role in memory",
             &region
         ));
-        assert!(chunk_mentions_region(
-            "studies of the hippocampus",
-            &region
-        ));
+        assert!(chunk_mentions_region("studies of the hippocampus", &region));
         assert!(!chunk_mentions_region(
             "the cortex projects to the thalamus",
             &region
@@ -2592,8 +2595,14 @@ mod tests {
     #[test]
     fn region_template_classifies_cortical_layer_leaf() {
         let region = RegionMapping::new(1, "Primary somatosensory area, layer 5".to_string());
-        assert_eq!(RegionTemplate::classify(&region), RegionTemplate::CorticalLayerLeaf);
-        assert_eq!(RegionTemplate::classify(&region).label(), "cortical_layer_leaf");
+        assert_eq!(
+            RegionTemplate::classify(&region),
+            RegionTemplate::CorticalLayerLeaf
+        );
+        assert_eq!(
+            RegionTemplate::classify(&region).label(),
+            "cortical_layer_leaf"
+        );
     }
 
     #[test]

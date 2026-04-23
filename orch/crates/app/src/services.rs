@@ -99,10 +99,7 @@ pub trait RegionManagement: Send + Sync {
     /// acronym) used to disambiguate the region for downstream LLM calls
     /// (query generation, summarization). Returns the same data the Phase-1
     /// pipeline already loads via `get_regions_without_queries`.
-    async fn get_region_identity(
-        &self,
-        region_id: Uuid,
-    ) -> Result<RegionIdentity, Self::Error>;
+    async fn get_region_identity(&self, region_id: Uuid) -> Result<RegionIdentity, Self::Error>;
 
     /// Get total number of regions in region_mapping
     async fn get_total_regions(&self) -> Result<i64, Self::Error>;

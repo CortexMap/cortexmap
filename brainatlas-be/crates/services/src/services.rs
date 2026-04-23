@@ -80,7 +80,14 @@ where
         ctx: UsageContext,
     ) -> Result<Vec<String>, Self::Error> {
         self.llm_service
-            .generate_queries(region_name, count, acronym, parent_name, parent_acronym, ctx)
+            .generate_queries(
+                region_name,
+                count,
+                acronym,
+                parent_name,
+                parent_acronym,
+                ctx,
+            )
             .await
     }
 
