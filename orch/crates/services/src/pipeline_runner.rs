@@ -1644,7 +1644,7 @@ mod tests {
         let infra = Arc::new(
             base_infra()
                 .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
-                .with_config(ConfigKey::MaxParallelProcessCalls, "3")
+                .with_config(ConfigKey::MaxParallelQueryGeneration, "3")
                 .with_regions(vec![r1, r2, r3])
                 .with_post_responder(ok_two_queries()),
         );
@@ -1677,7 +1677,7 @@ mod tests {
         let infra = Arc::new(
             base_infra()
                 .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
-                .with_config(ConfigKey::MaxParallelProcessCalls, "2")
+                .with_config(ConfigKey::MaxParallelQueryGeneration, "2")
                 .with_regions(vec![good, bad])
                 .with_post_responder(Box::new(move |_idx, _url, body| {
                     let name = body["region_name"].as_str().unwrap_or("");
@@ -1774,7 +1774,7 @@ mod tests {
         let infra = Arc::new(
             base_infra()
                 .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
-                .with_config(ConfigKey::MaxParallelProcessCalls, "1")
+                .with_config(ConfigKey::MaxParallelQueryGeneration, "1")
                 .with_regions(regions)
                 .with_post_responder(Box::new(move |_idx, _url, _body| {
                     *attempts_clone.lock().unwrap() += 1;
