@@ -469,18 +469,18 @@ impl EvalsPostgresql {
                 }
 
                 let rows: Vec<Row> = diesel::sql_query(
-                    "SELECT rs.id
-                     FROM region_summary rs
-                     LEFT JOIN eval_runs er
-                            ON er.summary_id = rs.id AND er.eval_version = $1
-                     WHERE rs.summary IS NOT NULL
+                    "SELECT er.summary_id AS id
+                     FROM eval_runs er
+                     JOIN region_summary rs ON rs.id = er.summary_id
+                     WHERE er.eval_version = $1
+                       AND rs.summary IS NOT NULL
                        AND length(rs.summary) > 0
                        AND (
-                         er.id IS NULL
+                         er.status = 'queued'
                          OR er.status = 'failed'
                          OR (er.status = 'running' AND er.started_at < NOW() - INTERVAL '30 minutes')
                        )
-                     ORDER BY rs.created_at ASC NULLS FIRST
+                     ORDER BY er.created_at ASC
                      LIMIT $2",
                 )
                 .bind::<Text, _>(&ver)

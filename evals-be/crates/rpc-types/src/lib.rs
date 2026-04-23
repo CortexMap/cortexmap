@@ -177,12 +177,13 @@ pub struct UnscoredResponse {
 
 // ---- POST /api/evals/batch ----
 
-/// Trigger eval runs for a list of summaries in the background.
+/// Queue eval runs for a list of summaries.
 ///
-/// Each `summary_id` gets its own independent `tokio::spawn`-ed eval task,
-/// identical to calling `POST /score/init` per ID. Repeated calls with
-/// overlapping IDs are intentional and each produce a fresh batch — no
-/// deduplication occurs.
+/// Each `summary_id` is marked `queued` in `eval_runs` for the effective eval
+/// version, and orch later picks it up via `/api/evals/unscored` to drive the
+/// full `init -> step -> ... -> done` loop. Repeated calls refresh the
+/// `(summary_id, eval_version)` row back to `queued` rather than spawning a
+/// second in-process worker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchEvalRequest {
     /// One or more summary IDs to evaluate. Must be non-empty.

@@ -740,17 +740,30 @@ fn start_embed_step<E: Error + Send + Sync + 'static>(
     ))
 }
 
+fn has_all_raw_rubric_metrics(accumulated: &[MetricResult]) -> bool {
+    use EvalMetric::{
+        RubricClinicalUtility, RubricCoherence, RubricRelevance, RubricSpecificity,
+        RubricTerminology,
+    };
+
+    [
+        RubricRelevance.as_str(),
+        RubricCoherence.as_str(),
+        RubricSpecificity.as_str(),
+        RubricClinicalUtility.as_str(),
+        RubricTerminology.as_str(),
+    ]
+    .into_iter()
+    .all(|metric| accumulated.iter().any(|m| m.metric == metric))
+}
+
 /// Either kick off the rubric step, or emit Done if rubric is cached.
 fn next_rubric_or_done(
     ctx: &RunContext<'_>,
     claims: Option<Vec<Claim>>,
     accumulated: &mut [MetricResult],
 ) -> (RunState, NextAction) {
-    let already_cached_rubric = accumulated
-        .iter()
-        .filter(|m| m.metric.starts_with("rubric_"))
-        .count()
-        == 5;
+    let already_cached_rubric = has_all_raw_rubric_metrics(accumulated);
     if already_cached_rubric {
         // Rubric already cached — the caller must still run citations.
         // But `next_rubric_or_done` is sync and citations need DB access,
@@ -2888,6 +2901,63 @@ mod advance_tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0]["kind"], "unsupported");
         assert_eq!(issues[0]["claim_id"], 7);
+    }
+
+    /// Raw rubric cache detection must key off the exact five ungated metric
+    /// names, not every `rubric_*` metric. Gated rubric rows are additive and
+    /// must not short-circuit the raw rubric phase on their own.
+    #[test]
+    fn has_all_raw_rubric_metrics_ignores_gated_rows() {
+        let gated_only = vec![
+            MetricResult {
+                metric: EvalMetric::RubricRelevanceGated.as_str().to_string(),
+                score: 0.2,
+                cached: true,
+                judge_model: None,
+            },
+            MetricResult {
+                metric: EvalMetric::RubricCoherenceGated.as_str().to_string(),
+                score: 0.2,
+                cached: true,
+                judge_model: None,
+            },
+            MetricResult {
+                metric: EvalMetric::RubricSpecificityGated.as_str().to_string(),
+                score: 0.2,
+                cached: true,
+                judge_model: None,
+            },
+            MetricResult {
+                metric: EvalMetric::RubricClinicalUtilityGated.as_str().to_string(),
+                score: 0.2,
+                cached: true,
+                judge_model: None,
+            },
+            MetricResult {
+                metric: EvalMetric::RubricTerminologyGated.as_str().to_string(),
+                score: 0.2,
+                cached: true,
+                judge_model: None,
+            },
+        ];
+        assert!(!has_all_raw_rubric_metrics(&gated_only));
+
+        let mut with_raw = gated_only.clone();
+        with_raw.extend([
+            EvalMetric::RubricRelevance,
+            EvalMetric::RubricCoherence,
+            EvalMetric::RubricSpecificity,
+            EvalMetric::RubricClinicalUtility,
+            EvalMetric::RubricTerminology,
+        ]
+        .into_iter()
+        .map(|metric| MetricResult {
+            metric: metric.as_str().to_string(),
+            score: 0.9,
+            cached: true,
+            judge_model: Some("rubric-model".to_string()),
+        }));
+        assert!(has_all_raw_rubric_metrics(&with_raw));
     }
 
     // ---- find_next_support_step iteration ----
