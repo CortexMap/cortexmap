@@ -1,6 +1,8 @@
-import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef, type ReactNode, isValidElement, cloneElement } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import { useAtlasStore } from '../../store/atlasStore';
+import { useAtlasSearchRevealContext } from '../../hooks/useSelectRegion';
 import { findNode } from '../../utils/treeUtils';
 import {
   fetchAllRegions,
@@ -10,7 +12,7 @@ import {
   generateSummary,
   fetchBatchStatus,
 } from '../../api/cortexmap';
-import type { CortexmapRegion, OntologyNode, RegionSummary, RegionStatus, SummarySource, SummaryEvalScores } from '../../types';
+import type { CortexmapRegion, OntologyNode, RegionSummary, RegionStatus, SummarySource, SummaryEvalScores, AtlasSearchRevealContext } from '../../types';
 import styles from './RegionDetail.module.css';
 
 interface BatchStatusData {
@@ -23,13 +25,16 @@ interface BatchStatusData {
 }
 
 const ACTIVE_STATUSES = new Set(['FetchQueued', 'Fetching', 'LlmQueued', 'Processing']);
+const SEARCH_HIGHLIGHT_DURATION_MS = 3200;
 
 export function RegionDetail() {
   const { selectedStructureId, ontology, cortexmapRegionMap, cortexmapLoaded, setCortexmapRegions } = useAtlasStore();
+  const { context: searchRevealContext, clearContext: clearSearchRevealContext } = useAtlasSearchRevealContext();
   const [summaries, setSummaries] = useState<RegionSummary[]>([]);
   const [status, setStatus] = useState<RegionStatus | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Generate button state
   const [isGenerating, setIsGenerating] = useState(false);
@@ -162,7 +167,7 @@ export function RegionDetail() {
 
   if (selectedStructureId === null) {
     return (
-      <div className={styles.container}>
+      <div className={styles.container} ref={containerRef}>
         <div className={styles.placeholder}>
           <div className={styles.placeholderIcon}>{'\u{1F9E0}'}</div>
           <div className={styles.placeholderText}>Select a region to view details</div>
@@ -173,7 +178,7 @@ export function RegionDetail() {
   }
 
   return (
-    <div className={styles.container}>
+    <div className={styles.container} ref={containerRef}>
       {/* Header */}
       <div className={styles.header}>
         {ontologyNode && (
@@ -342,7 +347,14 @@ export function RegionDetail() {
           {!summaryLoading && summaries.length > 0 && (
             <div className={styles.summariesList}>
               {summaries.map((s, i) => (
-                <SummaryCard key={s.batch_id + '-' + i} summary={s} isLatest={i === 0} />
+                <SummaryCard
+                  key={s.batch_id + '-' + i}
+                  summary={s}
+                  isLatest={i === 0}
+                  searchRevealContext={searchRevealContext}
+                  clearSearchRevealContext={clearSearchRevealContext}
+                  detailContainerRef={containerRef}
+                />
               ))}
             </div>
           )}
@@ -408,8 +420,96 @@ interface ChunkInfo {
   source_query: string | null;
 }
 
-function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?: boolean }) {
+interface SummaryBlockMatch {
+  index: number;
+  score: number;
+}
+
+function normalizeMatchText(value: string): string {
+  return value
+    .replace(/\[chunk:[a-f0-9-]+\]/gi, ' ')
+    .replace(/[#>*_`~\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function scoreSummaryBlockMatch(
+  blockText: string,
+  context: AtlasSearchRevealContext | null,
+  isLatest: boolean
+): number {
+  if (!context) return isLatest ? 1 : 0;
+
+  let score = isLatest ? 1 : 0;
+  const normalizedBlock = normalizeMatchText(blockText);
+  const normalizedSnippet = normalizeMatchText(context.summary_snippet ?? '').replace(/…/g, ' ').trim();
+  const normalizedQuery = normalizeMatchText(context.query);
+
+  if (normalizedSnippet) {
+    if (normalizedBlock.includes(normalizedSnippet)) {
+      score += 120;
+    } else {
+      const snippetTokens = normalizedSnippet.split(' ').filter((token) => token.length >= 4);
+      const matchedSnippetTokens = snippetTokens.filter((token) => normalizedBlock.includes(token));
+      if (matchedSnippetTokens.length > 0) {
+        score += matchedSnippetTokens.length * 12;
+        score += matchedSnippetTokens.length === snippetTokens.length ? 24 : 0;
+      }
+    }
+  }
+
+  if (normalizedQuery) {
+    const tokens = normalizedQuery.split(' ').filter((token) => token.length >= 2);
+    for (const token of tokens) {
+      if (normalizedBlock.includes(token)) score += 8;
+    }
+  }
+
+  if (context.match_source === 'summary') score += 6;
+  if (context.match_source === 'name' || context.match_source === 'acronym') score += isLatest ? 4 : 0;
+
+  return score;
+}
+
+function findBestSummaryBlockMatch(
+  blocks: string[],
+  context: AtlasSearchRevealContext | null,
+  isLatest: boolean
+): SummaryBlockMatch {
+  if (blocks.length === 0) return { index: 0, score: 0 };
+
+  let best: SummaryBlockMatch = { index: 0, score: Number.NEGATIVE_INFINITY };
+  blocks.forEach((block, index) => {
+    const score = scoreSummaryBlockMatch(block, context, isLatest && index === 0);
+    if (score > best.score) {
+      best = { index, score };
+    }
+  });
+
+  return best;
+}
+
+function SummaryCard({
+  summary,
+  isLatest,
+  searchRevealContext,
+  clearSearchRevealContext,
+  detailContainerRef,
+}: {
+  summary: RegionSummary;
+  isLatest?: boolean;
+  searchRevealContext: AtlasSearchRevealContext | null;
+  clearSearchRevealContext: () => void;
+  detailContainerRef: React.RefObject<HTMLDivElement | null>;
+}) {
   const [chunkMap, setChunkMap] = useState<Record<string, ChunkInfo>>({});
+  const [activeBlockIndex, setActiveBlockIndex] = useState<number | null>(null);
+  const blockRefs = useRef<Array<HTMLElement | null>>([]);
 
   useEffect(() => {
     const loadChunks = async () => {
@@ -466,10 +566,76 @@ function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?:
     return pmcIds.size;
   }, [chunkMap]);
 
+  useEffect(() => {
+    blockRefs.current = [];
+  }, [summary.summary]);
+
+  useEffect(() => {
+    if (!isLatest) return;
+
+    const shouldReveal = !!searchRevealContext || isLatest;
+    if (!shouldReveal) return;
+
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const revealMatchedBlock = (attempt = 0) => {
+      if (cancelled) return;
+
+      const renderedBlocks = blockRefs.current.map((node) => normalizeMatchText(node?.innerText ?? ''));
+      const hasRenderableBlocks = renderedBlocks.length > 0 && renderedBlocks.some((block) => block);
+      const container = detailContainerRef.current;
+
+      if (!container || !hasRenderableBlocks) {
+        if (attempt < 10) {
+          timer = window.setTimeout(() => revealMatchedBlock(attempt + 1), 120);
+        }
+        return;
+      }
+
+      const { index, score } = findBestSummaryBlockMatch(renderedBlocks, searchRevealContext, true);
+      const resolvedIndex = score > 0 ? index : 0;
+      const target = blockRefs.current[resolvedIndex];
+
+      if (!target) {
+        if (attempt < 10) {
+          timer = window.setTimeout(() => revealMatchedBlock(attempt + 1), 120);
+        }
+        return;
+      }
+
+      setActiveBlockIndex(resolvedIndex);
+      scrollBlockIntoDetailPane(container, target);
+
+      timer = window.setTimeout(() => {
+        setActiveBlockIndex((current) => (current === resolvedIndex ? null : current));
+        if (searchRevealContext) clearSearchRevealContext();
+      }, SEARCH_HIGHLIGHT_DURATION_MS);
+    };
+
+    timer = window.setTimeout(() => revealMatchedBlock(0), 80);
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [clearSearchRevealContext, detailContainerRef, isLatest, searchRevealContext, summary.summary]);
+
+
   return (
     <div className={styles.summaryItem}>
       <div className={styles.summaryText}>
-        <MarkdownWithChunks content={summary.summary} chunkMap={chunkMap} />
+        <BlockAwareMarkdown
+          content={summary.summary}
+          chunkMap={chunkMap}
+          highlightQuery={searchRevealContext?.query ?? ''}
+          activeBlockIndex={activeBlockIndex}
+          onBlockRef={(index, node) => {
+            blockRefs.current[index] = node;
+          }}
+        />
       </div>
       <div className={styles.summaryMeta}>
         {isLatest && <span className={styles.latestBadge}>Latest</span>}
@@ -488,6 +654,35 @@ function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?:
       {summary.eval_scores && <EvalScoresBar scores={summary.eval_scores} />}
     </div>
   );
+}
+
+function scrollBlockIntoDetailPane(container: HTMLDivElement, target: HTMLElement) {
+  const containerRect = container.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const currentScrollTop = container.scrollTop;
+  const targetTop = targetRect.top - containerRect.top + currentScrollTop;
+  const targetBottom = targetRect.bottom - containerRect.top + currentScrollTop;
+  const topOffset = Math.max(24, container.clientHeight * 0.18);
+  const bottomOffset = Math.max(24, container.clientHeight * 0.12);
+  const visibleTop = currentScrollTop + topOffset;
+  const visibleBottom = currentScrollTop + container.clientHeight - bottomOffset;
+
+  let nextScrollTop = currentScrollTop;
+
+  if (targetTop < visibleTop) {
+    nextScrollTop = Math.max(0, targetTop - topOffset);
+  } else if (targetBottom > visibleBottom) {
+    nextScrollTop = Math.max(0, targetBottom - container.clientHeight + bottomOffset);
+  }
+
+  if (Math.abs(nextScrollTop - currentScrollTop) < 2) {
+    return;
+  }
+
+  container.scrollTo({
+    top: nextScrollTop,
+    behavior: 'smooth',
+  });
 }
 
 // ─── Eval scores strip (rendered at the bottom of each scored summary) ──
@@ -719,22 +914,86 @@ function EvalScoresBar({ scores }: { scores: SummaryEvalScores }) {
 
 // ─── Markdown renderer that replaces [chunk:UUID] with citation bubbles ──
 
-function MarkdownWithChunks({ content, chunkMap }: { content: string; chunkMap: Record<string, ChunkInfo> }) {
-  // Replace [chunk:UUID] with a unique marker that survives markdown parsing
+function BlockAwareMarkdown({
+  content,
+  chunkMap,
+  highlightQuery,
+  activeBlockIndex,
+  onBlockRef,
+}: {
+  content: string;
+  chunkMap: Record<string, ChunkInfo>;
+  highlightQuery: string;
+  activeBlockIndex: number | null;
+  onBlockRef: (index: number, node: HTMLElement | null) => void;
+}) {
   const processed = content.replace(/\[chunk:([a-f0-9-]+)\]/g, '§CHUNK§$1§');
+  let blockCounter = -1;
 
-  const components = {
-    p: ({ children, ...props }: any) => <p {...props}>{processChildren(children, chunkMap)}</p>,
-    li: ({ children, ...props }: any) => <li {...props}>{processChildren(children, chunkMap)}</li>,
-    strong: ({ children, ...props }: any) => <strong {...props}>{processChildren(children, chunkMap)}</strong>,
-    em: ({ children, ...props }: any) => <em {...props}>{processChildren(children, chunkMap)}</em>,
-    h1: ({ children, ...props }: any) => <h1 {...props}>{processChildren(children, chunkMap)}</h1>,
-    h2: ({ children, ...props }: any) => <h2 {...props}>{processChildren(children, chunkMap)}</h2>,
-    h3: ({ children, ...props }: any) => <h3 {...props}>{processChildren(children, chunkMap)}</h3>,
-    h4: ({ children, ...props }: any) => <h4 {...props}>{processChildren(children, chunkMap)}</h4>,
+  const wrapBlock = (tagName: keyof HTMLElementTagNameMap, children: ReactNode) => {
+    blockCounter += 1;
+    const index = blockCounter;
+    const className = `${styles.summaryBlock}${activeBlockIndex === index ? ` ${styles.summaryBlockActive}` : ''}`;
+    return React.createElement(
+      tagName,
+      {
+        className,
+        ref: (node: HTMLElement | null) => onBlockRef(index, node),
+        'data-block-index': index,
+      },
+      renderHighlightedChildren(children, chunkMap, highlightQuery)
+    );
+  };
+
+  const components: Components = {
+    p: ({ children }) => wrapBlock('p', children),
+    li: ({ children }) => wrapBlock('li', children),
+    h1: ({ children }) => wrapBlock('h1', children),
+    h2: ({ children }) => wrapBlock('h2', children),
+    h3: ({ children }) => wrapBlock('h3', children),
+    h4: ({ children }) => wrapBlock('h4', children),
+    strong: ({ children, ...props }) => <strong {...props}>{renderHighlightedChildren(children, chunkMap, highlightQuery)}</strong>,
+    em: ({ children, ...props }) => <em {...props}>{renderHighlightedChildren(children, chunkMap, highlightQuery)}</em>,
+    blockquote: ({ children }) => wrapBlock('blockquote', children),
   };
 
   return <ReactMarkdown components={components}>{processed}</ReactMarkdown>;
+}
+
+function renderHighlightedChildren(
+  children: ReactNode,
+  chunkMap: Record<string, ChunkInfo>,
+  highlightQuery: string
+): ReactNode {
+  const withChunks = processChildren(children, chunkMap);
+  return applyHighlightsToNode(withChunks, highlightQuery);
+}
+
+function applyHighlightsToNode(node: ReactNode, highlightQuery: string): ReactNode {
+  if (!highlightQuery.trim()) return node;
+
+  if (typeof node === 'string') {
+    const pattern = new RegExp(`(${escapeRegex(highlightQuery.trim())})`, 'gi');
+    const parts = node.split(pattern);
+    if (parts.length === 1) return node;
+    return parts.map((part, index) =>
+      pattern.test(part) ? (
+        <mark key={`${part}-${index}`} className={styles.inlineHighlight}>{part}</mark>
+      ) : (
+        part
+      )
+    );
+  }
+
+  if (Array.isArray(node)) {
+    return node.map((child, index) => <React.Fragment key={index}>{applyHighlightsToNode(child, highlightQuery)}</React.Fragment>);
+  }
+
+  if (isValidElement<{ children?: ReactNode }>(node)) {
+    return cloneElement(node, undefined, applyHighlightsToNode(node.props.children, highlightQuery));
+  }
+
+  return node;
 }
 
 function processChildren(children: ReactNode, chunkMap: Record<string, ChunkInfo>): ReactNode {

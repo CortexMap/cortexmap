@@ -1,3 +1,28 @@
+/** Search result from CortexMap reverse search */
+export interface SearchResultItem {
+  region_id: string; // UUID
+  region_numeric_id: number;
+  name: string;
+  acronym: string | null;
+  summary_snippet: string | null;
+  match_source: string;
+  rank: number;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: SearchResultItem[];
+  total_found: number;
+}
+
+/** Lightweight search-driven reveal context kept client-side */
+export interface AtlasSearchRevealContext {
+  structure_id: number;
+  query: string;
+  match_source: string;
+  summary_snippet: string | null;
+}
+
 /** Region from cortexmap orch API /regions endpoint */
 export interface CortexmapRegion {
   id: string; // UUID
