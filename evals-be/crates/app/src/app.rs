@@ -10,9 +10,9 @@ use crate::run_eval::{
 };
 use domain::{EvalRunStatus, compute_hash};
 use rpc_types::{
-    EvalSummaryResponse, InitScoreRequest, InitScoreResponse, LlmEndpoint, MetricResult,
-    MetricStats, NextAction, ScoreEntry, ScoresForSummaryResponse, StepRequest, StepResponse,
-    UnscoredResponse, WorstOffender, WorstOffendersResponse,
+    BatchEvalRequest, BatchEvalResponse, EvalSummaryResponse, InitScoreRequest, InitScoreResponse,
+    LlmEndpoint, MetricResult, MetricStats, NextAction, ScoreEntry, ScoresForSummaryResponse,
+    StepRequest, StepResponse, UnscoredResponse, WorstOffender, WorstOffendersResponse,
 };
 use services::state_machine::{self, RunContext, RunState};
 use services::{EnvInfra, EvalsDatabase, ServiceError};
@@ -537,6 +537,64 @@ where
             eval_version: ver,
             limit,
             summary_ids: ids,
+        })
+    }
+
+    /// Trigger eval runs for a list of summaries in the background.
+    ///
+    /// Each `summary_id` gets its own independent `tokio::spawn`-ed task that
+    /// calls [`Self::init_score`] — identical to calling `POST /score/init`
+    /// per ID. This method returns immediately (HTTP 202) before any task
+    /// completes. The returned `batch_eval_id` is an ephemeral correlation
+    /// UUID useful for log tracing; it is not persisted.
+    ///
+    /// Repeated calls with overlapping IDs are intentional and produce
+    /// independent tasks — no deduplication occurs.
+    ///
+    /// # Errors
+    /// Returns `AppError::InvalidArg` if `summary_ids` is empty.
+    pub async fn batch_eval(
+        self: Arc<Self>,
+        req: BatchEvalRequest,
+    ) -> Result<BatchEvalResponse, AppError<E>>
+    where
+        DB: 'static,
+        EN: 'static,
+    {
+        if req.summary_ids.is_empty() {
+            return Err(AppError::InvalidArg(
+                "summary_ids must not be empty".to_string(),
+            ));
+        }
+
+        let batch_eval_id = Uuid::new_v4();
+        let accepted = req.summary_ids.clone();
+
+        for summary_id in req.summary_ids {
+            let app = self.clone();
+            let eval_version = req.eval_version.clone();
+            let bid = batch_eval_id;
+            tokio::spawn(async move {
+                let result = app
+                    .init_score(InitScoreRequest {
+                        summary_id,
+                        eval_version,
+                    })
+                    .await;
+                if let Err(e) = result {
+                    tracing::warn!(
+                        batch_eval_id = %bid,
+                        %summary_id,
+                        error = %e,
+                        "batch_eval: init_score task failed",
+                    );
+                }
+            });
+        }
+
+        Ok(BatchEvalResponse {
+            batch_eval_id,
+            accepted,
         })
     }
 }

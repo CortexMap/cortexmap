@@ -4,8 +4,8 @@
 use crate::error::ApiError;
 use app::{AppError, EvalsApp};
 use rpc_types::{
-    EvalSummaryResponse, InitScoreRequest, InitScoreResponse, ScoresForSummaryResponse,
-    StepRequest, StepResponse, UnscoredResponse, WorstOffendersResponse,
+    BatchEvalRequest, BatchEvalResponse, EvalSummaryResponse, InitScoreRequest, InitScoreResponse,
+    ScoresForSummaryResponse, StepRequest, StepResponse, UnscoredResponse, WorstOffendersResponse,
 };
 use services::{EnvInfra, EvalsDatabase};
 use std::error::Error;
@@ -37,6 +37,10 @@ pub trait EvalsApi: Send + Sync {
         eval_version: Option<String>,
         limit: i64,
     ) -> Result<UnscoredResponse, Self::Error>;
+    async fn batch_eval(
+        &self,
+        req: BatchEvalRequest,
+    ) -> Result<BatchEvalResponse, Self::Error>;
 }
 
 pub struct Evals<DB, EN, E>
@@ -62,8 +66,8 @@ where
 #[async_trait::async_trait]
 impl<DB, EN, E> EvalsApi for Evals<DB, EN, E>
 where
-    DB: EvalsDatabase<Error = E>,
-    EN: EnvInfra<Error = E>,
+    DB: EvalsDatabase<Error = E> + 'static,
+    EN: EnvInfra<Error = E> + 'static,
     E: Error + Send + Sync + 'static,
 {
     type Error = ApiError<AppError<E>>;
@@ -115,6 +119,17 @@ where
     ) -> Result<UnscoredResponse, Self::Error> {
         self.app
             .list_unscored_summary_ids(eval_version, limit)
+            .await
+            .map_err(ApiError::AppError)
+    }
+
+    async fn batch_eval(
+        &self,
+        req: BatchEvalRequest,
+    ) -> Result<BatchEvalResponse, Self::Error> {
+        self.app
+            .clone()
+            .batch_eval(req)
             .await
             .map_err(ApiError::AppError)
     }

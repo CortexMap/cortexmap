@@ -14,7 +14,7 @@ use axum::http::{HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use rpc_types::{InitScoreRequest, StepRequest};
+use rpc_types::{BatchEvalRequest, InitScoreRequest, StepRequest};
 use serde::Deserialize;
 use std::error::Error;
 use std::sync::Arc;
@@ -38,6 +38,7 @@ where
     let routes = Router::new()
         .route("/health", get(health))
         .route("/api/evals/score/init", post(init_score::<A, E>))
+        .route("/api/evals/batch", post(batch_eval::<A, E>))
         .route("/api/evals/score/step", post(step_score::<A, E>))
         .route(
             "/api/evals/scores/{summary_id}",
@@ -140,6 +141,18 @@ where
 {
     let resp = state.api.init_score(req).await?;
     Ok(Json(resp).into_response())
+}
+
+async fn batch_eval<A, E>(
+    State(state): State<AppState<A>>,
+    Json(req): Json<BatchEvalRequest>,
+) -> Result<Response, ServerError<E>>
+where
+    A: EvalsApi<Error = ApiError<AppError<E>>> + 'static,
+    E: Error + Send + Sync + 'static,
+{
+    let resp = state.api.batch_eval(req).await?;
+    Ok((StatusCode::ACCEPTED, Json(resp)).into_response())
 }
 
 async fn step_score<A, E>(

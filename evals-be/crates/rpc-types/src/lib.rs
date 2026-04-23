@@ -175,6 +175,35 @@ pub struct UnscoredResponse {
     pub summary_ids: Vec<Uuid>,
 }
 
+// ---- POST /api/evals/batch ----
+
+/// Trigger eval runs for a list of summaries in the background.
+///
+/// Each `summary_id` gets its own independent `tokio::spawn`-ed eval task,
+/// identical to calling `POST /score/init` per ID. Repeated calls with
+/// overlapping IDs are intentional and each produce a fresh batch — no
+/// deduplication occurs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchEvalRequest {
+    /// One or more summary IDs to evaluate. Must be non-empty.
+    pub summary_ids: Vec<Uuid>,
+    /// Optional eval version override. Defaults to the server-configured
+    /// `EVAL_VERSION` env var when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_version: Option<String>,
+}
+
+/// Immediate response returned before any background eval task has completed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchEvalResponse {
+    /// Ephemeral correlation UUID generated server-side. Useful for log
+    /// correlation — not persisted and not queryable after this response.
+    pub batch_eval_id: Uuid,
+    /// Echo of every `summary_id` that was accepted into the background queue,
+    /// in the order they were received.
+    pub accepted: Vec<Uuid>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
