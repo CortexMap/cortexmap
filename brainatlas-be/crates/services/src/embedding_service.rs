@@ -73,8 +73,8 @@ mod tests {
     };
     use domain::{
         ChunkSource, ExistingSummary, LlmCallOutcome, LlmEndpointKind, LlmPricing, LlmResponse,
-        NewEmbedding, NewLlmCallUsage, NewRegionSummary, SimilarChunk, Usage, UsageAggregate,
-        UsageAggregateFilter,
+        NewEmbedding, NewLlmCallUsage, NewRegionSummary, RetrievalScope, SimilarChunk, Usage,
+        UsageAggregate, UsageAggregateFilter,
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -280,7 +280,7 @@ mod tests {
             &self,
             _db: &str,
             _emb: Vec<f32>,
-            _region_id: i32,
+            _retrieval_scope: RetrievalScope,
             _top_k: usize,
         ) -> Result<Vec<SimilarChunk>, Self::Error> {
             unreachable!()

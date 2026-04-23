@@ -1,1 +1,1 @@
-Search the indexed papers about {{REGION_NAME}} and create a detailed clinical neuroscience profile. Make at least 4-5 search calls covering anatomy, function, disorders, symptoms, and treatments before writing your final response.
+Use the exact region metadata above before you search. Start by confirming the precise target identity, then query the indexed papers only for topics that are supported by evidence. If a topic has little or no direct evidence for this exact region, explicitly say that instead of forcing a fully populated section.

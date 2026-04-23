@@ -75,6 +75,10 @@ fn is_false(v: &bool) -> bool {
 pub struct ProcessRegionResponse {
     pub region_id: UuidWrapper,
     pub detail: String,
+    /// UUID of the `region_summary` row that was created. Present when the
+    /// brainatlas server successfully persists a summary (RAG or knowledge-only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_id: Option<UuidWrapper>,
 }
 
 /// Knowledge-only summary request — used when NCBI returns zero papers for a

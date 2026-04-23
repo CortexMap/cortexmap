@@ -29,15 +29,16 @@ where
     I: HttpClient<Error = E> + Send + Sync,
 {
     /// POST the knowledge-only summary request to brainatlas, with an
-    /// exponential retry. Returns `Ok(())` on success; error is wrapped in
-    /// `ServiceError` on persistent failure.
+    /// exponential retry. Returns the `summary_id` UUID on success so the
+    /// caller can immediately queue an eval; error is wrapped in `ServiceError`
+    /// on persistent failure.
     async fn generate_knowledge_summary(
         &self,
         url: &str,
         region_id: uuid::Uuid,
         batch_id: uuid::Uuid,
         region_name: &str,
-    ) -> Result<(), ServiceError<E>> {
+    ) -> Result<Option<uuid::Uuid>, ServiceError<E>> {
         let request = crate::ProcessNoPapersRequest {
             region_id: crate::UuidWrapper {
                 value: region_id.to_string(),
@@ -58,7 +59,7 @@ where
         let req_ref = &request;
         let url_ref = url;
 
-        let _: crate::ProcessRegionResponse = (|| async {
+        let response: crate::ProcessRegionResponse = (|| async {
             infra
                 .post::<crate::ProcessNoPapersRequest, crate::ProcessRegionResponse>(
                     url_ref, req_ref,
@@ -79,7 +80,13 @@ where
         .await
         .map_err(ServiceError::InfraError)?;
 
-        Ok(())
+        // Extract the summary UUID so the caller can queue an eval immediately.
+        let summary_uuid = response
+            .summary_id
+            .as_ref()
+            .and_then(|w| w.value.parse::<uuid::Uuid>().ok());
+
+        Ok(summary_uuid)
     }
 }
 
@@ -607,7 +614,7 @@ where
                                     )
                                     .await
                                 {
-                                    Ok(()) => {
+                                    Ok(summary_id_opt) => {
                                         if let Err(e) =
                                             self.infra.complete_batch(&database_url, batch_id).await
                                         {
@@ -616,6 +623,18 @@ where
                                                 error = %e,
                                                 "Phase 2: Knowledge summary succeeded but marking batch complete failed"
                                             );
+                                        }
+                                        // Queue an eval for the newly created summary. This is
+                                        // best-effort — a transient evals-be failure must not
+                                        // roll back or fail the knowledge-only summary creation.
+                                        if let Some(summary_uuid) = summary_id_opt {
+                                            crate::eval_orchestrator::queue_summary_for_eval_best_effort(
+                                                &self.infra,
+                                                summary_uuid,
+                                                *region_id,
+                                                batch_id,
+                                            )
+                                            .await;
                                         }
                                         knowledge_summaries_succeeded += 1;
                                         tracing::info!(

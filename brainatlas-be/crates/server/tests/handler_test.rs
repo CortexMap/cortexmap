@@ -24,8 +24,8 @@ use axum::http::{Method, Request, StatusCode};
 use domain::{
     BrainRegionEntry, ChunkSource, Claim, ClaimsResponse, ExistingSummary, GroundednessLabel,
     GroundednessVerdict, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping,
-    RubricCriterion, RubricScores, SimilarChunk, UsageAggregate, UsageAggregateFilter,
-    UsageByCallerTag, UsageByModel, UsageContext,
+    RetrievalScope, RubricCriterion, RubricScores, SimilarChunk, UsageAggregate,
+    UsageAggregateFilter, UsageByCallerTag, UsageByModel, UsageContext,
 };
 use http_body_util::BodyExt;
 use server::BrainAtlasServer;
@@ -267,7 +267,7 @@ impl VectorDatabase for FakeServices {
     async fn search_similar(
         &self,
         _query_embedding: Vec<f32>,
-        _region_id: i32,
+        _retrieval_scope: RetrievalScope,
         _top_k: usize,
     ) -> Result<Vec<SimilarChunk>, Self::Error> {
         Ok(Vec::new())

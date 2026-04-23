@@ -7,7 +7,8 @@ use crate::s3::BrainAtlasS3;
 use crate::vectordb::BrainAtlasVectorDB;
 use domain::{
     ChunkSource, ExistingSummary, LlmCallOutcome, LlmPricing, LlmResponse, NewEmbedding,
-    NewLlmCallUsage, NewRegionSummary, SimilarChunk, UsageAggregate, UsageAggregateFilter,
+    NewLlmCallUsage, NewRegionSummary, RetrievalScope, SimilarChunk, UsageAggregate,
+    UsageAggregateFilter,
 };
 use services::infra::{
     EmbeddingGenerator, LlmClient, LlmPricingRepo, LlmUsageRepo, S3Storage, VectorDatabase,
@@ -169,11 +170,11 @@ impl VectorDatabase for BrainAtlasInfra {
         &self,
         database_url: &str,
         query_embedding: Vec<f32>,
-        region_id: i32,
+        retrieval_scope: RetrievalScope,
         top_k: usize,
     ) -> Result<Vec<SimilarChunk>, Self::Error> {
         self.vectordb
-            .search_similar(database_url, query_embedding, region_id, top_k)
+            .search_similar(database_url, query_embedding, retrieval_scope, top_k)
             .await
     }
 

@@ -61,6 +61,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "#[serde(default)]",
     );
 
+    // ProcessRegionResponse.summary_id — new optional field, must default to None
+    // so older orch versions that omit it can still be deserialized correctly.
+    config = config.field_attribute(
+        "com.cortexmap.ProcessRegionResponse.summary_id",
+        "#[serde(default)]",
+    );
+
     config.compile_protos(&["../../../proto/llm/brain.proto"], &["../../../proto"])?;
     Ok(())
 }

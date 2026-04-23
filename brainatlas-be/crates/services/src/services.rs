@@ -10,8 +10,8 @@ use app::{
 };
 use domain::{
     BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
-    LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RubricScores, SimilarChunk,
-    UsageAggregate, UsageAggregateFilter, UsageContext,
+    LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RetrievalScope, RubricScores,
+    SimilarChunk, UsageAggregate, UsageAggregateFilter, UsageContext,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -260,7 +260,7 @@ where
     async fn search_similar(
         &self,
         query_embedding: Vec<f32>,
-        region_id: i32,
+        retrieval_scope: RetrievalScope,
         top_k: usize,
     ) -> Result<Vec<SimilarChunk>, Self::Error> {
         let database_url = self
@@ -269,7 +269,7 @@ where
             .map_err(ServiceError::InfraError)?;
 
         self.infra
-            .search_similar(&database_url, query_embedding, region_id, top_k)
+            .search_similar(&database_url, query_embedding, retrieval_scope, top_k)
             .await
             .map_err(ServiceError::InfraError)
     }

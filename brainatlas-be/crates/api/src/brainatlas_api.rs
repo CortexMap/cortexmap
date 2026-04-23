@@ -100,6 +100,9 @@ where
                 value: region_uuid.to_string(),
             }),
             detail,
+            summary_id: Some(rpc_types::Uuid {
+                value: summary_id.to_string(),
+            }),
         })
     }
 
@@ -127,6 +130,9 @@ where
                 value: region_uuid.to_string(),
             }),
             detail,
+            summary_id: Some(rpc_types::Uuid {
+                value: summary_id.to_string(),
+            }),
         })
     }
 

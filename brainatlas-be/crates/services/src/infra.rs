@@ -1,7 +1,7 @@
 use domain::{
     BrainRegionEntry, ChunkSource, ExistingSummary, LlmCallOutcome, LlmPricing, LlmProvider,
-    LlmResponse, NewEmbedding, NewLlmCallUsage, NewRegionSummary, RegionMapping, SimilarChunk,
-    UsageAggregate, UsageAggregateFilter,
+    LlmResponse, NewEmbedding, NewLlmCallUsage, NewRegionSummary, RegionMapping,
+    RetrievalScope, SimilarChunk, UsageAggregate, UsageAggregateFilter,
 };
 use uuid::Uuid;
 
@@ -232,12 +232,13 @@ pub trait VectorDatabase: Send + Sync {
         content_hash: &str,
     ) -> Result<Option<ExistingSummary>, Self::Error>;
 
-    /// Search for similar chunks by embedding vector, scoped to a region
+    /// Search for similar chunks by embedding vector, scoped to a region and
+    /// summary, with an explicit fallback policy.
     async fn search_similar(
         &self,
         database_url: &str,
         query_embedding: Vec<f32>,
-        region_id: i32,
+        retrieval_scope: RetrievalScope,
         top_k: usize,
     ) -> Result<Vec<SimilarChunk>, Self::Error>;
 

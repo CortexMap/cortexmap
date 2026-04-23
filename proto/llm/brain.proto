@@ -121,6 +121,9 @@ message ProcessRegionResponse {
   Uuid   region_id = 1;
   // Human-readable summary of what was written (e.g. "stored 1 summary for region 42").
   string detail    = 2;
+  // UUID of the region_summary row that was created or updated. Present whenever
+  // the server successfully persists a summary (RAG or knowledge-only paths).
+  optional Uuid summary_id = 3;
 }
 
 // Called by orch when a region has zero NCBI search results. Generates a

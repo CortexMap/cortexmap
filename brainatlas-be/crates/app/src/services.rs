@@ -1,7 +1,7 @@
 use domain::{
     BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
-    LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RubricScores, SimilarChunk,
-    UsageAggregate, UsageAggregateFilter, UsageContext,
+    LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RetrievalScope, RubricScores,
+    SimilarChunk, UsageAggregate, UsageAggregateFilter, UsageContext,
 };
 use std::error::Error;
 use uuid::Uuid;
@@ -137,7 +137,7 @@ pub trait VectorDatabase: Send + Sync {
     async fn search_similar(
         &self,
         query_embedding: Vec<f32>,
-        region_id: i32,
+        retrieval_scope: RetrievalScope,
         top_k: usize,
     ) -> Result<Vec<SimilarChunk>, Self::Error>;
     async fn update_summary_text(

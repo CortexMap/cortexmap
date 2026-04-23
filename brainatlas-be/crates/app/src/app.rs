@@ -1,10 +1,12 @@
 use crate::{AppError, Services};
 use domain::{
-    BrainRegionEntry, ChunkSource, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping,
-    SearchEmbeddingsArgs, UsageContext, compute_hash, rpc_types::PaperMetadata,
+    BrainRegionEntry, ChunkSource, LlmResponse, NewEmbedding, NewRegionSummary,
+    RegionMapping, RetrievalFallbackPolicy, RetrievalScope, SearchEmbeddingsArgs, SimilarChunk,
+    UsageContext, compute_hash, rpc_types::PaperMetadata,
 };
 use futures::future::join_all;
 use schemars::schema_for;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -17,6 +19,47 @@ const RAG_SUMMARIZE_SYSTEM_TEMPLATE: &str = include_str!("../prompts/rag_summari
 const RAG_SUMMARIZE_USER_TEMPLATE: &str = include_str!("../prompts/rag_summarize_user.md");
 const KNOWLEDGE_SUMMARIZE_SYSTEM_TEMPLATE: &str =
     include_str!("../prompts/knowledge_summarize_system.md");
+
+#[derive(Debug, Clone, Serialize)]
+struct RegionIdentityContext {
+    region_id: i32,
+    name: String,
+    acronym: Option<String>,
+    parent_region_id: Option<i32>,
+    parent_acronym: Option<String>,
+    structure_order: Option<i32>,
+    ontology_extension: Option<String>,
+}
+
+impl From<&RegionMapping> for RegionIdentityContext {
+    fn from(region: &RegionMapping) -> Self {
+        Self {
+            region_id: region.region_id,
+            name: region.name.clone(),
+            acronym: region.acronym.clone(),
+            parent_region_id: region.parent_region_id,
+            parent_acronym: region.parent_acronym.clone(),
+            structure_order: region.structure_order,
+            ontology_extension: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SearchEmbeddingsToolResult {
+    target_region: RegionIdentityContext,
+    retrieval_scope: RetrievalScope,
+    results: Vec<SimilarChunk>,
+}
+
+fn render_region_context_block(region: &RegionMapping) -> String {
+    let identity = RegionIdentityContext::from(region);
+    let identity_json = serde_json::to_string_pretty(&identity).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        "**Region identity metadata (authoritative):**\n```json\n{}\n```\nTreat `ontology_extension` as reserved for future ontology-backed enrichment; if it is null, do not infer missing type metadata.",
+        identity_json
+    )
+}
 
 pub struct BrainAtlasApp<S> {
     services: Arc<S>,
@@ -236,11 +279,14 @@ where
                 "Chunk+embed complete (summarization skipped)"
             );
         } else {
+            let retrieval_scope = RetrievalScope::current_summary(region.region_id, summary_id)
+                .with_fallback_policy(RetrievalFallbackPolicy::ActiveSummary);
+
             // 7. RAG summarization loop
             let summary_text = self
                 .rag_summarize(
-                    &region.name,
-                    region.region_id,
+                    &region,
+                    retrieval_scope,
                     chat_model.as_deref(),
                     embedding_model_ref,
                     base_ctx.clone().with_summary(Some(summary_id)),
@@ -302,8 +348,10 @@ where
 
         // Build the system+user message pair. No tools — the LLM must return
         // a single final text response.
-        let system_prompt =
-            KNOWLEDGE_SUMMARIZE_SYSTEM_TEMPLATE.replace("{{REGION_NAME}}", &region.name);
+        let region_context_block = render_region_context_block(&region);
+        let system_prompt = KNOWLEDGE_SUMMARIZE_SYSTEM_TEMPLATE
+            .replace("{{REGION_NAME}}", &region.name)
+            .replace("{{REGION_CONTEXT_BLOCK}}", &region_context_block);
         let user_prompt = format!("Please provide the structured summary for {}.", region.name);
         let messages: Vec<serde_json::Value> = vec![
             serde_json::json!({ "role": "system", "content": system_prompt }),
@@ -377,8 +425,8 @@ where
     /// RAG loop: LLM uses search_embeddings tool to retrieve context, then synthesizes a summary.
     async fn rag_summarize(
         &self,
-        region_name: &str,
-        region_id: i32,
+        region: &RegionMapping,
+        retrieval_scope: RetrievalScope,
         chat_model: Option<&str>,
         embedding_model: Option<&str>,
         ctx: UsageContext,
@@ -398,8 +446,11 @@ where
         })];
 
         // Load and substitute templates
-        let system_prompt = RAG_SUMMARIZE_SYSTEM_TEMPLATE.replace("{{REGION_NAME}}", region_name);
-        let user_prompt = RAG_SUMMARIZE_USER_TEMPLATE.replace("{{REGION_NAME}}", region_name);
+        let region_context_block = render_region_context_block(region);
+        let system_prompt = RAG_SUMMARIZE_SYSTEM_TEMPLATE
+            .replace("{{REGION_NAME}}", &region.name)
+            .replace("{{REGION_CONTEXT_BLOCK}}", &region_context_block);
+        let user_prompt = RAG_SUMMARIZE_USER_TEMPLATE.replace("{{REGION_NAME}}", &region.name);
 
         // Start the conversation with the system prompt
         let mut messages: Vec<serde_json::Value> = vec![serde_json::json!({
@@ -417,7 +468,7 @@ where
             info!(
                 "RAG summarization iteration {} for region '{}'",
                 iteration + 1,
-                region_name
+                region.name
             );
 
             let response = self
@@ -481,9 +532,26 @@ where
                             }
                         };
 
+                        let requested_fallback_policy = args
+                            .fallback_policy
+                            .unwrap_or(retrieval_scope.fallback_policy);
+                        let active_fallback_requested =
+                            requested_fallback_policy == RetrievalFallbackPolicy::ActiveSummary;
+                        let effective_scope = RetrievalScope {
+                            fallback_policy: requested_fallback_policy,
+                            ..retrieval_scope.clone()
+                        };
+
                         info!(
-                            "Executing search_embeddings(query='{}', top_k={})",
-                            args.query, args.top_k
+                            "Executing search_embeddings(query='{}', top_k={}, summary_scope={}, fallback={})",
+                            args.query,
+                            args.top_k,
+                            effective_scope.summary_id,
+                            if active_fallback_requested {
+                                "active_summary"
+                            } else {
+                                "none"
+                            }
                         );
 
                         // Generate embedding for the query
@@ -493,22 +561,31 @@ where
                             .await
                             .map_err(AppError::ServiceError)?;
 
-                        // Search for similar chunks
                         let similar_chunks = self
                             .services
-                            .search_similar(query_embedding, region_id, args.top_k)
+                            .search_similar(query_embedding, effective_scope.clone(), args.top_k)
                             .await
                             .map_err(AppError::ServiceError)?;
 
                         info!(
-                            "Found {} similar chunks for query '{}'",
+                            "Found {} similar chunks for query '{}' within summary {} (fallback={})",
                             similar_chunks.len(),
-                            args.query
+                            args.query,
+                            effective_scope.summary_id,
+                            if active_fallback_requested {
+                                "active_summary"
+                            } else {
+                                "none"
+                            }
                         );
 
                         // Serialize results and add as tool response
-                        let result_content =
-                            serde_json::to_string(&similar_chunks).unwrap_or_default();
+                        let tool_result = SearchEmbeddingsToolResult {
+                            target_region: RegionIdentityContext::from(region),
+                            retrieval_scope: effective_scope,
+                            results: similar_chunks,
+                        };
+                        let result_content = serde_json::to_string(&tool_result).unwrap_or_default();
 
                         messages.push(serde_json::json!({
                             "role": "tool",
@@ -523,7 +600,7 @@ where
         // If we exceeded max iterations, return an error
         error!(
             "RAG loop exceeded {} iterations for region '{}'",
-            MAX_TOOL_CALL_ITERATIONS, region_name
+            MAX_TOOL_CALL_ITERATIONS, region.name
         );
         Err(AppError::MaxToolCallsExceeded(MAX_TOOL_CALL_ITERATIONS))
     }
@@ -660,8 +737,9 @@ mod tests {
     };
     use domain::{
         BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
-        LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RubricScores, SimilarChunk,
-        ToolCall, UsageAggregate, UsageAggregateFilter, rpc_types::PaperMetadata,
+        LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RetrievalFallbackPolicy,
+        RetrievalScope, RubricScores, SimilarChunk, ToolCall, UsageAggregate,
+        UsageAggregateFilter, rpc_types::PaperMetadata,
     };
     use std::sync::Mutex;
 
@@ -686,7 +764,7 @@ mod tests {
         inserted_summary: Option<(NewRegionSummary, Vec<NewEmbedding>)>,
         summarize_calls: usize,
         summary_text_updates: Vec<(Uuid, String)>,
-        searches: Vec<(i32, usize)>,
+        searches: Vec<(RetrievalScope, usize)>,
         generate_queries_calls: Vec<(String, u32)>,
     }
 
@@ -981,10 +1059,14 @@ mod tests {
         async fn search_similar(
             &self,
             _query_embedding: Vec<f32>,
-            region_id: i32,
+            retrieval_scope: RetrievalScope,
             top_k: usize,
         ) -> Result<Vec<SimilarChunk>, Self::Error> {
-            self.calls.lock().unwrap().searches.push((region_id, top_k));
+            self.calls
+                .lock()
+                .unwrap()
+                .searches
+                .push((retrieval_scope, top_k));
             Ok(vec![])
         }
 
@@ -1320,7 +1402,9 @@ mod tests {
             .enqueue_summarize_ok(LlmResponse::ToolCalls(vec![ToolCall {
                 id: "call-1".to_string(),
                 name: "search_embeddings".to_string(),
-                arguments: r#"{"query":"hippocampus","top_k":3}"#.to_string(),
+                arguments:
+                    r#"{"query":"hippocampus","top_k":3,"fallback_policy":"active_summary"}"#
+                        .to_string(),
             }]))
             // Iteration 2: final answer
             .enqueue_summarize_ok(LlmResponse::Final("done".to_string()));
@@ -1344,6 +1428,8 @@ mod tests {
         // search_similar was invoked once per tool call.
         assert_eq!(calls.searches.len(), 1);
         assert_eq!(calls.searches[0].1, 3, "top_k propagated");
+        assert_eq!(calls.searches[0].0.region_id, 2);
+        assert_eq!(calls.searches[0].0.fallback_policy, RetrievalFallbackPolicy::ActiveSummary);
     }
 
     #[tokio::test]
@@ -1509,7 +1595,288 @@ mod tests {
         let _ = agg;
     }
 
-    // ---------- Tests: default correlation id & multi-file source attribution ----------
+    // ---------- Tests: prompt rendering (Task 12) ----------
+
+    /// `render_region_context_block` must produce a JSON block that
+    /// includes every identity field from `RegionMapping`, including the
+    /// reserved `ontology_extension` extension point.
+    #[test]
+    fn render_region_context_block_contains_all_identity_fields() {
+        let region = RegionMapping::new(42, "Hippocampus".to_string())
+            .with_acronym("HPC".to_string())
+            .with_structure_order(100)
+            .with_parent(41, Some("CTX".to_string()));
+
+        let block = render_region_context_block(&region);
+
+        assert!(block.contains("region_id"), "must include region_id");
+        assert!(block.contains("\"Hippocampus\""), "must include name");
+        assert!(block.contains("\"HPC\""), "must include acronym");
+        assert!(block.contains("100"), "must include structure_order");
+        assert!(block.contains("41"), "must include parent_region_id");
+        assert!(block.contains("\"CTX\""), "must include parent_acronym");
+        assert!(
+            block.contains("ontology_extension"),
+            "must include ontology_extension extension point"
+        );
+        assert!(
+            block.contains("null"),
+            "ontology_extension is null when not set via RegionMapping"
+        );
+    }
+
+    /// Optional fields that are not set must render as JSON null so the
+    /// model does not hallucinate values for them.
+    #[test]
+    fn render_region_context_block_uses_null_for_missing_optional_fields() {
+        let region = RegionMapping::new(1, "Unknown region".to_string());
+
+        let block = render_region_context_block(&region);
+
+        assert!(
+            block.contains("\"acronym\": null"),
+            "missing acronym renders as null"
+        );
+        assert!(
+            block.contains("\"parent_region_id\": null"),
+            "missing parent_region_id renders as null"
+        );
+        assert!(
+            block.contains("\"parent_acronym\": null"),
+            "missing parent_acronym renders as null"
+        );
+        assert!(
+            block.contains("\"structure_order\": null"),
+            "missing structure_order renders as null"
+        );
+    }
+
+    /// After both substitutions the RAG system prompt must not contain any
+    /// unresolved `{{...}}` placeholder, and must embed the region name and
+    /// the generated context block.
+    #[test]
+    fn rag_system_prompt_no_unresolved_placeholders() {
+        let region = RegionMapping::new(7, "Taenia tecta, dorsal part".to_string())
+            .with_acronym("TTd".to_string())
+            .with_parent(777, Some("TT".to_string()));
+
+        let block = render_region_context_block(&region);
+        let prompt = RAG_SUMMARIZE_SYSTEM_TEMPLATE
+            .replace("{{REGION_NAME}}", &region.name)
+            .replace("{{REGION_CONTEXT_BLOCK}}", &block);
+
+        assert!(
+            !prompt.contains("{{"),
+            "all placeholders must be substituted in RAG system prompt"
+        );
+        assert!(
+            prompt.contains("Taenia tecta, dorsal part"),
+            "region name must appear in prompt"
+        );
+        assert!(
+            prompt.contains("\"TTd\""),
+            "acronym must appear via context block"
+        );
+    }
+
+    /// After both substitutions the knowledge-only system prompt must not
+    /// contain any unresolved `{{...}}` placeholder.
+    #[test]
+    fn knowledge_system_prompt_no_unresolved_placeholders() {
+        let region = RegionMapping::new(8, "Cerebellum".to_string())
+            .with_acronym("CB".to_string());
+
+        let block = render_region_context_block(&region);
+        let prompt = KNOWLEDGE_SUMMARIZE_SYSTEM_TEMPLATE
+            .replace("{{REGION_NAME}}", &region.name)
+            .replace("{{REGION_CONTEXT_BLOCK}}", &block);
+
+        assert!(
+            !prompt.contains("{{"),
+            "all placeholders must be substituted in knowledge system prompt"
+        );
+        assert!(prompt.contains("Cerebellum"), "region name must appear in prompt");
+        assert!(prompt.contains("\"CB\""), "acronym must appear via context block");
+    }
+
+    // ---------- Tests: retrieval scope contract (Task 4 app-layer) ----------
+
+    /// The `summary_id` threaded into `search_similar` must be exactly the
+    /// one returned by `insert_summary_with_embeddings`, not the nil
+    /// placeholder or any other value.
+    #[tokio::test]
+    async fn retrieval_scope_carries_inserted_summary_id() {
+        let region = sample_region(3);
+        let region_uuid = region.id;
+        let expected_summary_id = Uuid::new_v4();
+        let mut svc = FakeServices::new()
+            .with_region(region)
+            .with_download("doc.txt", "content")
+            .enqueue_summarize_ok(LlmResponse::ToolCalls(vec![ToolCall {
+                id: "t".to_string(),
+                name: "search_embeddings".to_string(),
+                arguments: r#"{"query":"anatomy","top_k":1}"#.to_string(),
+            }]))
+            .enqueue_summarize_ok(LlmResponse::Final("final answer".to_string()));
+        svc.insert_summary_id = expected_summary_id;
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        app.process_region(
+            region_uuid,
+            Uuid::new_v4(),
+            vec!["doc.txt".to_string()],
+            vec![paper_meta("doc.txt", None)],
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let calls = svc.calls.lock().unwrap();
+        assert_eq!(
+            calls.searches[0].0.summary_id, expected_summary_id,
+            "retrieval scope must carry the summary_id from insert_summary_with_embeddings"
+        );
+        assert_eq!(calls.searches[0].0.region_id, 3, "region_id must match");
+    }
+
+    /// When the LLM does not supply `fallback_policy` in its tool args,
+    /// the effective retrieval scope inherits `ActiveSummary` from the
+    /// process-level default built in `process_region`.
+    #[tokio::test]
+    async fn retrieval_scope_default_fallback_is_active_summary() {
+        let region = sample_region(9);
+        let region_uuid = region.id;
+        let svc = FakeServices::new()
+            .with_region(region)
+            .with_download("doc.txt", "content")
+            .enqueue_summarize_ok(LlmResponse::ToolCalls(vec![ToolCall {
+                id: "t".to_string(),
+                name: "search_embeddings".to_string(),
+                // No fallback_policy field — should inherit the process default
+                arguments: r#"{"query":"anatomy","top_k":5}"#.to_string(),
+            }]))
+            .enqueue_summarize_ok(LlmResponse::Final("done".to_string()));
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        app.process_region(
+            region_uuid,
+            Uuid::new_v4(),
+            vec!["doc.txt".to_string()],
+            vec![paper_meta("doc.txt", None)],
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let calls = svc.calls.lock().unwrap();
+        assert_eq!(
+            calls.searches[0].0.fallback_policy,
+            RetrievalFallbackPolicy::ActiveSummary,
+            "absent fallback_policy in LLM args must inherit ActiveSummary from process default"
+        );
+    }
+
+    /// When the LLM explicitly requests `fallback_policy = "none"`, the
+    /// retrieval scope must override the process-level ActiveSummary default
+    /// and use None instead.
+    #[tokio::test]
+    async fn retrieval_scope_llm_can_override_fallback_to_none() {
+        let region = sample_region(10);
+        let region_uuid = region.id;
+        let svc = FakeServices::new()
+            .with_region(region)
+            .with_download("doc.txt", "content")
+            .enqueue_summarize_ok(LlmResponse::ToolCalls(vec![ToolCall {
+                id: "t".to_string(),
+                name: "search_embeddings".to_string(),
+                arguments: r#"{"query":"function","top_k":5,"fallback_policy":"none"}"#
+                    .to_string(),
+            }]))
+            .enqueue_summarize_ok(LlmResponse::Final("done".to_string()));
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        app.process_region(
+            region_uuid,
+            Uuid::new_v4(),
+            vec!["doc.txt".to_string()],
+            vec![paper_meta("doc.txt", None)],
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let calls = svc.calls.lock().unwrap();
+        assert_eq!(
+            calls.searches[0].0.fallback_policy,
+            RetrievalFallbackPolicy::None,
+            "fallback_policy='none' in LLM args must override the process-level ActiveSummary default"
+        );
+    }
+
+    /// Multiple tool calls in a single RAG loop must each receive a scope
+    /// that carries the same `summary_id` and `region_id`, regardless of
+    /// which iteration they fall in.
+    #[tokio::test]
+    async fn retrieval_scope_is_consistent_across_multiple_tool_calls() {
+        let region = sample_region(11);
+        let region_uuid = region.id;
+        let expected_summary_id = Uuid::new_v4();
+        let mut svc = FakeServices::new()
+            .with_region(region)
+            .with_download("doc.txt", "content")
+            // Iteration 1: two tool calls in one assistant turn
+            .enqueue_summarize_ok(LlmResponse::ToolCalls(vec![
+                ToolCall {
+                    id: "t1".to_string(),
+                    name: "search_embeddings".to_string(),
+                    arguments: r#"{"query":"anatomy","top_k":2}"#.to_string(),
+                },
+                ToolCall {
+                    id: "t2".to_string(),
+                    name: "search_embeddings".to_string(),
+                    arguments: r#"{"query":"function","top_k":3}"#.to_string(),
+                },
+            ]))
+            .enqueue_summarize_ok(LlmResponse::Final("done".to_string()));
+        svc.insert_summary_id = expected_summary_id;
+        let svc = Arc::new(svc);
+        let app = BrainAtlasApp::new(svc.clone());
+        app.process_region(
+            region_uuid,
+            Uuid::new_v4(),
+            vec!["doc.txt".to_string()],
+            vec![paper_meta("doc.txt", None)],
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let calls = svc.calls.lock().unwrap();
+        assert_eq!(calls.searches.len(), 2, "two tool calls must yield two searches");
+        for (i, (scope, _)) in calls.searches.iter().enumerate() {
+            assert_eq!(
+                scope.summary_id, expected_summary_id,
+                "search {i}: summary_id must be consistent"
+            );
+            assert_eq!(scope.region_id, 11, "search {i}: region_id must be consistent");
+        }
+        assert_eq!(calls.searches[0].1, 2, "first call: top_k = 2");
+        assert_eq!(calls.searches[1].1, 3, "second call: top_k = 3");
+    }
+
+
 
     #[tokio::test]
     async fn process_region_default_correlation_id_is_batch_prefix() {

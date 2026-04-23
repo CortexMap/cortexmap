@@ -3,7 +3,10 @@ use crate::models::*;
 use crate::schema;
 use diesel::prelude::*;
 use diesel::sql_types::{Float8, Int4, Text};
-use domain::{ChunkSource, ExistingSummary, NewEmbedding, NewRegionSummary, SimilarChunk};
+use domain::{
+    ChunkSource, ExistingSummary, NewEmbedding, NewRegionSummary, RetrievalFallbackPolicy,
+    RetrievalScope, SimilarChunk,
+};
 use services::infra::VectorDatabase;
 use std::sync::{Arc, Mutex, OnceLock};
 use uuid::Uuid;
@@ -170,7 +173,7 @@ impl VectorDatabase for BrainAtlasVectorDB {
         &self,
         database_url: &str,
         query_embedding: Vec<f32>,
-        region_id_param: i32,
+        retrieval_scope: RetrievalScope,
         top_k: usize,
     ) -> Result<Vec<SimilarChunk>, Self::Error> {
         let embedding_str = format!(
@@ -206,21 +209,57 @@ impl VectorDatabase for BrainAtlasVectorDB {
             source_char_end: Option<i32>,
         }
 
+        #[derive(QueryableByName)]
+        struct ActiveSummaryIdRow {
+            #[diesel(sql_type = diesel::sql_types::Uuid)]
+            id: uuid::Uuid,
+        }
+
         self.run_blocking(database_url, move |conn| {
-            let rows = diesel::sql_query(
-                "SELECT id, chunk_index, chunk_text, \
-                 1.0 - (embedding <=> $1::vector) AS similarity_score, \
-                 source_pmc_id, source_uid, source_s3_key, source_query, \
-                 source_char_start, source_char_end \
-                 FROM brain_region_embeddings \
-                 WHERE region_id = $2 \
-                 ORDER BY embedding <=> $1::vector \
-                 LIMIT $3",
-            )
-            .bind::<Text, _>(&embedding_str)
-            .bind::<Int4, _>(region_id_param)
-            .bind::<diesel::sql_types::BigInt, _>(top_k as i64)
-            .load::<SimilarChunkRow>(conn)?;
+            let search_for_summary =
+                |conn: &mut PgConnection, summary_id_param: Uuid| -> Result<Vec<SimilarChunkRow>, diesel::result::Error> {
+                    diesel::sql_query(
+                        "SELECT id, chunk_index, chunk_text, \
+                         1.0 - (embedding <=> $1::vector) AS similarity_score, \
+                         source_pmc_id, source_uid, source_s3_key, source_query, \
+                         source_char_start, source_char_end \
+                         FROM brain_region_embeddings \
+                         WHERE region_id = $2 AND summary_id = $3 \
+                         ORDER BY embedding <=> $1::vector \
+                         LIMIT $4",
+                    )
+                    .bind::<Text, _>(&embedding_str)
+                    .bind::<Int4, _>(retrieval_scope.region_id)
+                    .bind::<diesel::sql_types::Uuid, _>(summary_id_param)
+                    .bind::<diesel::sql_types::BigInt, _>(top_k as i64)
+                    .load::<SimilarChunkRow>(conn)
+                };
+
+            let mut rows = search_for_summary(conn, retrieval_scope.summary_id)?;
+
+            if rows.is_empty()
+                && matches!(
+                    retrieval_scope.fallback_policy,
+                    RetrievalFallbackPolicy::ActiveSummary
+                )
+            {
+                let active_summary = diesel::sql_query(
+                    "SELECT id \
+                     FROM region_summary \
+                     WHERE region_id = $1 AND is_active = true \
+                     ORDER BY created_at DESC NULLS LAST, id DESC \
+                     LIMIT 1",
+                )
+                .bind::<Int4, _>(retrieval_scope.region_id)
+                .get_result::<ActiveSummaryIdRow>(conn)
+                .optional()?;
+
+                if let Some(active_summary) = active_summary
+                    && active_summary.id != retrieval_scope.summary_id
+                {
+                    rows = search_for_summary(conn, active_summary.id)?;
+                }
+            }
 
             Ok(rows
                 .into_iter()
@@ -285,5 +324,249 @@ impl VectorDatabase for BrainAtlasVectorDB {
             }))
         })
         .await
+    }
+}
+
+// ============================================================================
+// Infra-level integration tests (Task 4)
+//
+// These tests require a live Postgres+pgvector instance.  They are gated with
+// `#[ignore]` so they do NOT run in ordinary `cargo test` / CI.  To run them
+// locally set DATABASE_URL to a valid connection string and execute:
+//
+//   cargo test -p infra -- --ignored --test-thread=1
+//
+// Each test inserts rows in a transaction that is rolled back at the end, so
+// no permanent data is written.
+// ============================================================================
+#[cfg(test)]
+mod retrieval_scope_integration_tests {
+    use super::*;
+    use domain::{NewEmbedding, NewRegionSummary, RetrievalFallbackPolicy, RetrievalScope};
+    use services::infra::VectorDatabase;
+    use uuid::Uuid;
+
+    fn db_url() -> String {
+        std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL must be set to run infra integration tests")
+    }
+
+    fn zero_embedding(len: usize) -> Vec<f32> {
+        vec![0.0_f32; len]
+    }
+
+    fn make_embedding(region_id: i32, summary_id: Uuid, chunk_text: &str) -> NewEmbedding {
+        NewEmbedding {
+            region_id,
+            summary_id,
+            chunk_index: 0,
+            chunk_text: chunk_text.to_string(),
+            embedding: zero_embedding(1536),
+            source_pmc_id: None,
+            source_uid: None,
+            source_s3_key: None,
+            source_query: None,
+            source_char_start: None,
+            source_char_end: None,
+        }
+    }
+
+    /// With `RetrievalFallbackPolicy::None` the query must return only chunks
+    /// that belong to the exact `summary_id` in the scope — not chunks from
+    /// any other summary for the same region.
+    #[tokio::test]
+    #[ignore = "requires live Postgres+pgvector; run with `cargo test -p infra -- --ignored`"]
+    async fn search_similar_strict_scope_excludes_other_summaries() {
+        let db = BrainAtlasVectorDB::new();
+        let url = db_url();
+        let region_id = 999_999;
+
+        // Insert the target summary (the one we will scope to)
+        let target_summary = NewRegionSummary {
+            region_id,
+            name: "Test Region".to_string(),
+            acronym: Some("TR".to_string()),
+            summary: String::new(),
+            content_hash: "hash-target".to_string(),
+            batch_id: Uuid::new_v4(),
+        };
+        let target_summary_id = db
+            .insert_summary(&url, target_summary)
+            .await
+            .expect("insert target summary");
+
+        // Insert a chunk for the target summary
+        db.insert_embeddings(&url, vec![make_embedding(region_id, target_summary_id, "target chunk")])
+            .await
+            .expect("insert target chunk");
+
+        // Insert a second summary for the same region (it becomes active, target is now inactive)
+        let other_summary = NewRegionSummary {
+            region_id,
+            name: "Test Region".to_string(),
+            acronym: Some("TR".to_string()),
+            summary: String::new(),
+            content_hash: "hash-other".to_string(),
+            batch_id: Uuid::new_v4(),
+        };
+        let other_summary_id = db
+            .insert_summary(&url, other_summary)
+            .await
+            .expect("insert other summary");
+
+        db.insert_embeddings(&url, vec![make_embedding(region_id, other_summary_id, "other chunk")])
+            .await
+            .expect("insert other chunk");
+
+        // Search strictly scoped to the target (now inactive) summary
+        let scope = RetrievalScope::current_summary(region_id, target_summary_id);
+        // scope has fallback_policy = None by default from current_summary()
+        let results = db
+            .search_similar(&url, zero_embedding(1536), scope, 10)
+            .await
+            .expect("search_similar");
+
+        assert!(
+            results.iter().all(|c| c.chunk_text == "target chunk"),
+            "strict scope must not return chunks from other summaries; got {:?}",
+            results.iter().map(|c| &c.chunk_text).collect::<Vec<_>>()
+        );
+    }
+
+    /// With `RetrievalFallbackPolicy::ActiveSummary`, when the requested
+    /// `summary_id` has no embeddings (e.g. a newly inserted summary before
+    /// embedding ingestion completes), the query must retry against the
+    /// currently active summary for the region and return its chunks.
+    #[tokio::test]
+    #[ignore = "requires live Postgres+pgvector; run with `cargo test -p infra -- --ignored`"]
+    async fn search_similar_fallback_to_active_summary_when_empty() {
+        let db = BrainAtlasVectorDB::new();
+        let url = db_url();
+        let region_id = 999_998;
+
+        // Insert the active summary and embed it
+        let active_summary = NewRegionSummary {
+            region_id,
+            name: "Fallback Region".to_string(),
+            acronym: None,
+            summary: String::new(),
+            content_hash: "hash-active".to_string(),
+            batch_id: Uuid::new_v4(),
+        };
+        let active_id = db
+            .insert_summary(&url, active_summary)
+            .await
+            .expect("insert active summary");
+
+        db.insert_embeddings(&url, vec![make_embedding(region_id, active_id, "active chunk")])
+            .await
+            .expect("insert active chunk");
+
+        // Synthesise a phantom summary_id that has no embeddings at all
+        let phantom_id = Uuid::new_v4();
+
+        let scope = RetrievalScope::current_summary(region_id, phantom_id)
+            .with_fallback_policy(RetrievalFallbackPolicy::ActiveSummary);
+
+        let results = db
+            .search_similar(&url, zero_embedding(1536), scope, 10)
+            .await
+            .expect("search_similar with fallback");
+
+        assert!(
+            !results.is_empty(),
+            "fallback must return chunks from the active summary when the requested summary has none"
+        );
+        assert!(
+            results.iter().any(|c| c.chunk_text == "active chunk"),
+            "fallback results must include chunks from the active summary"
+        );
+    }
+
+    /// With `RetrievalFallbackPolicy::None`, when the requested `summary_id`
+    /// has no embeddings, the result must be an empty vec — no fallback must
+    /// occur.
+    #[tokio::test]
+    #[ignore = "requires live Postgres+pgvector; run with `cargo test -p infra -- --ignored`"]
+    async fn search_similar_none_policy_returns_empty_when_no_chunks() {
+        let db = BrainAtlasVectorDB::new();
+        let url = db_url();
+        let region_id = 999_997;
+
+        // Insert an active summary with chunks so a fallback *could* return results
+        let active_summary = NewRegionSummary {
+            region_id,
+            name: "Region None Policy".to_string(),
+            acronym: None,
+            summary: String::new(),
+            content_hash: "hash-active-none".to_string(),
+            batch_id: Uuid::new_v4(),
+        };
+        let active_id = db
+            .insert_summary(&url, active_summary)
+            .await
+            .expect("insert active summary");
+
+        db.insert_embeddings(&url, vec![make_embedding(region_id, active_id, "should not appear")])
+            .await
+            .expect("insert chunk");
+
+        // Use a phantom summary_id with None fallback policy
+        let phantom_id = Uuid::new_v4();
+        let scope = RetrievalScope::current_summary(region_id, phantom_id);
+        // current_summary uses None fallback by default
+
+        let results = db
+            .search_similar(&url, zero_embedding(1536), scope, 10)
+            .await
+            .expect("search_similar no fallback");
+
+        assert!(
+            results.is_empty(),
+            "None fallback policy must return empty vec when scope has no chunks; got {:?}",
+            results.iter().map(|c| &c.chunk_text).collect::<Vec<_>>()
+        );
+    }
+
+    /// Verifies that the fallback path is skipped when the active summary IS
+    /// the same as the requested summary (i.e., `active_summary.id ==
+    /// retrieval_scope.summary_id`).  In that case the initial search already
+    /// ran against the correct summary, so there is nothing to retry — the
+    /// result must remain empty rather than issuing a redundant second query.
+    #[tokio::test]
+    #[ignore = "requires live Postgres+pgvector; run with `cargo test -p infra -- --ignored`"]
+    async fn search_similar_fallback_skipped_when_active_is_same_as_scope() {
+        let db = BrainAtlasVectorDB::new();
+        let url = db_url();
+        let region_id = 999_996;
+
+        // Insert an active summary but do NOT embed it
+        let summary = NewRegionSummary {
+            region_id,
+            name: "Region Same Active".to_string(),
+            acronym: None,
+            summary: String::new(),
+            content_hash: "hash-same-active".to_string(),
+            batch_id: Uuid::new_v4(),
+        };
+        let summary_id = db
+            .insert_summary(&url, summary)
+            .await
+            .expect("insert summary");
+
+        // scope == active summary; embeddings table is empty for this summary
+        let scope = RetrievalScope::current_summary(region_id, summary_id)
+            .with_fallback_policy(RetrievalFallbackPolicy::ActiveSummary);
+
+        let results = db
+            .search_similar(&url, zero_embedding(1536), scope, 10)
+            .await
+            .expect("search_similar same active");
+
+        assert!(
+            results.is_empty(),
+            "no redundant retry when active==scope and there are no embeddings; got {:?}",
+            results.iter().map(|c| &c.chunk_text).collect::<Vec<_>>()
+        );
     }
 }
