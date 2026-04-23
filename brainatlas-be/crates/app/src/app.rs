@@ -195,13 +195,15 @@ fn text_mentions_region(text: &str, region: &RegionMapping) -> bool {
         return true;
     }
     if let Some(acro) = region.acronym.as_deref()
-        && acronym_matches(text, acro) {
-            return true;
-        }
+        && acronym_matches(text, acro)
+    {
+        return true;
+    }
     if let Some(parent_acro) = region.parent_acronym.as_deref()
-        && acronym_matches(text, parent_acro) {
-            return true;
-        }
+        && acronym_matches(text, parent_acro)
+    {
+        return true;
+    }
     false
 }
 
