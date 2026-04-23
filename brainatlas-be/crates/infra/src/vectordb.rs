@@ -4,7 +4,7 @@ use crate::schema;
 use diesel::prelude::*;
 use diesel::sql_types::{Float8, Int4, Text};
 use domain::{
-    ChunkSource, ExistingSummary, NewEmbedding, NewRegionSummary, RetrievalFallbackPolicy,
+    ChunkSource, ExistingSummary, NewEmbedding, NewRegionSummary,
     RetrievalScope, SimilarChunk,
 };
 use services::infra::VectorDatabase;
@@ -209,7 +209,7 @@ impl VectorDatabase for BrainAtlasVectorDB {
             source_char_end: Option<i32>,
         }
 
-            self.run_blocking(database_url, move |conn| {
+        self.run_blocking(database_url, move |conn| {
             // Search across ALL chunks for this region, regardless of which
             // batch/summary they were ingested with.  The region_id filter is
             // sufficient to prevent cross-region contamination.  Restricting
