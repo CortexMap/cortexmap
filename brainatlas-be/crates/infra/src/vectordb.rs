@@ -209,59 +209,29 @@ impl VectorDatabase for BrainAtlasVectorDB {
             source_char_end: Option<i32>,
         }
 
-        #[derive(QueryableByName)]
-        struct ActiveSummaryIdRow {
-            #[diesel(sql_type = diesel::sql_types::Uuid)]
-            id: uuid::Uuid,
-        }
-
-        self.run_blocking(database_url, move |conn| {
-            let search_for_summary =
-                |conn: &mut PgConnection,
-                 summary_id_param: Uuid|
-                 -> Result<Vec<SimilarChunkRow>, diesel::result::Error> {
-                    diesel::sql_query(
-                        "SELECT id, chunk_index, chunk_text, \
-                         1.0 - (embedding <=> $1::vector) AS similarity_score, \
-                         source_pmc_id, source_uid, source_s3_key, source_query, \
-                         source_char_start, source_char_end \
-                         FROM brain_region_embeddings \
-                         WHERE region_id = $2 AND summary_id = $3 \
-                         ORDER BY embedding <=> $1::vector \
-                         LIMIT $4",
-                    )
-                    .bind::<Text, _>(&embedding_str)
-                    .bind::<Int4, _>(retrieval_scope.region_id)
-                    .bind::<diesel::sql_types::Uuid, _>(summary_id_param)
-                    .bind::<diesel::sql_types::BigInt, _>(top_k as i64)
-                    .load::<SimilarChunkRow>(conn)
-                };
-
-            let mut rows = search_for_summary(conn, retrieval_scope.summary_id)?;
-
-            if rows.is_empty()
-                && matches!(
-                    retrieval_scope.fallback_policy,
-                    RetrievalFallbackPolicy::ActiveSummary
-                )
-            {
-                let active_summary = diesel::sql_query(
-                    "SELECT id \
-                     FROM region_summary \
-                     WHERE region_id = $1 AND is_active = true \
-                     ORDER BY created_at DESC NULLS LAST, id DESC \
-                     LIMIT 1",
-                )
-                .bind::<Int4, _>(retrieval_scope.region_id)
-                .get_result::<ActiveSummaryIdRow>(conn)
-                .optional()?;
-
-                if let Some(active_summary) = active_summary
-                    && active_summary.id != retrieval_scope.summary_id
-                {
-                    rows = search_for_summary(conn, active_summary.id)?;
-                }
-            }
+            self.run_blocking(database_url, move |conn| {
+            // Search across ALL chunks for this region, regardless of which
+            // batch/summary they were ingested with.  The region_id filter is
+            // sufficient to prevent cross-region contamination.  Restricting
+            // retrieval to the current batch's summary_id caused the LLM to see
+            // an empty context whenever the latest fetch produced bad papers
+            // (e.g. malformed queries, off-target papers filtered out by the
+            // region-mention filter), even though perfectly good chunks from a
+            // prior batch exist for the same region.
+            let rows = diesel::sql_query(
+                "SELECT id, chunk_index, chunk_text, \
+                 1.0 - (embedding <=> $1::vector) AS similarity_score, \
+                 source_pmc_id, source_uid, source_s3_key, source_query, \
+                 source_char_start, source_char_end \
+                 FROM brain_region_embeddings \
+                 WHERE region_id = $2 \
+                 ORDER BY embedding <=> $1::vector \
+                 LIMIT $3",
+            )
+            .bind::<Text, _>(&embedding_str)
+            .bind::<Int4, _>(retrieval_scope.region_id)
+            .bind::<diesel::sql_types::BigInt, _>(top_k as i64)
+            .load::<SimilarChunkRow>(conn)?;
 
             Ok(rows
                 .into_iter()
