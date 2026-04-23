@@ -2943,20 +2943,22 @@ mod advance_tests {
         assert!(!has_all_raw_rubric_metrics(&gated_only));
 
         let mut with_raw = gated_only.clone();
-        with_raw.extend([
-            EvalMetric::RubricRelevance,
-            EvalMetric::RubricCoherence,
-            EvalMetric::RubricSpecificity,
-            EvalMetric::RubricClinicalUtility,
-            EvalMetric::RubricTerminology,
-        ]
-        .into_iter()
-        .map(|metric| MetricResult {
-            metric: metric.as_str().to_string(),
-            score: 0.9,
-            cached: true,
-            judge_model: Some("rubric-model".to_string()),
-        }));
+        with_raw.extend(
+            [
+                EvalMetric::RubricRelevance,
+                EvalMetric::RubricCoherence,
+                EvalMetric::RubricSpecificity,
+                EvalMetric::RubricClinicalUtility,
+                EvalMetric::RubricTerminology,
+            ]
+            .into_iter()
+            .map(|metric| MetricResult {
+                metric: metric.as_str().to_string(),
+                score: 0.9,
+                cached: true,
+                judge_model: Some("rubric-model".to_string()),
+            }),
+        );
         assert!(has_all_raw_rubric_metrics(&with_raw));
     }
 

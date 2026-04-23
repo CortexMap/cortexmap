@@ -859,7 +859,11 @@ mod tests {
         async fn get_summary(&self, _: &str, _: Uuid) -> Result<Option<SummaryRow>, MockErr> {
             unimplemented!("queueing tests never hit get_summary")
         }
-        async fn get_scores_for_summary(&self, _: &str, _: Uuid) -> Result<Vec<EvalScore>, MockErr> {
+        async fn get_scores_for_summary(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Vec<EvalScore>, MockErr> {
             unimplemented!("queueing tests never hit get_scores_for_summary")
         }
         async fn get_eval_aggregate(&self, _: &str, _: &str) -> Result<EvalAggregate, MockErr> {
@@ -929,7 +933,11 @@ mod tests {
         ) -> Result<Uuid, MockErr> {
             unimplemented!("queueing tests never hit insert_run_state")
         }
-        async fn load_run_state(&self, _: &str, _: Uuid) -> Result<Option<LoadedRunState>, MockErr> {
+        async fn load_run_state(
+            &self,
+            _: &str,
+            _: Uuid,
+        ) -> Result<Option<LoadedRunState>, MockErr> {
             unimplemented!("queueing tests never hit load_run_state")
         }
         async fn save_run_state(
