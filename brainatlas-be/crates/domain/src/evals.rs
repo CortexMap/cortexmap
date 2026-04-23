@@ -5,7 +5,7 @@
 //! in the `domain` crate so both sides depend on the same definitions.
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 // -------- Claim extraction --------
@@ -23,9 +23,26 @@ pub struct Claim {
     /// UUIDs extracted from `[chunk:<uuid>]` markers that appeared alongside
     /// this claim in the original summary text. Empty if the claim was not
     /// cited. Optional for backward compatibility with old cached payloads.
-    #[serde(default)]
+    ///
+    /// Deserialization is lenient: any element that is not a syntactically
+    /// valid UUID string is dropped silently. This protects the eval
+    /// pipeline from LLM-output drift where the model occasionally returns
+    /// malformed identifiers (e.g. truncated UUIDs, paper-IDs, free text)
+    /// instead of clean chunk UUIDs. The resulting `Vec<Uuid>` only ever
+    /// contains entries that round-trip through `Uuid::parse_str`.
+    #[serde(default, deserialize_with = "deserialize_lenient_uuid_vec")]
     #[schemars(with = "Vec<String>")]
     pub cited_chunks: Vec<Uuid>,
+}
+
+/// Custom deserializer for `Vec<Uuid>` that silently skips elements which
+/// cannot be parsed as a UUID. Accepts a JSON array of strings.
+fn deserialize_lenient_uuid_vec<'de, D>(deserializer: D) -> Result<Vec<Uuid>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw: Vec<String> = Vec::deserialize(deserializer)?;
+    Ok(raw.into_iter().filter_map(|s| Uuid::parse_str(s.trim()).ok()).collect())
 }
 
 /// Top-level response from the claim-extraction prompt.
@@ -111,6 +128,40 @@ mod tests {
         let parsed: ClaimsResponse = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.claims.len(), 1);
         assert!(parsed.claims[0].cited_chunks.is_empty());
+    }
+
+    /// Lenient deserialization: malformed UUID entries in `cited_chunks` are
+    /// silently dropped instead of failing the entire response. Real LLMs
+    /// occasionally produce truncated UUIDs, paper-IDs, or free text in this
+    /// field; we want the eval pipeline to keep moving.
+    #[test]
+    fn claims_response_drops_invalid_uuids_in_cited_chunks() {
+        let json = r#"{
+            "claims": [{
+                "id": 1,
+                "section": "Overview",
+                "text": "Mixed valid and invalid IDs.",
+                "cited_chunks": [
+                    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                    "not-a-uuid",
+                    "https://example.com/foo",
+                    "b73abca3-a7a0-468a-9646-6794527cdd71",
+                    ""
+                ]
+            }]
+        }"#;
+        let parsed: ClaimsResponse = serde_json::from_str(json).expect("must not error");
+        assert_eq!(parsed.claims.len(), 1);
+        let chunks = &parsed.claims[0].cited_chunks;
+        assert_eq!(chunks.len(), 2, "exactly the two well-formed UUIDs survive");
+        assert_eq!(
+            chunks[0].to_string(),
+            "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        );
+        assert_eq!(
+            chunks[1].to_string(),
+            "b73abca3-a7a0-468a-9646-6794527cdd71"
+        );
     }
 
     #[test]
