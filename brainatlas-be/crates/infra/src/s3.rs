@@ -80,7 +80,9 @@ impl S3Storage for BrainAtlasS3 {
             .await
         {
             Ok(r) => r,
-            Err(SdkError::ServiceError(svc)) if matches!(svc.err(), GetObjectError::NoSuchKey(_)) => {
+            Err(SdkError::ServiceError(svc))
+                if matches!(svc.err(), GetObjectError::NoSuchKey(_)) =>
+            {
                 warn!("S3 key missing (NoSuchKey): s3://{}/{}", self.bucket, key);
                 return Ok(None);
             }

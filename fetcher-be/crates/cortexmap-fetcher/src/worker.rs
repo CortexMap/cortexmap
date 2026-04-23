@@ -537,13 +537,11 @@ where
                 // Periodically reset stale in_progress tasks so dead-worker tasks
                 // don't get stuck forever. Only runs on every stale_reset_interval
                 // empty cycles to avoid DB churn.
-                if empty_queue_cycles % stale_reset_interval == 0 {
+                if empty_queue_cycles.is_multiple_of(stale_reset_interval) {
                     match ctx.infra.reset_stale_tasks(timeout_secs).await {
-                        Ok(n) if n > 0 => tracing::warn!(
-                            "Worker {} reset {} stale tasks",
-                            worker_id,
-                            n
-                        ),
+                        Ok(n) if n > 0 => {
+                            tracing::warn!("Worker {} reset {} stale tasks", worker_id, n)
+                        }
                         Err(e) => tracing::error!(
                             "Worker {} failed to reset stale tasks: {}",
                             worker_id,

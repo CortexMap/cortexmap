@@ -34,9 +34,7 @@ impl StdInfraContext {
     pub fn from_env() -> Result<Self, InfraError> {
         let env = FetcherEnvInfra::new();
         let non_empty = |key: &str| -> Option<String> {
-            env.get_env_var(key)
-                .ok()
-                .filter(|s| !s.trim().is_empty())
+            env.get_env_var(key).ok().filter(|s| !s.trim().is_empty())
         };
         Ok(Self {
             database_url: env.get_env_var("DATABASE_URL")?,
