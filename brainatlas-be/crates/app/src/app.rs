@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-const MAX_TOOL_CALL_ITERATIONS: usize = 5;
+const MAX_TOOL_CALL_ITERATIONS: usize = 10;
 
 // Load prompt templates at compile time
 const RAG_SUMMARIZE_SYSTEM_TEMPLATE: &str = include_str!("../prompts/rag_summarize_system.md");
