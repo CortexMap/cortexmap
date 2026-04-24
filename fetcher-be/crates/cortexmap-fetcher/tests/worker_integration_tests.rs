@@ -18,13 +18,10 @@ fn get_test_database_url() -> String {
         })
 }
 
-fn get_test_s3_config() -> (String, String, String, String) {
-    let endpoint =
-        std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
-    let access_key =
-        std::env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "test_access_key".to_string());
-    let secret_key =
-        std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "test_secret_key".to_string());
+fn get_test_s3_config() -> (Option<String>, Option<String>, Option<String>, String) {
+    let endpoint = std::env::var("S3_ENDPOINT").ok();
+    let access_key = std::env::var("S3_ACCESS_KEY").ok();
+    let secret_key = std::env::var("S3_SECRET_KEY").ok();
     let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "test-bucket".to_string());
     (endpoint, access_key, secret_key, bucket)
 }

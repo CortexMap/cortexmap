@@ -1,3 +1,4 @@
+use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::Region;
@@ -5,27 +6,72 @@ use bytes::Bytes;
 use cortexmap_infra::{ContentType, InfraError, S3Infra};
 use futures::{Stream, StreamExt};
 use std::pin::Pin;
+use tokio::sync::OnceCell;
 
 pub struct StdS3Infra {
-    client: Client,
+    client: OnceCell<Client>,
+    endpoint: Option<String>,
+    access_key: Option<String>,
+    secret_key: Option<String>,
     bucket: String,
 }
 
 impl StdS3Infra {
-    pub fn new(endpoint: &str, access_key: &str, secret_key: &str, bucket: &str) -> Self {
-        let creds = Credentials::from_keys(access_key, secret_key, None);
-        let cfg = aws_sdk_s3::config::Builder::new()
-            // region doesn't matter rn
-            .region(Region::new("us-east-1"))
-            .endpoint_url(endpoint)
-            .credentials_provider(creds)
-            .force_path_style(true) // IMPORTANT for MinIO/most S3 compatibles
-            .build();
-        let client = Client::from_conf(cfg);
+    pub fn new(
+        endpoint: Option<&str>,
+        access_key: Option<&str>,
+        secret_key: Option<&str>,
+        bucket: &str,
+    ) -> Self {
+        // Treat `Some("")` as absent. Passing an empty string to
+        // `endpoint_url` or `Credentials::from_keys` produces a broken SDK
+        // client (dispatch failures, empty-endpoint URLs). The helper here
+        // means callers can't accidentally wire an empty env var through.
+        let non_empty = |v: Option<&str>| -> Option<String> {
+            v.map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
         Self {
-            client,
+            client: OnceCell::new(),
+            endpoint: non_empty(endpoint),
+            access_key: non_empty(access_key),
+            secret_key: non_empty(secret_key),
             bucket: bucket.to_owned(),
         }
+    }
+
+    async fn get_client(&self) -> &Client {
+        self.client
+            .get_or_init(|| async {
+                match (&self.access_key, &self.secret_key) {
+                    (Some(ak), Some(sk)) => {
+                        // Static credentials (dev / MinIO)
+                        let creds = Credentials::from_keys(ak, sk, None);
+                        let mut builder = aws_sdk_s3::config::Builder::new()
+                            .behavior_version(BehaviorVersion::latest())
+                            .region(Region::new("us-east-1"))
+                            .credentials_provider(creds)
+                            .force_path_style(true);
+                        if let Some(ep) = &self.endpoint {
+                            builder = builder.endpoint_url(ep);
+                        }
+                        Client::from_conf(builder.build())
+                    }
+                    _ => {
+                        // EC2 instance profile / default credential chain
+                        let config = aws_config::defaults(BehaviorVersion::latest())
+                            .region(
+                                aws_config::meta::region::RegionProviderChain::default_provider()
+                                    .or_else("us-east-1"),
+                            )
+                            .load()
+                            .await;
+                        Client::new(&config)
+                    }
+                }
+            })
+            .await
     }
 }
 
@@ -47,7 +93,8 @@ impl S3Infra for StdS3Infra {
         let byte_stream = aws_sdk_s3::primitives::ByteStream::from(buffer);
 
         let result = self
-            .client
+            .get_client()
+            .await
             .put_object()
             .bucket(&self.bucket)
             .key(key)
@@ -63,7 +110,8 @@ impl S3Infra for StdS3Infra {
 
     async fn get_s3(&self, key: &str) -> Result<String, InfraError> {
         let result = self
-            .client
+            .get_client()
+            .await
             .get_object()
             .bucket(&self.bucket)
             .key(key)

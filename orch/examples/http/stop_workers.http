@@ -1,5 +1,5 @@
 ### Stop all workers
-POST http://localhost:8080/orch/api/workers/stop
+POST https://capstone.ssdd.dev/orch/api/workers/stop
 Content-Type: application/json
 
 {

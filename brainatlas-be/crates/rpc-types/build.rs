@@ -50,6 +50,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "com.cortexmap.GenerateQueriesRequest.correlation_id",
         "#[serde(default)]",
     );
+    config = config.field_attribute(
+        "com.cortexmap.GenerateQueriesRequest.acronym",
+        "#[serde(default)]",
+    );
+    config = config.field_attribute(
+        "com.cortexmap.GenerateQueriesRequest.parent_name",
+        "#[serde(default)]",
+    );
+    config = config.field_attribute(
+        "com.cortexmap.GenerateQueriesRequest.parent_acronym",
+        "#[serde(default)]",
+    );
 
     // ProcessNoPapersRequest optional fields — default for backward compatibility.
     config = config.field_attribute(
@@ -58,6 +70,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     config = config.field_attribute(
         "com.cortexmap.ProcessNoPapersRequest.correlation_id",
+        "#[serde(default)]",
+    );
+
+    // ProcessRegionResponse.summary_id — new optional field, must default to None
+    // so older orch versions that omit it can still be deserialized correctly.
+    config = config.field_attribute(
+        "com.cortexmap.ProcessRegionResponse.summary_id",
         "#[serde(default)]",
     );
 

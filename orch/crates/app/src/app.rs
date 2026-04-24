@@ -511,8 +511,15 @@ where
                 .map(|q| q.query_text)
                 .collect::<Vec<_>>()
         } else {
-            // No pre-generated queries — generate them now
-            let region_name = self.services.get_region_name(region_id).await?;
+            // No pre-generated queries — generate them now. Fetch the full
+            // region identity (acronym + parent context) so the LLM has the
+            // same disambiguation hints it would receive from the Phase-1
+            // pipeline path. Without these, the model produces queries like
+            // ((\"taenia tecta\" OR \"ventral part\") AND ...) where the
+            // sub-modifier becomes a standalone synonym and matches every
+            // unrelated region.
+            let identity = self.services.get_region_identity(region_id).await?;
+            let region_name = identity.name.clone();
             let query_count = self
                 .services
                 .get_query_generation_limit()
@@ -521,7 +528,13 @@ where
 
             let generated = self
                 .services
-                .generate_queries(&region_name, query_count)
+                .generate_queries(
+                    &region_name,
+                    query_count,
+                    identity.acronym.as_deref(),
+                    identity.parent_name.as_deref(),
+                    identity.parent_acronym.as_deref(),
+                )
                 .await?;
 
             if !generated.is_empty() {
@@ -680,6 +693,68 @@ where
             task_count,
             already_in_progress: false,
         })
+    }
+
+    /// Force-regenerate a region's stored search queries.
+    ///
+    /// Wipes existing rows in `region_queries`, fetches the full identity
+    /// context (acronym + parent acronym + parent name) via
+    /// `get_region_identity`, calls `generate_queries` on the LLM service so
+    /// the new prompt and forbidden-pattern rules apply, then persists the
+    /// fresh query set. Returns the freshly-generated query strings.
+    ///
+    /// Use this admin path to recover from regions whose stored queries were
+    /// produced by an older prompt or with insufficient context (e.g. the
+    /// pre-Phase-1 `("taenia tecta" OR "ventral part") AND ...` case where
+    /// the OR-sub-modifier pattern made every off-target paper a match).
+    pub async fn regenerate_queries(&self, region_id: Uuid) -> Result<Vec<String>, E> {
+        tracing::info!(?region_id, "force-regenerating stored queries for region");
+
+        // Step 1: pull full identity (acronym + parent context) so the new
+        // prompt has everything it needs.
+        let identity = self.services.get_region_identity(region_id).await?;
+
+        // Step 2: clear existing rows so the next store_queries starts from a
+        // clean slate (no stale rows mixed with new ones).
+        self.services.delete_queries(region_id).await?;
+
+        let region_name = identity.name.clone();
+        let count = self
+            .services
+            .get_query_generation_limit()
+            .await?
+            .unwrap_or(3);
+
+        // Step 3: regenerate using the new prompt + identity context.
+        let generated = self
+            .services
+            .generate_queries(
+                &region_name,
+                count,
+                identity.acronym.as_deref(),
+                identity.parent_name.as_deref(),
+                identity.parent_acronym.as_deref(),
+            )
+            .await?;
+
+        // Step 4: persist (best-effort — empty list is allowed if the LLM
+        // declines, in which case the region is left with no queries until
+        // the operator retries).
+        if !generated.is_empty() {
+            self.services
+                .store_queries(region_id, generated.clone())
+                .await?;
+        }
+
+        tracing::info!(
+            ?region_id,
+            new_count = generated.len(),
+            acronym = ?identity.acronym,
+            parent_acronym = ?identity.parent_acronym,
+            "regenerated stored queries"
+        );
+
+        Ok(generated)
     }
 
     /// Get the status of a batch

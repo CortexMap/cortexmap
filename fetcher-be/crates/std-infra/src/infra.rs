@@ -25,9 +25,9 @@ impl StdInfra {
     #[allow(clippy::result_large_err)]
     pub fn new(
         database_url: &str,
-        endpoint: &str,
-        access_key: &str,
-        secret_key: &str,
+        endpoint: Option<&str>,
+        access_key: Option<&str>,
+        secret_key: Option<&str>,
         bucket: &str,
     ) -> Result<Self, InfraError> {
         let env_infra = FetcherEnvInfra::new();

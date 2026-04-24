@@ -1,28 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import ReactMarkdown from 'react-markdown';
-import type { Components } from 'react-markdown';
 import { useAtlasStore } from '../../store/atlasStore';
 import { useSelectRegion } from '../../hooks/useSelectRegion';
+import type { AtlasSearchRevealContext, SearchResponse, SearchResultItem } from '../../types';
 import './SearchFunc.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://capstone.ssdd.dev/orch/api';
-
-interface SearchResultItem {
-  region_id: string;
-  region_numeric_id: number;
-  name: string;
-  acronym: string | null;
-  summary_snippet: string | null;
-  match_source: string;
-  rank: number;
-}
-
-interface SearchResponse {
-  query: string;
-  results: SearchResultItem[];
-  total_found: number;
-}
 
 export function SearchFunc() {
   const [open, setOpen] = useState(false);
@@ -38,6 +21,25 @@ export function SearchFunc() {
 
   const { cortexmapRegionMap } = useAtlasStore();
   const selectRegion = useSelectRegion();
+
+  const buildSearchContext = useCallback(
+    (item: SearchResultItem, structureId: number): AtlasSearchRevealContext => ({
+      structure_id: structureId,
+      query: results?.query ?? query.trim(),
+      match_source: item.match_source,
+      summary_snippet: item.summary_snippet
+        ? buildFocusedSnippet(
+            item.summary_snippet
+              .replace(/\[chunk:[a-f0-9-]+\]/g, '')
+              .replace(/[*_`>#-]+/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim(),
+            results?.query ?? query.trim()
+          )
+        : null,
+    }),
+    [query, results?.query]
+  );
 
   // Focus input when popup opens; reset state when closed
   useEffect(() => {
@@ -123,10 +125,12 @@ export function SearchFunc() {
         (r) => r.id === item.region_id
       );
       const structureId = cortexmapEntry?.region_id ?? item.region_numeric_id;
-      selectRegion(structureId);
+      selectRegion(structureId, {
+        searchContext: buildSearchContext(item, structureId),
+      });
       setOpen(false);
     },
-    [cortexmapRegionMap, selectRegion]
+    [buildSearchContext, cortexmapRegionMap, selectRegion]
   );
 
   const handleKeyDown = useCallback(
@@ -305,7 +309,11 @@ export function SearchFunc() {
                               </span>
                               {item.summary_snippet && (
                                 <span className="sf-item-snippet">
-                                  <SnippetMarkdown text={item.summary_snippet} />
+                                  <span className="sf-snippet-label">Matching summary</span>
+                                  <HighlightedSnippetMarkdown
+                                    text={item.summary_snippet}
+                                    keyword={results?.query ?? query}
+                                  />
                                 </span>
                               )}
                             </span>
@@ -350,32 +358,75 @@ export function SearchFunc() {
   );
 }
 
-/**
- * Renders a summary snippet as inline Markdown.
- * [chunk:uuid] citation markers are stripped before rendering.
- * Block-level elements (p, li, headings) are mapped to inline spans
- * so the 2-line clamp on the parent .sf-item-snippet still applies.
- */
-function SnippetMarkdown({ text }: { text: string }) {
-  const cleaned = text.replace(/\[chunk:[a-f0-9-]+\]/g, '').trim();
+function HighlightedSnippetMarkdown({ text, keyword }: { text: string; keyword: string }) {
+  const cleaned = text
+    .replace(/\[chunk:[a-f0-9-]+\]/g, '')
+    .replace(/[*_`>#-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const focusedSnippet = buildFocusedSnippet(cleaned, keyword);
 
-  const components: Components = {
-    // Render block elements inline so the parent -webkit-line-clamp works
-    p: ({ children }) => <span className="sf-md-p">{children}</span>,
-    li: ({ children }) => <span className="sf-md-li">{children}</span>,
-    ul: ({ children }) => <span className="sf-md-ul">{children}</span>,
-    ol: ({ children }) => <span className="sf-md-ol">{children}</span>,
-    h1: ({ children }) => <span className="sf-md-h">{children}</span>,
-    h2: ({ children }) => <span className="sf-md-h">{children}</span>,
-    h3: ({ children }) => <span className="sf-md-h">{children}</span>,
-    h4: ({ children }) => <span className="sf-md-h">{children}</span>,
-    // Preserve inline formatting
-    strong: ({ children }) => <strong>{children}</strong>,
-    em: ({ children }) => <em>{children}</em>,
-    code: ({ children }) => <code className="sf-md-code">{children}</code>,
-    // Strip links — keep text only (snippets shouldn't be clickable internally)
-    a: ({ children }) => <span>{children}</span>,
-  };
+  const highlightText = useCallback((value: string): React.ReactNode => {
+    if (!keyword.trim()) return value;
 
-  return <ReactMarkdown components={components}>{cleaned}</ReactMarkdown>;
+    const pattern = new RegExp(`(${escapeRegex(keyword.trim())})`, 'gi');
+    const parts = value.split(pattern);
+    if (parts.length === 1) return value;
+
+    return parts.map((part, index) =>
+      part.match(pattern) ? (
+        <mark key={`${part}-${index}`} className="sf-highlight">{part}</mark>
+      ) : (
+        part
+      )
+    );
+  }, [keyword]);
+
+  return <span className="sf-md-p">{highlightText(focusedSnippet)}</span>;
+}
+
+function buildFocusedSnippet(text: string, keyword: string): string {
+  const snippet = text.trim();
+  if (!snippet) return '';
+
+  const normalizedKeyword = keyword.trim();
+  if (!normalizedKeyword) {
+    return snippet.length > 220 ? `${snippet.slice(0, 217).trimEnd()}…` : snippet;
+  }
+
+  const lowerSnippet = snippet.toLowerCase();
+  const lowerKeyword = normalizedKeyword.toLowerCase();
+  const matchIndex = lowerSnippet.indexOf(lowerKeyword);
+
+  if (matchIndex === -1) {
+    return snippet.length > 220 ? `${snippet.slice(0, 217).trimEnd()}…` : snippet;
+  }
+
+  const contextBefore = 90;
+  const contextAfter = 130;
+  const start = Math.max(0, matchIndex - contextBefore);
+  const end = Math.min(snippet.length, matchIndex + normalizedKeyword.length + contextAfter);
+
+  const safeStart = start > 0 ? findSnippetBoundary(snippet, start, -1) : 0;
+  const safeEnd = end < snippet.length ? findSnippetBoundary(snippet, end, 1) : snippet.length;
+  const prefix = safeStart > 0 ? '…' : '';
+  const suffix = safeEnd < snippet.length ? '…' : '';
+
+  return `${prefix}${snippet.slice(safeStart, safeEnd).trim()}${suffix}`;
+}
+
+function findSnippetBoundary(text: string, index: number, direction: -1 | 1): number {
+  let cursor = index;
+  while (cursor > 0 && cursor < text.length) {
+    const char = text[cursor];
+    if (/[.!?;:,]/.test(char)) {
+      return direction === -1 ? Math.min(cursor + 1, text.length) : cursor;
+    }
+    cursor += direction;
+  }
+  return direction === -1 ? 0 : text.length;
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

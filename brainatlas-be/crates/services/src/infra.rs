@@ -1,7 +1,7 @@
 use domain::{
     BrainRegionEntry, ChunkSource, ExistingSummary, LlmCallOutcome, LlmPricing, LlmProvider,
-    LlmResponse, NewEmbedding, NewLlmCallUsage, NewRegionSummary, RegionMapping, SimilarChunk,
-    UsageAggregate, UsageAggregateFilter,
+    LlmResponse, NewEmbedding, NewLlmCallUsage, NewRegionSummary, RegionMapping, RetrievalScope,
+    SimilarChunk, UsageAggregate, UsageAggregateFilter,
 };
 use uuid::Uuid;
 
@@ -143,8 +143,10 @@ pub struct S3Creds {
 pub trait S3Storage: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    /// Download file from S3 as UTF-8 string (reads credentials from env internally)
-    async fn download(&self, key: &str) -> Result<String, Self::Error>;
+    /// Download file from S3 as UTF-8 string (reads credentials from env internally).
+    /// Returns `Ok(None)` when the key does not exist so callers can skip missing
+    /// data rather than failing the entire pipeline.
+    async fn download(&self, key: &str) -> Result<Option<String>, Self::Error>;
 }
 
 /// Embedding generation
@@ -195,6 +197,12 @@ pub trait LlmClient: Send + Sync {
     ///
     /// `base_url` is the gateway's API base — see
     /// [`EmbeddingGenerator::generate_embedding`].
+    ///
+    /// `acronym`, `parent_name`, and `parent_acronym` are optional context
+    /// substituted into the system prompt so the LLM can produce
+    /// literature-targeted PubMed queries (always include the region's own
+    /// acronym in OR groups, never use a sub-modifier like "ventral part" as
+    /// a standalone synonym, etc.).
     async fn generate_queries(
         &self,
         base_url: &str,
@@ -202,6 +210,9 @@ pub trait LlmClient: Send + Sync {
         chat_model: &str,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
     ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error>;
 }
 
@@ -232,12 +243,13 @@ pub trait VectorDatabase: Send + Sync {
         content_hash: &str,
     ) -> Result<Option<ExistingSummary>, Self::Error>;
 
-    /// Search for similar chunks by embedding vector, scoped to a region
+    /// Search for similar chunks by embedding vector, scoped to a region and
+    /// summary, with an explicit fallback policy.
     async fn search_similar(
         &self,
         database_url: &str,
         query_embedding: Vec<f32>,
-        region_id: i32,
+        retrieval_scope: RetrievalScope,
         top_k: usize,
     ) -> Result<Vec<SimilarChunk>, Self::Error>;
 

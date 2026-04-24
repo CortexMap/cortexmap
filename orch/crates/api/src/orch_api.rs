@@ -58,6 +58,13 @@ where
             .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
     }
 
+    async fn regenerate_queries(&self, region_id: Uuid) -> Result<Vec<String>, Self::Error> {
+        self.app()
+            .regenerate_queries(region_id)
+            .await
+            .map_err(|e| ApiError::AppError(AppError::ServiceError(e)))
+    }
+
     async fn get_batch_status(&self, batch_id: Uuid) -> Result<BatchStatusResult, Self::Error> {
         self.app()
             .get_batch_status(batch_id)

@@ -26,6 +26,18 @@ pub trait OrchApi: Send + Sync {
     async fn generate_summary(&self, region_id: Uuid)
     -> Result<GenerateSummaryResult, Self::Error>;
 
+    /// Force-regenerate the stored search queries for a single region.
+    ///
+    /// Deletes every existing row in `region_queries` for this region, then
+    /// re-runs `brainatlas-be /api/generate-queries` with the full identity
+    /// context (acronym + parent acronym + parent name) and persists the
+    /// fresh query set. Returns the freshly-generated queries.
+    ///
+    /// Use this admin endpoint to recover from regions whose stored queries
+    /// were generated with an older prompt or insufficient context (e.g. the
+    /// pre-Phase-1 `("taenia tecta" OR "ventral part") AND ...` problem).
+    async fn regenerate_queries(&self, region_id: Uuid) -> Result<Vec<String>, Self::Error>;
+
     /// Get the status of a specific batch
     async fn get_batch_status(&self, batch_id: Uuid) -> Result<BatchStatusResult, Self::Error>;
 

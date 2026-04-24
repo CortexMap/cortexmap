@@ -1,7 +1,7 @@
 use domain::{
     BrainRegionEntry, ChunkSource, ClaimsResponse, ExistingSummary, GroundednessVerdict,
-    LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RubricScores, SimilarChunk,
-    UsageAggregate, UsageAggregateFilter, UsageContext,
+    LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping, RetrievalScope, RubricScores,
+    SimilarChunk, UsageAggregate, UsageAggregateFilter, UsageContext,
 };
 use std::error::Error;
 use uuid::Uuid;
@@ -50,6 +50,9 @@ pub trait LlmService: Send + Sync {
         &self,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
         ctx: UsageContext,
     ) -> Result<Vec<String>, Self::Error>;
 
@@ -116,7 +119,10 @@ pub trait EmbeddingService: Send + Sync {
 pub trait S3Storage: Send + Sync {
     type Error: Error + Send + Sync;
 
-    async fn download(&self, key: &str) -> Result<String, Self::Error>;
+    /// Download file from S3 as UTF-8 string.
+    /// Returns `Ok(None)` when the key does not exist so callers can skip
+    /// missing data rather than failing the entire pipeline.
+    async fn download(&self, key: &str) -> Result<Option<String>, Self::Error>;
 }
 
 /// Vector database service
@@ -137,7 +143,7 @@ pub trait VectorDatabase: Send + Sync {
     async fn search_similar(
         &self,
         query_embedding: Vec<f32>,
-        region_id: i32,
+        retrieval_scope: RetrievalScope,
         top_k: usize,
     ) -> Result<Vec<SimilarChunk>, Self::Error>;
     async fn update_summary_text(

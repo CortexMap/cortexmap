@@ -29,15 +29,16 @@ where
     I: HttpClient<Error = E> + Send + Sync,
 {
     /// POST the knowledge-only summary request to brainatlas, with an
-    /// exponential retry. Returns `Ok(())` on success; error is wrapped in
-    /// `ServiceError` on persistent failure.
+    /// exponential retry. Returns the `summary_id` UUID on success so the
+    /// caller can immediately queue an eval; error is wrapped in `ServiceError`
+    /// on persistent failure.
     async fn generate_knowledge_summary(
         &self,
         url: &str,
         region_id: uuid::Uuid,
         batch_id: uuid::Uuid,
         region_name: &str,
-    ) -> Result<(), ServiceError<E>> {
+    ) -> Result<Option<uuid::Uuid>, ServiceError<E>> {
         let request = crate::ProcessNoPapersRequest {
             region_id: crate::UuidWrapper {
                 value: region_id.to_string(),
@@ -58,7 +59,7 @@ where
         let req_ref = &request;
         let url_ref = url;
 
-        let _: crate::ProcessRegionResponse = (|| async {
+        let response: crate::ProcessRegionResponse = (|| async {
             infra
                 .post::<crate::ProcessNoPapersRequest, crate::ProcessRegionResponse>(
                     url_ref, req_ref,
@@ -79,7 +80,13 @@ where
         .await
         .map_err(ServiceError::InfraError)?;
 
-        Ok(())
+        // Extract the summary UUID so the caller can queue an eval immediately.
+        let summary_uuid = response
+            .summary_id
+            .as_ref()
+            .and_then(|w| w.value.parse::<uuid::Uuid>().ok());
+
+        Ok(summary_uuid)
     }
 }
 
@@ -157,14 +164,16 @@ where
             brainatlas_url.trim_end_matches('/')
         );
 
-        // Read concurrency limit from config (reuses max_parallel_process_calls)
+        // Read concurrency limit from config (dedicated query-generation knob;
+        // generate-queries is a single small LLM call so this can fan out much
+        // wider than `/process` parallelism without pressuring the LLM provider)
         let concurrency: usize = self
             .infra
-            .get_config(&database_url, ConfigKey::MaxParallelProcessCalls)
+            .get_config(&database_url, ConfigKey::MaxParallelQueryGeneration)
             .await
             .map_err(ServiceError::InfraError)?
             .and_then(|v| v.parse().ok())
-            .unwrap_or(10);
+            .unwrap_or(30);
 
         tracing::info!(concurrency, "Phase 1: Running parallel query generation");
 
@@ -199,6 +208,9 @@ where
                     region_name: region.name.clone(),
                     count: query_count,
                     correlation_id: Some(format!("region:{}", region.id)),
+                    acronym: region.acronym.clone(),
+                    parent_name: region.parent_name.clone(),
+                    parent_acronym: region.parent_acronym.clone(),
                 };
 
                 // Retry with exponential backoff (max 3 attempts, 1-10s delay)
@@ -607,7 +619,7 @@ where
                                     )
                                     .await
                                 {
-                                    Ok(()) => {
+                                    Ok(summary_id_opt) => {
                                         if let Err(e) =
                                             self.infra.complete_batch(&database_url, batch_id).await
                                         {
@@ -616,6 +628,18 @@ where
                                                 error = %e,
                                                 "Phase 2: Knowledge summary succeeded but marking batch complete failed"
                                             );
+                                        }
+                                        // Queue an eval for the newly created summary. This is
+                                        // best-effort — a transient evals-be failure must not
+                                        // roll back or fail the knowledge-only summary creation.
+                                        if let Some(summary_uuid) = summary_id_opt {
+                                            crate::eval_orchestrator::queue_summary_for_eval_best_effort(
+                                                &self.infra,
+                                                summary_uuid,
+                                                *region_id,
+                                                batch_id,
+                                            )
+                                            .await;
                                         }
                                         knowledge_summaries_succeeded += 1;
                                         tracing::info!(
@@ -1031,6 +1055,9 @@ mod tests {
         RegionInfo {
             id: Uuid::new_v4(),
             name: name.to_string(),
+            acronym: None,
+            parent_acronym: None,
+            parent_name: None,
         }
     }
 
@@ -1296,6 +1323,13 @@ mod tests {
             &self,
             _database_url: &str,
             _region_uuid: Uuid,
+        ) -> Result<Option<RegionMapping>, Self::Error> {
+            unimplemented!("not used by pipeline_runner Phase-1 tests")
+        }
+        async fn get_region_by_int_id(
+            &self,
+            _database_url: &str,
+            _region_int_id: i32,
         ) -> Result<Option<RegionMapping>, Self::Error> {
             unimplemented!("not used by pipeline_runner Phase-1 tests")
         }
@@ -1610,7 +1644,7 @@ mod tests {
         let infra = Arc::new(
             base_infra()
                 .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
-                .with_config(ConfigKey::MaxParallelProcessCalls, "3")
+                .with_config(ConfigKey::MaxParallelQueryGeneration, "3")
                 .with_regions(vec![r1, r2, r3])
                 .with_post_responder(ok_two_queries()),
         );
@@ -1643,7 +1677,7 @@ mod tests {
         let infra = Arc::new(
             base_infra()
                 .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
-                .with_config(ConfigKey::MaxParallelProcessCalls, "2")
+                .with_config(ConfigKey::MaxParallelQueryGeneration, "2")
                 .with_regions(vec![good, bad])
                 .with_post_responder(Box::new(move |_idx, _url, body| {
                     let name = body["region_name"].as_str().unwrap_or("");
@@ -1740,7 +1774,7 @@ mod tests {
         let infra = Arc::new(
             base_infra()
                 .with_env("BRAINATLAS_HTTP_ADDR", "http://b:8082")
-                .with_config(ConfigKey::MaxParallelProcessCalls, "1")
+                .with_config(ConfigKey::MaxParallelQueryGeneration, "1")
                 .with_regions(regions)
                 .with_post_responder(Box::new(move |_idx, _url, _body| {
                     *attempts_clone.lock().unwrap() += 1;

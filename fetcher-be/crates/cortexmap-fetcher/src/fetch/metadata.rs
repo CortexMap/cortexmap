@@ -4,11 +4,11 @@ use cortexmap_core::blueprint::Blueprint;
 use cortexmap_infra::{HttpInfra, InfraContext};
 use serde::{Deserialize, Serialize};
 
-// FIXME: don't hardcode API key
+// NCBI eutils — no API key (3 req/sec/IP rate limit; we throttle accordingly)
 
-const ESEARCH_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pmc&term={query}&retmode=json&retmax={pageSize}&api_key=f07493e9dd1f62fa5c734b4e208a3b45ab08";
-const ESUMMARY_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pmc&id={ids}&retmode=json&api_key=f07493e9dd1f62fa5c734b4e208a3b45ab08";
-const EFETCH_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={id}&retmode=xml&api_key=f07493e9dd1f62fa5c734b4e208a3b45ab08";
+const ESEARCH_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pmc&term={query}&retmode=json&retmax={pageSize}&api_key=e78b8b256471aa0ca51883512a8dfadb6c08";
+const ESUMMARY_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pmc&id={ids}&retmode=json&api_key=e78b8b256471aa0ca51883512a8dfadb6c08";
+const EFETCH_URL: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id={id}&retmode=xml&api_key=e78b8b256471aa0ca51883512a8dfadb6c08";
 
 /// Strip "PMC" prefix from PMC ID if present
 /// NCBI API expects numeric IDs without the "PMC" prefix
@@ -270,12 +270,24 @@ fn extract_abstract_from_xml(xml: &str) -> Result<String, FetchError> {
             let mut result = abstract_xml.to_string();
 
             // Add paragraph breaks before common abstract section tags
-            result = result.replace("<sec>", "\n\n");
+            result = result.replace(
+                "<sec>", "
+
+",
+            );
             result = result.replace("</sec>", "");
             result = result.replace("<title>", "**");
-            result = result.replace("</title>", ":**\n\n");
+            result = result.replace(
+                "</title>", ":**
+
+",
+            );
             result = result.replace("<p>", "");
-            result = result.replace("</p>", "\n\n");
+            result = result.replace(
+                "</p>", "
+
+",
+            );
 
             // Remove all remaining XML/HTML tags
             let cleaned = result
@@ -298,7 +310,11 @@ fn extract_abstract_from_xml(xml: &str) -> Result<String, FetchError> {
                 .lines()
                 .filter(|line| !line.trim().is_empty())
                 .collect::<Vec<_>>()
-                .join("\n\n");
+                .join(
+                    "
+
+",
+                );
 
             if !cleaned.trim().is_empty() {
                 return Ok(cleaned.trim().to_string());
@@ -330,7 +346,11 @@ mod tests {
 
         assert_eq!(
             abstract_text,
-            "**Background:**\n\nLine <one> & more text\n\nSecond paragraph"
+            "**Background:**
+
+Line <one> & more text
+
+Second paragraph"
         );
     }
 

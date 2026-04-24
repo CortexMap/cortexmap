@@ -7,7 +7,8 @@ use crate::s3::BrainAtlasS3;
 use crate::vectordb::BrainAtlasVectorDB;
 use domain::{
     ChunkSource, ExistingSummary, LlmCallOutcome, LlmPricing, LlmResponse, NewEmbedding,
-    NewLlmCallUsage, NewRegionSummary, SimilarChunk, UsageAggregate, UsageAggregateFilter,
+    NewLlmCallUsage, NewRegionSummary, RetrievalScope, SimilarChunk, UsageAggregate,
+    UsageAggregateFilter,
 };
 use services::infra::{
     EmbeddingGenerator, LlmClient, LlmPricingRepo, LlmUsageRepo, S3Storage, VectorDatabase,
@@ -33,14 +34,18 @@ impl BrainAtlasInfra {
     pub fn new() -> Self {
         let env = BrainAtlasEnvInfra::new();
 
-        // Read S3 config from env once at startup
-        let s3_endpoint = env.get("S3_ENDPOINT").unwrap_or_default();
-        let s3_access_key = env.get("S3_ACCESS_KEY").unwrap_or_default();
-        let s3_secret_key = env.get("S3_SECRET_KEY").unwrap_or_default();
-        let s3_bucket = env.get("S3_BUCKET").unwrap_or_default();
+        // Read S3 bucket name from env; credentials are sourced from EC2
+        // instance profile. Empty-string env vars must not be passed through
+        // unchanged: the SDK treats `Some("")` like a configured value and
+        // produces dispatch failures instead of a clear error.
+        let s3_bucket = env
+            .get("S3_BUCKET")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .expect("S3_BUCKET env var is required and must be non-empty");
 
         let pg = BrainAtlasPostgresql::new();
-        let s3 = BrainAtlasS3::new(s3_endpoint, s3_access_key, s3_secret_key, s3_bucket);
+        let s3 = BrainAtlasS3::new(s3_bucket);
         let llm = OpenAiCompatibleClient::new();
         let vectordb = BrainAtlasVectorDB::new();
         let llm_usage = BrainAtlasLlmUsage::new();
@@ -79,7 +84,7 @@ impl Postgres for BrainAtlasInfra {
 impl S3Storage for BrainAtlasInfra {
     type Error = InfraError;
 
-    async fn download(&self, key: &str) -> Result<String, Self::Error> {
+    async fn download(&self, key: &str) -> Result<Option<String>, Self::Error> {
         self.s3.download(key).await
     }
 }
@@ -125,9 +130,21 @@ impl LlmClient for BrainAtlasInfra {
         chat_model: &str,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
     ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error> {
         self.llm
-            .generate_queries(base_url, api_key, chat_model, region_name, count)
+            .generate_queries(
+                base_url,
+                api_key,
+                chat_model,
+                region_name,
+                count,
+                acronym,
+                parent_name,
+                parent_acronym,
+            )
             .await
     }
 }
@@ -169,11 +186,11 @@ impl VectorDatabase for BrainAtlasInfra {
         &self,
         database_url: &str,
         query_embedding: Vec<f32>,
-        region_id: i32,
+        retrieval_scope: RetrievalScope,
         top_k: usize,
     ) -> Result<Vec<SimilarChunk>, Self::Error> {
         self.vectordb
-            .search_similar(database_url, query_embedding, region_id, top_k)
+            .search_similar(database_url, query_embedding, retrieval_scope, top_k)
             .await
     }
 

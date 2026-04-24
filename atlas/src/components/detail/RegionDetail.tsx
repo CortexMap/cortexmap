@@ -1,6 +1,8 @@
-import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef, type ReactNode, isValidElement, cloneElement } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import { useAtlasStore } from '../../store/atlasStore';
+import { useAtlasSearchRevealContext } from '../../hooks/useSelectRegion';
 import { findNode } from '../../utils/treeUtils';
 import {
   fetchAllRegions,
@@ -10,7 +12,7 @@ import {
   generateSummary,
   fetchBatchStatus,
 } from '../../api/cortexmap';
-import type { CortexmapRegion, OntologyNode, RegionSummary, RegionStatus, SummarySource, SummaryEvalScores } from '../../types';
+import type { CortexmapRegion, OntologyNode, RegionSummary, RegionStatus, SummarySource, SummaryEvalScores, AtlasSearchRevealContext } from '../../types';
 import styles from './RegionDetail.module.css';
 
 interface BatchStatusData {
@@ -23,13 +25,16 @@ interface BatchStatusData {
 }
 
 const ACTIVE_STATUSES = new Set(['FetchQueued', 'Fetching', 'LlmQueued', 'Processing']);
+const SEARCH_HIGHLIGHT_DURATION_MS = 3200;
 
 export function RegionDetail() {
   const { selectedStructureId, ontology, cortexmapRegionMap, cortexmapLoaded, setCortexmapRegions } = useAtlasStore();
+  const { context: searchRevealContext, clearContext: clearSearchRevealContext } = useAtlasSearchRevealContext();
   const [summaries, setSummaries] = useState<RegionSummary[]>([]);
   const [status, setStatus] = useState<RegionStatus | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Generate button state
   const [isGenerating, setIsGenerating] = useState(false);
@@ -162,7 +167,7 @@ export function RegionDetail() {
 
   if (selectedStructureId === null) {
     return (
-      <div className={styles.container}>
+      <div className={styles.container} ref={containerRef}>
         <div className={styles.placeholder}>
           <div className={styles.placeholderIcon}>{'\u{1F9E0}'}</div>
           <div className={styles.placeholderText}>Select a region to view details</div>
@@ -173,7 +178,7 @@ export function RegionDetail() {
   }
 
   return (
-    <div className={styles.container}>
+    <div className={styles.container} ref={containerRef}>
       {/* Header */}
       <div className={styles.header}>
         {ontologyNode && (
@@ -342,7 +347,14 @@ export function RegionDetail() {
           {!summaryLoading && summaries.length > 0 && (
             <div className={styles.summariesList}>
               {summaries.map((s, i) => (
-                <SummaryCard key={s.batch_id + '-' + i} summary={s} isLatest={i === 0} />
+                <SummaryCard
+                  key={s.batch_id + '-' + i}
+                  summary={s}
+                  isLatest={i === 0}
+                  searchRevealContext={searchRevealContext}
+                  clearSearchRevealContext={clearSearchRevealContext}
+                  detailContainerRef={containerRef}
+                />
               ))}
             </div>
           )}
@@ -408,8 +420,96 @@ interface ChunkInfo {
   source_query: string | null;
 }
 
-function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?: boolean }) {
+interface SummaryBlockMatch {
+  index: number;
+  score: number;
+}
+
+function normalizeMatchText(value: string): string {
+  return value
+    .replace(/\[chunk:[a-f0-9-]+\]/gi, ' ')
+    .replace(/[#>*_`~\-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function scoreSummaryBlockMatch(
+  blockText: string,
+  context: AtlasSearchRevealContext | null,
+  isLatest: boolean
+): number {
+  if (!context) return isLatest ? 1 : 0;
+
+  let score = isLatest ? 1 : 0;
+  const normalizedBlock = normalizeMatchText(blockText);
+  const normalizedSnippet = normalizeMatchText(context.summary_snippet ?? '').replace(/…/g, ' ').trim();
+  const normalizedQuery = normalizeMatchText(context.query);
+
+  if (normalizedSnippet) {
+    if (normalizedBlock.includes(normalizedSnippet)) {
+      score += 120;
+    } else {
+      const snippetTokens = normalizedSnippet.split(' ').filter((token) => token.length >= 4);
+      const matchedSnippetTokens = snippetTokens.filter((token) => normalizedBlock.includes(token));
+      if (matchedSnippetTokens.length > 0) {
+        score += matchedSnippetTokens.length * 12;
+        score += matchedSnippetTokens.length === snippetTokens.length ? 24 : 0;
+      }
+    }
+  }
+
+  if (normalizedQuery) {
+    const tokens = normalizedQuery.split(' ').filter((token) => token.length >= 2);
+    for (const token of tokens) {
+      if (normalizedBlock.includes(token)) score += 8;
+    }
+  }
+
+  if (context.match_source === 'summary') score += 6;
+  if (context.match_source === 'name' || context.match_source === 'acronym') score += isLatest ? 4 : 0;
+
+  return score;
+}
+
+function findBestSummaryBlockMatch(
+  blocks: string[],
+  context: AtlasSearchRevealContext | null,
+  isLatest: boolean
+): SummaryBlockMatch {
+  if (blocks.length === 0) return { index: 0, score: 0 };
+
+  let best: SummaryBlockMatch = { index: 0, score: Number.NEGATIVE_INFINITY };
+  blocks.forEach((block, index) => {
+    const score = scoreSummaryBlockMatch(block, context, isLatest && index === 0);
+    if (score > best.score) {
+      best = { index, score };
+    }
+  });
+
+  return best;
+}
+
+function SummaryCard({
+  summary,
+  isLatest,
+  searchRevealContext,
+  clearSearchRevealContext,
+  detailContainerRef,
+}: {
+  summary: RegionSummary;
+  isLatest?: boolean;
+  searchRevealContext: AtlasSearchRevealContext | null;
+  clearSearchRevealContext: () => void;
+  detailContainerRef: React.RefObject<HTMLDivElement | null>;
+}) {
   const [chunkMap, setChunkMap] = useState<Record<string, ChunkInfo>>({});
+  const [activeBlockIndex, setActiveBlockIndex] = useState<number | null>(null);
+  const blockRefs = useRef<Array<HTMLElement | null>>([]);
 
   useEffect(() => {
     const loadChunks = async () => {
@@ -466,10 +566,76 @@ function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?:
     return pmcIds.size;
   }, [chunkMap]);
 
+  useEffect(() => {
+    blockRefs.current = [];
+  }, [summary.summary]);
+
+  useEffect(() => {
+    if (!isLatest) return;
+
+    const shouldReveal = !!searchRevealContext || isLatest;
+    if (!shouldReveal) return;
+
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const revealMatchedBlock = (attempt = 0) => {
+      if (cancelled) return;
+
+      const renderedBlocks = blockRefs.current.map((node) => normalizeMatchText(node?.innerText ?? ''));
+      const hasRenderableBlocks = renderedBlocks.length > 0 && renderedBlocks.some((block) => block);
+      const container = detailContainerRef.current;
+
+      if (!container || !hasRenderableBlocks) {
+        if (attempt < 10) {
+          timer = window.setTimeout(() => revealMatchedBlock(attempt + 1), 120);
+        }
+        return;
+      }
+
+      const { index, score } = findBestSummaryBlockMatch(renderedBlocks, searchRevealContext, true);
+      const resolvedIndex = score > 0 ? index : 0;
+      const target = blockRefs.current[resolvedIndex];
+
+      if (!target) {
+        if (attempt < 10) {
+          timer = window.setTimeout(() => revealMatchedBlock(attempt + 1), 120);
+        }
+        return;
+      }
+
+      setActiveBlockIndex(resolvedIndex);
+      scrollBlockIntoDetailPane(container, target);
+
+      timer = window.setTimeout(() => {
+        setActiveBlockIndex((current) => (current === resolvedIndex ? null : current));
+        if (searchRevealContext) clearSearchRevealContext();
+      }, SEARCH_HIGHLIGHT_DURATION_MS);
+    };
+
+    timer = window.setTimeout(() => revealMatchedBlock(0), 80);
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [clearSearchRevealContext, detailContainerRef, isLatest, searchRevealContext, summary.summary]);
+
+
   return (
     <div className={styles.summaryItem}>
       <div className={styles.summaryText}>
-        <MarkdownWithChunks content={summary.summary} chunkMap={chunkMap} />
+        <BlockAwareMarkdown
+          content={summary.summary}
+          chunkMap={chunkMap}
+          highlightQuery={searchRevealContext?.query ?? ''}
+          activeBlockIndex={activeBlockIndex}
+          onBlockRef={(index, node) => {
+            blockRefs.current[index] = node;
+          }}
+        />
       </div>
       <div className={styles.summaryMeta}>
         {isLatest && <span className={styles.latestBadge}>Latest</span>}
@@ -490,84 +656,137 @@ function SummaryCard({ summary, isLatest }: { summary: RegionSummary; isLatest?:
   );
 }
 
+function scrollBlockIntoDetailPane(container: HTMLDivElement, target: HTMLElement) {
+  const containerRect = container.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const currentScrollTop = container.scrollTop;
+  const targetTop = targetRect.top - containerRect.top + currentScrollTop;
+  const targetBottom = targetRect.bottom - containerRect.top + currentScrollTop;
+  const topOffset = Math.max(24, container.clientHeight * 0.18);
+  const bottomOffset = Math.max(24, container.clientHeight * 0.12);
+  const visibleTop = currentScrollTop + topOffset;
+  const visibleBottom = currentScrollTop + container.clientHeight - bottomOffset;
+
+  let nextScrollTop = currentScrollTop;
+
+  if (targetTop < visibleTop) {
+    nextScrollTop = Math.max(0, targetTop - topOffset);
+  } else if (targetBottom > visibleBottom) {
+    nextScrollTop = Math.max(0, targetBottom - container.clientHeight + bottomOffset);
+  }
+
+  if (Math.abs(nextScrollTop - currentScrollTop) < 2) {
+    return;
+  }
+
+  container.scrollTo({
+    top: nextScrollTop,
+    behavior: 'smooth',
+  });
+}
+
 // ─── Eval scores strip (rendered at the bottom of each scored summary) ──
 
-const METRIC_DISPLAY: { key: string; label: string; invert?: boolean; description: string }[] = [
-  {
-    key: 'rubric_relevance',
-    label: 'Relevance',
-    description: 'Rubric judge (gpt-4o): does the summary actually describe the named region rather than drifting to neighbouring or parent structures?',
-  },
-  {
-    key: 'rubric_coherence',
-    label: 'Coherence',
-    description: 'Rubric judge (gpt-4o): is the prose well-organised, internally consistent, and free of contradiction or redundancy?',
-  },
-  {
-    key: 'rubric_specificity',
-    label: 'Specificity',
-    description: 'Rubric judge (gpt-4o): does it contain concrete neuroanatomical detail (cell types, layers, connections) rather than generic filler?',
-  },
-  {
-    key: 'rubric_clinical_utility',
-    label: 'Utility',
-    description: 'Rubric judge (gpt-4o): would a clinician or neuroscientist find the summary actionable — named pathologies, functional roles, diagnostic relevance?',
-  },
-  {
-    key: 'rubric_terminology',
-    label: 'Terminology',
-    description: 'Rubric judge (gpt-4o): does it use correct, standard neuroanatomical terminology (canonical Latin/Greek names, standard pathway labels)?',
-  },
+type MetricGroup = 'truth' | 'structure' | 'style';
+
+const METRIC_DISPLAY: { key: string; label: string; group: MetricGroup; invert?: boolean; description: string }[] = [
+  // ─── HEADLINE: truth & evidence ─────────────────────────────────────
+  // These are the metrics we optimise the pipeline for. Higher correlation
+  // with actual factual quality. Hallucination and groundedness are r=−0.90.
   {
     key: 'claim_groundedness',
     label: 'Groundedness',
+    group: 'truth',
     description: 'Groundedness judge (gpt-4o-mini): extracts atomic factual claims, retrieves the top-k most-similar source chunks, asks the judge whether each claim is supported. Score = fraction rated "supported".',
   },
   {
     key: 'hallucination_rate',
     label: 'Hallucination',
+    group: 'truth',
     invert: true,
     description: 'Inverse of groundedness: the fraction of atomic claims the judge rated unsupported or partial. Low = good.',
   },
   {
+    key: 'citation_scope',
+    label: 'Cite Scope',
+    group: 'truth',
+    description: 'Citation check (no LLM): of the valid UUIDs, fraction that belong to this summary\u2019s own retrieval corpus (not leaked from a different summary).',
+  },
+  {
+    key: 'citation_validity',
+    label: 'Cite Validity',
+    group: 'truth',
+    description: 'Citation check (no LLM): of the chunk UUIDs referenced, fraction that resolve to a real row in brain_region_embeddings. Catches orphan/fabricated UUIDs.',
+  },
+  {
+    key: 'citation_support',
+    label: 'Cite Support',
+    group: 'truth',
+    description: 'Citation judge (LLM, opt-in): of the valid in-scope citations, fraction where the cited chunk text actually supports the adjacent claim. The true "citation correctness" check.',
+  },
+  {
+    key: 'citation_presence',
+    label: 'Cite Presence',
+    group: 'truth',
+    description: 'Citation check (no LLM): fraction of factual claims that include at least one [chunk:UUID] marker attributing the source. Measures how often the writer bothered to cite at all.',
+  },
+  // ─── STRUCTURE: free, mechanical checks ─────────────────────────────
+  {
     key: 'section_completeness',
     label: 'Completeness',
+    group: 'structure',
     description: 'Structural check (no LLM): fraction of required markdown sections present — Overview, Anatomy & Connectivity, Function, Clinical Relevance.',
   },
   {
     key: 'length_in_range',
     label: 'Length',
+    group: 'structure',
     description: 'Structural check (no LLM): binary score confirming the summary word count falls within an acceptable window (not too short or bloated).',
   },
   {
     key: 'acronym_mention',
     label: 'Acronyms',
+    group: 'structure',
     description: 'Structural check (no LLM): verifies the region\u2019s acronym (e.g. "IPN") appears at least once in the summary body.',
   },
   {
     key: 'no_placeholder_text',
     label: 'No Placeholders',
+    group: 'structure',
     description: 'Structural check (no LLM): scans for LLM failure strings like "I cannot", "insufficient information", [TODO], etc. 0 if any found, 1 otherwise.',
   },
+  // ─── STYLE: rubric judge — anti-correlated with groundedness (r=−0.08) ───
+  // Kept visible as a context-free style signal but de-emphasised in the
+  // overall score so we don't reward confident-sounding fabrication.
   {
-    key: 'citation_presence',
-    label: 'Cite Presence',
-    description: 'Citation check (no LLM): fraction of factual claims that include at least one [chunk:UUID] marker attributing the source. Measures how often the writer bothered to cite at all.',
+    key: 'rubric_relevance',
+    label: 'Relevance',
+    group: 'style',
+    description: 'Rubric judge (gpt-4o): does the summary actually describe the named region rather than drifting to neighbouring or parent structures?',
   },
   {
-    key: 'citation_validity',
-    label: 'Cite Validity',
-    description: 'Citation check (no LLM): of the chunk UUIDs referenced, fraction that resolve to a real row in brain_region_embeddings. Catches orphan/fabricated UUIDs.',
+    key: 'rubric_coherence',
+    label: 'Coherence',
+    group: 'style',
+    description: 'Rubric judge (gpt-4o): is the prose well-organised, internally consistent, and free of contradiction or redundancy?',
   },
   {
-    key: 'citation_scope',
-    label: 'Cite Scope',
-    description: 'Citation check (no LLM): of the valid UUIDs, fraction that belong to this summary\u2019s own retrieval corpus (not leaked from a different summary).',
+    key: 'rubric_specificity',
+    label: 'Specificity',
+    group: 'style',
+    description: 'Rubric judge (gpt-4o): does it contain concrete neuroanatomical detail (cell types, layers, connections) rather than generic filler?',
   },
   {
-    key: 'citation_support',
-    label: 'Cite Support',
-    description: 'Citation judge (LLM, opt-in): of the valid in-scope citations, fraction where the cited chunk text actually supports the adjacent claim. The true "citation correctness" check.',
+    key: 'rubric_clinical_utility',
+    label: 'Utility',
+    group: 'style',
+    description: 'Rubric judge (gpt-4o): would a clinician or neuroscientist find the summary actionable — named pathologies, functional roles, diagnostic relevance?',
+  },
+  {
+    key: 'rubric_terminology',
+    label: 'Terminology',
+    group: 'style',
+    description: 'Rubric judge (gpt-4o): does it use correct, standard neuroanatomical terminology (canonical Latin/Greek names, standard pathway labels)?',
   },
 ];
 
@@ -588,8 +807,53 @@ function EvalScoresBar({ scores }: { scores: SummaryEvalScores }) {
 
   if (entries.length === 0) return null;
 
-  // Overall score: mean of displayed metrics, flipping "invert" metrics to a "higher is better" scale.
-  const overall = entries.reduce((acc, m) => acc + (m.invert ? 1 - (m.value as number) : (m.value as number)), 0) / entries.length;
+  // Overall score: mean of TRUTH metrics only. Style metrics are visible
+  // but excluded from the headline because they are anti-correlated with
+  // groundedness (r = -0.08 across 2.5k summaries) and reward fluent
+  // fabrication. Structure metrics are excluded because they are mostly
+  // 1.0 by construction once basic checks pass.
+  const truthEntries = entries.filter((m) => m.group === 'truth');
+  const headlineEntries = truthEntries.length > 0 ? truthEntries : entries;
+  const overall = headlineEntries.reduce(
+    (acc, m) => acc + (m.invert ? 1 - (m.value as number) : (m.value as number)),
+    0,
+  ) / headlineEntries.length;
+
+  const groupEntries = (g: MetricGroup) => entries.filter((m) => m.group === g);
+  const truthGroup = groupEntries('truth');
+  const structureGroup = groupEntries('structure');
+  const styleGroup = groupEntries('style');
+
+  const renderGroup = (label: string, items: typeof entries) => {
+    if (items.length === 0) return null;
+    return (
+      <div className={styles.evalGroup}>
+        <div className={styles.evalGroupLabel}>{label}</div>
+        <div className={styles.evalGrid}>
+          {items.map((m) => {
+            const color = scoreColor(m.value as number, !!m.invert);
+            const pct = Math.round(((m.value as number)) * 100);
+            return (
+              <div
+                key={m.key}
+                className={styles.evalMetric}
+                title={`${m.label}: ${(m.value as number).toFixed(3)}${scores.judge_models[m.key] ? ` \u2014 judge: ${scores.judge_models[m.key]}` : ''}\n\n${m.description}`}
+              >
+                <span className={styles.evalLabel}>{m.label}</span>
+                <span className={styles.evalValue} style={{ color }}>{pct}%</span>
+                <span className={styles.evalTrack}>
+                  <span
+                    className={styles.evalFill}
+                    style={{ width: `${(m.value as number) * 100}%`, backgroundColor: color }}
+                  />
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className={styles.evalBar} title={`Eval version: ${scores.eval_version}`}>
@@ -633,56 +897,103 @@ function EvalScoresBar({ scores }: { scores: SummaryEvalScores }) {
             ))}
           </dl>
           <div className={styles.evalInfoFooter}>
-            Overall = mean of all present metrics (hallucination flipped so higher = better).
+            Overall = mean of TRUTH metrics only (hallucination flipped so higher = better).
+            Style metrics are displayed for context but excluded from the
+            headline score because they are anti-correlated with groundedness.
             Green &#8805; 80%, amber 50\u201379%, red &lt; 50%.
           </div>
         </div>
       )}
 
-      <div className={styles.evalGrid}>
-        {entries.map((m) => {
-          const color = scoreColor(m.value as number, !!m.invert);
-          const pct = Math.round(((m.value as number)) * 100);
-          return (
-            <div
-              key={m.key}
-              className={styles.evalMetric}
-              title={`${m.label}: ${(m.value as number).toFixed(3)}${scores.judge_models[m.key] ? ` \u2014 judge: ${scores.judge_models[m.key]}` : ''}\n\n${m.description}`}
-            >
-              <span className={styles.evalLabel}>{m.label}</span>
-              <span className={styles.evalValue} style={{ color }}>{pct}%</span>
-              <span className={styles.evalTrack}>
-                <span
-                  className={styles.evalFill}
-                  style={{ width: `${(m.value as number) * 100}%`, backgroundColor: color }}
-                />
-              </span>
-            </div>
-          );
-        })}
-      </div>
+      {renderGroup('Truth & evidence', truthGroup)}
+      {renderGroup('Structure', structureGroup)}
+      {renderGroup('Style', styleGroup)}
     </div>
   );
 }
 
 // ─── Markdown renderer that replaces [chunk:UUID] with citation bubbles ──
 
-function MarkdownWithChunks({ content, chunkMap }: { content: string; chunkMap: Record<string, ChunkInfo> }) {
-  // Replace [chunk:UUID] with a unique marker that survives markdown parsing
+function BlockAwareMarkdown({
+  content,
+  chunkMap,
+  highlightQuery,
+  activeBlockIndex,
+  onBlockRef,
+}: {
+  content: string;
+  chunkMap: Record<string, ChunkInfo>;
+  highlightQuery: string;
+  activeBlockIndex: number | null;
+  onBlockRef: (index: number, node: HTMLElement | null) => void;
+}) {
   const processed = content.replace(/\[chunk:([a-f0-9-]+)\]/g, '§CHUNK§$1§');
+  let blockCounter = -1;
 
-  const components = {
-    p: ({ children, ...props }: any) => <p {...props}>{processChildren(children, chunkMap)}</p>,
-    li: ({ children, ...props }: any) => <li {...props}>{processChildren(children, chunkMap)}</li>,
-    strong: ({ children, ...props }: any) => <strong {...props}>{processChildren(children, chunkMap)}</strong>,
-    em: ({ children, ...props }: any) => <em {...props}>{processChildren(children, chunkMap)}</em>,
-    h1: ({ children, ...props }: any) => <h1 {...props}>{processChildren(children, chunkMap)}</h1>,
-    h2: ({ children, ...props }: any) => <h2 {...props}>{processChildren(children, chunkMap)}</h2>,
-    h3: ({ children, ...props }: any) => <h3 {...props}>{processChildren(children, chunkMap)}</h3>,
-    h4: ({ children, ...props }: any) => <h4 {...props}>{processChildren(children, chunkMap)}</h4>,
+  const wrapBlock = (tagName: keyof HTMLElementTagNameMap, children: ReactNode) => {
+    blockCounter += 1;
+    const index = blockCounter;
+    const className = `${styles.summaryBlock}${activeBlockIndex === index ? ` ${styles.summaryBlockActive}` : ''}`;
+    return React.createElement(
+      tagName,
+      {
+        className,
+        ref: (node: HTMLElement | null) => onBlockRef(index, node),
+        'data-block-index': index,
+      },
+      renderHighlightedChildren(children, chunkMap, highlightQuery)
+    );
+  };
+
+  const components: Components = {
+    p: ({ children }) => wrapBlock('p', children),
+    li: ({ children }) => wrapBlock('li', children),
+    h1: ({ children }) => wrapBlock('h1', children),
+    h2: ({ children }) => wrapBlock('h2', children),
+    h3: ({ children }) => wrapBlock('h3', children),
+    h4: ({ children }) => wrapBlock('h4', children),
+    strong: ({ children, ...props }) => <strong {...props}>{renderHighlightedChildren(children, chunkMap, highlightQuery)}</strong>,
+    em: ({ children, ...props }) => <em {...props}>{renderHighlightedChildren(children, chunkMap, highlightQuery)}</em>,
+    blockquote: ({ children }) => wrapBlock('blockquote', children),
   };
 
   return <ReactMarkdown components={components}>{processed}</ReactMarkdown>;
+}
+
+function renderHighlightedChildren(
+  children: ReactNode,
+  chunkMap: Record<string, ChunkInfo>,
+  highlightQuery: string
+): ReactNode {
+  const withChunks = processChildren(children, chunkMap);
+  return applyHighlightsToNode(withChunks, highlightQuery);
+}
+
+function applyHighlightsToNode(node: ReactNode, highlightQuery: string): ReactNode {
+  if (!highlightQuery.trim()) return node;
+
+  if (typeof node === 'string') {
+    const pattern = new RegExp(`(${escapeRegex(highlightQuery.trim())})`, 'gi');
+    const parts = node.split(pattern);
+    if (parts.length === 1) return node;
+    return parts.map((part, index) =>
+      pattern.test(part) ? (
+        <mark key={`${part}-${index}`} className={styles.inlineHighlight}>{part}</mark>
+      ) : (
+        part
+      )
+    );
+  }
+
+  if (Array.isArray(node)) {
+    return node.map((child, index) => <React.Fragment key={index}>{applyHighlightsToNode(child, highlightQuery)}</React.Fragment>);
+  }
+
+  if (isValidElement<{ children?: ReactNode }>(node)) {
+    return cloneElement(node, undefined, applyHighlightsToNode(node.props.children, highlightQuery));
+  }
+
+  return node;
 }
 
 function processChildren(children: ReactNode, chunkMap: Record<string, ChunkInfo>): ReactNode {

@@ -6,6 +6,22 @@ use domain::{
 use std::error::Error;
 use uuid::Uuid;
 
+/// Compact region identity used by [`RegionManagement::get_region_identity`].
+///
+/// Carries the canonical region name plus optional acronym and parent context
+/// so callers (e.g. on-demand `generate_queries` from the orch app facade) can
+/// pass a complete context block to brainatlas-be without doing two extra
+/// database lookups.
+#[derive(Debug, Clone)]
+pub struct RegionIdentity {
+    pub region_id: uuid::Uuid,
+    pub region_int_id: i32,
+    pub name: String,
+    pub acronym: Option<String>,
+    pub parent_acronym: Option<String>,
+    pub parent_name: Option<String>,
+}
+
 #[async_trait::async_trait]
 pub trait CompletionOrchestrator: Send + Sync {
     type Error: Error + Send + Sync;
@@ -57,6 +73,9 @@ pub trait RegionManagement: Send + Sync {
         &self,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
     ) -> Result<Vec<String>, Self::Error>;
 
     /// Update batch status (for invalidation)
@@ -75,6 +94,12 @@ pub trait RegionManagement: Send + Sync {
 
     /// Get region name from region_mapping
     async fn get_region_name(&self, region_id: Uuid) -> Result<String, Self::Error>;
+
+    /// Get the full region identity (name + acronym + parent name + parent
+    /// acronym) used to disambiguate the region for downstream LLM calls
+    /// (query generation, summarization). Returns the same data the Phase-1
+    /// pipeline already loads via `get_regions_without_queries`.
+    async fn get_region_identity(&self, region_id: Uuid) -> Result<RegionIdentity, Self::Error>;
 
     /// Get total number of regions in region_mapping
     async fn get_total_regions(&self) -> Result<i64, Self::Error>;

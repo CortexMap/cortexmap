@@ -25,9 +25,9 @@ fn get_test_infra_ctx() -> StdInfraContext {
     let (endpoint, access_key, secret_key, bucket) = get_test_s3_config();
     StdInfraContext {
         database_url,
-        endpoint,
-        access_key,
-        secret_key,
+        endpoint: Some(endpoint),
+        access_key: Some(access_key),
+        secret_key: Some(secret_key),
         bucket,
     }
 }

@@ -24,8 +24,8 @@ use axum::http::{Method, Request, StatusCode};
 use domain::{
     BrainRegionEntry, ChunkSource, Claim, ClaimsResponse, ExistingSummary, GroundednessLabel,
     GroundednessVerdict, LlmResponse, NewEmbedding, NewRegionSummary, RegionMapping,
-    RubricCriterion, RubricScores, SimilarChunk, UsageAggregate, UsageAggregateFilter,
-    UsageByCallerTag, UsageByModel, UsageContext,
+    RetrievalScope, RubricCriterion, RubricScores, SimilarChunk, UsageAggregate,
+    UsageAggregateFilter, UsageByCallerTag, UsageByModel, UsageContext,
 };
 use http_body_util::BodyExt;
 use server::BrainAtlasServer;
@@ -127,6 +127,9 @@ impl LlmService for FakeServices {
         &self,
         region_name: &str,
         count: u32,
+        _acronym: Option<&str>,
+        _parent_name: Option<&str>,
+        _parent_acronym: Option<&str>,
         ctx: UsageContext,
     ) -> Result<Vec<String>, Self::Error> {
         self.state.generate_queries_calls.lock().unwrap().push((
@@ -242,8 +245,8 @@ impl EmbeddingService for FakeServices {
 #[async_trait]
 impl S3Storage for FakeServices {
     type Error = FakeErr;
-    async fn download(&self, _key: &str) -> Result<String, Self::Error> {
-        Ok(String::new())
+    async fn download(&self, _key: &str) -> Result<Option<String>, Self::Error> {
+        Ok(Some(String::new()))
     }
 }
 
@@ -267,7 +270,7 @@ impl VectorDatabase for FakeServices {
     async fn search_similar(
         &self,
         _query_embedding: Vec<f32>,
-        _region_id: i32,
+        _retrieval_scope: RetrievalScope,
         _top_k: usize,
     ) -> Result<Vec<SimilarChunk>, Self::Error> {
         Ok(Vec::new())

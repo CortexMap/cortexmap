@@ -508,6 +508,135 @@ fn normalize_url(addr: &str) -> String {
     }
 }
 
+// ---- Wire types for batch-eval queueing ----
+
+#[derive(Debug, Serialize)]
+struct BatchEvalQueueReq {
+    summary_ids: Vec<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eval_version: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BatchEvalQueueResp {
+    #[allow(dead_code)]
+    batch_eval_id: Uuid,
+}
+
+/// Queue a single `region_summary` row for evaluation immediately after it is
+/// generated.
+///
+/// This is a **best-effort** call: if the evals-be service is unreachable or
+/// the request fails after retries the error is logged but **not** propagated.
+/// Summary generation is never rolled back due to a transient eval issue.
+///
+/// # Arguments
+/// * `infra` – shared infra handle (needs `EnvInfra`, `OrchDatabase`, `HttpClient`)
+/// * `summary_id` – the `region_summary.id` that was just created
+/// * `region_id` – for log context only
+/// * `batch_id` – for log context only
+pub(crate) async fn queue_summary_for_eval_best_effort<E, I>(
+    infra: &Arc<I>,
+    summary_id: Uuid,
+    region_id: Uuid,
+    batch_id: Uuid,
+) where
+    E: Error + Send + Sync + 'static,
+    I: EnvInfra<Error = E> + OrchDatabase<Error = E> + HttpClient<Error = E> + Send + Sync,
+{
+    use backon::{ExponentialBuilder, Retryable};
+
+    // Resolve evals base URL — env var takes precedence over config row.
+    let evals_base = if let Ok(url) = infra.get_env_var("EVALS_BASE_URL") {
+        normalize_url(&url)
+    } else {
+        let db_url = match infra.get_env_var("DATABASE_URL") {
+            Ok(u) => u,
+            Err(_) => {
+                tracing::warn!(
+                    %summary_id, %region_id, %batch_id,
+                    "queue_summary_for_eval: DATABASE_URL not available, skipping eval enqueue"
+                );
+                return;
+            }
+        };
+        match infra
+            .get_config(&db_url, ConfigKey::EvalsBaseUrl)
+            .await
+            .ok()
+            .flatten()
+        {
+            Some(url) => normalize_url(&url),
+            None => {
+                tracing::warn!(
+                    %summary_id, %region_id, %batch_id,
+                    "queue_summary_for_eval: EVALS_BASE_URL not configured, skipping eval enqueue"
+                );
+                return;
+            }
+        }
+    };
+
+    // Resolve eval version — config row, falling back to the hardcoded default.
+    let version: String = if let Ok(db_url) = infra.get_env_var("DATABASE_URL") {
+        infra
+            .get_config(&db_url, ConfigKey::EvalVersion)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "v0.4.0".to_string())
+    } else {
+        "v0.4.0".to_string()
+    };
+
+    let url = format!(
+        "{}/evals-be/api/evals/batch",
+        evals_base.trim_end_matches('/')
+    );
+    let req = BatchEvalQueueReq {
+        summary_ids: vec![summary_id],
+        eval_version: Some(version.clone()),
+    };
+
+    let retry_strategy = ExponentialBuilder::default()
+        .with_max_times(2)
+        .with_min_delay(std::time::Duration::from_secs(1))
+        .with_max_delay(std::time::Duration::from_secs(5));
+
+    let infra_arc = Arc::clone(infra);
+    let url_clone = url.clone();
+    let req_ref = &req;
+
+    let result = (|| async {
+        infra_arc
+            .post::<BatchEvalQueueReq, BatchEvalQueueResp>(&url_clone, req_ref)
+            .await
+    })
+    .retry(retry_strategy)
+    .await;
+
+    match result {
+        Ok(_) => {
+            tracing::info!(
+                %summary_id,
+                %region_id,
+                %batch_id,
+                eval_version = %version,
+                "Queued newly-generated summary for evaluation"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                %summary_id,
+                %region_id,
+                %batch_id,
+                error = %e,
+                "Failed to queue eval for newly-generated summary — it will not be auto-scored"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

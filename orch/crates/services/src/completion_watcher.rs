@@ -642,6 +642,21 @@ where
                     "Batch processing completed successfully"
                 );
 
+                // Queue the newly generated summary for evaluation. This is
+                // best-effort — a transient evals-be failure must not roll
+                // back the successfully created summary.
+                if let Some(ref sid_wrapper) = response.summary_id
+                    && let Ok(summary_uuid) = sid_wrapper.value.parse::<Uuid>()
+                {
+                    crate::eval_orchestrator::queue_summary_for_eval_best_effort(
+                        &self.infra,
+                        summary_uuid,
+                        batch.region_id,
+                        batch.id,
+                    )
+                    .await;
+                }
+
                 Ok(response.detail)
             }
             Err(e) => {

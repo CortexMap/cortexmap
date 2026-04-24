@@ -245,9 +245,24 @@ where
             fetcher_url.trim_end_matches('/')
         );
 
+        // Read page_size from config so the on-demand path matches the bulk
+        // pipeline's `EnqueuePageSize` knob (Phase 5 of the query-context plan).
+        // Operators can lift this without redeploying brainatlas-be.
+        let database_url = self
+            .infra
+            .get_env_var("DATABASE_URL")
+            .map_err(ServiceError::InfraError)?;
+        let page_size: u32 = self
+            .infra
+            .get_config(&database_url, ConfigKey::EnqueuePageSize)
+            .await
+            .map_err(ServiceError::InfraError)?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(20);
+
         let request = EnqueueRequest {
             query: query.clone(),
-            page_size: 20, // Get up to 20 papers per query
+            page_size,
             max_retry_attempts: 3,
         };
 

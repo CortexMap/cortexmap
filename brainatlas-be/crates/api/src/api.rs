@@ -59,6 +59,9 @@ pub trait BrainRegionApi: Send + Sync {
         region_name: String,
         count: u32,
         correlation_id: Option<String>,
+        acronym: Option<String>,
+        parent_name: Option<String>,
+        parent_acronym: Option<String>,
     ) -> Result<GenerateQueriesResponse, Self::Error>;
 
     /// Resolve a chunk UUID to its full source details.

@@ -81,6 +81,9 @@ where
         &self,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
         ctx: UsageContext,
     ) -> Result<Vec<String>, ServiceError<E>> {
         let resolved = resolve_llm_provider(&*self.infra)?;
@@ -104,6 +107,9 @@ where
                 &chat_model,
                 region_name,
                 count,
+                acronym,
+                parent_name,
+                parent_acronym,
             )
             .await
             .map_err(ServiceError::InfraError);
@@ -290,8 +296,8 @@ mod tests {
     };
     use domain::{
         ChunkSource, ExistingSummary, LlmCallOutcome, LlmEndpointKind, LlmPricing, LlmResponse,
-        NewEmbedding, NewLlmCallUsage, NewRegionSummary, SimilarChunk, Usage, UsageAggregate,
-        UsageAggregateFilter, UsageContext,
+        NewEmbedding, NewLlmCallUsage, NewRegionSummary, RetrievalScope, SimilarChunk, Usage,
+        UsageAggregate, UsageAggregateFilter, UsageContext,
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -438,6 +444,9 @@ mod tests {
             _chat_model: &str,
             _region_name: &str,
             _count: u32,
+            _acronym: Option<&str>,
+            _parent_name: Option<&str>,
+            _parent_acronym: Option<&str>,
         ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error> {
             self.llm_calls
                 .lock()
@@ -493,7 +502,7 @@ mod tests {
     #[async_trait::async_trait]
     impl S3Storage for MockInfra {
         type Error = MockErr;
-        async fn download(&self, _key: &str) -> Result<String, Self::Error> {
+        async fn download(&self, _key: &str) -> Result<Option<String>, Self::Error> {
             unreachable!("S3Storage::download not used in llm_service tests")
         }
     }
@@ -541,7 +550,7 @@ mod tests {
             &self,
             _db: &str,
             _emb: Vec<f32>,
-            _region_id: i32,
+            _retrieval_scope: RetrievalScope,
             _top_k: usize,
         ) -> Result<Vec<SimilarChunk>, Self::Error> {
             unreachable!()
@@ -661,7 +670,7 @@ mod tests {
 
         let ctx = UsageContext::default().with_caller_tag("batch-queries");
         let out = svc
-            .generate_queries("hippocampus", 2, ctx)
+            .generate_queries("hippocampus", 2, None, None, None, ctx)
             .await
             .expect("call succeeds");
         assert_eq!(out, vec!["q1".to_string(), "q2".to_string()]);
@@ -678,7 +687,7 @@ mod tests {
         let svc = make_service(infra.clone());
 
         let _ = svc
-            .generate_queries("hippocampus", 1, UsageContext::default())
+            .generate_queries("hippocampus", 1, None, None, None, UsageContext::default())
             .await
             .expect("call succeeds");
 
@@ -884,7 +893,7 @@ mod tests {
         let svc = make_service(infra.clone());
 
         let err = svc
-            .generate_queries("region", 3, UsageContext::default())
+            .generate_queries("region", 3, None, None, None, UsageContext::default())
             .await
             .expect_err("LLM error must propagate");
         match err {
@@ -990,7 +999,7 @@ mod tests {
         infra.enqueue_generate_ok(vec!["q".into()]);
         let svc = make_service(infra.clone());
 
-        svc.generate_queries("hippocampus", 1, UsageContext::default())
+        svc.generate_queries("hippocampus", 1, None, None, None, UsageContext::default())
             .await
             .unwrap();
 

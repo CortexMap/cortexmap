@@ -1,3 +1,4 @@
+use crate::RetrievalFallbackPolicy;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -22,10 +23,16 @@ pub struct SearchEmbeddingsArgs {
     pub query: String,
     #[serde(default = "default_top_k")]
     pub top_k: usize,
+    #[serde(default = "default_fallback_policy")]
+    pub fallback_policy: Option<RetrievalFallbackPolicy>,
 }
 
 fn default_top_k() -> usize {
     5
+}
+
+fn default_fallback_policy() -> Option<RetrievalFallbackPolicy> {
+    None
 }
 
 /// Response from an LLM call that may include tool calls
@@ -48,14 +55,21 @@ mod tests {
 
         assert_eq!(args.query, "hippocampus");
         assert_eq!(args.top_k, 5);
+        assert_eq!(args.fallback_policy, None);
     }
 
     #[test]
     fn test_search_embeddings_args_preserves_explicit_top_k() {
-        let args: SearchEmbeddingsArgs =
-            serde_json::from_str("{\"query\":\"thalamus\",\"top_k\":12}").unwrap();
+        let args: SearchEmbeddingsArgs = serde_json::from_str(
+            "{\"query\":\"thalamus\",\"top_k\":12,\"fallback_policy\":\"active_summary\"}",
+        )
+        .unwrap();
 
         assert_eq!(args.top_k, 12);
+        assert_eq!(
+            args.fallback_policy,
+            Some(RetrievalFallbackPolicy::ActiveSummary)
+        );
     }
 
     #[test]

@@ -29,6 +29,34 @@ fn render_template(template: &str, vars: &[(&str, &str)]) -> String {
     result
 }
 
+/// Build a structured "region identity" block that is substituted into the
+/// `generate_queries_tool_system` prompt. Gives the LLM a single, easy-to-read
+/// reference card with the region's full name, its acronym, and parent
+/// context — so it can pick literature-targeted OR alternatives instead of
+/// hallucinating synonyms from sub-modifier tokens like "ventral part".
+fn render_region_identity_context(
+    region_name: &str,
+    acronym: Option<&str>,
+    parent_name: Option<&str>,
+    parent_acronym: Option<&str>,
+) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("- Full region name: {}", region_name));
+    match acronym {
+        Some(a) if !a.trim().is_empty() => lines.push(format!("- Region acronym: {}", a)),
+        _ => lines.push("- Region acronym: (none in source ontology)".to_string()),
+    }
+    match parent_name {
+        Some(p) if !p.trim().is_empty() => lines.push(format!("- Parent region name: {}", p)),
+        _ => lines.push("- Parent region name: (root region)".to_string()),
+    }
+    match parent_acronym {
+        Some(pa) if !pa.trim().is_empty() => lines.push(format!("- Parent region acronym: {}", pa)),
+        _ => lines.push("- Parent region acronym: (root region)".to_string()),
+    }
+    lines.join("\n")
+}
+
 /// Stateless OpenAI-compatible HTTP client shared by OpenRouter and Requesty.
 ///
 /// The base URL is NOT stored on the client: it's threaded through the
@@ -358,22 +386,42 @@ impl LlmClient for OpenAiCompatibleClient {
         chat_model: &str,
         region_name: &str,
         count: u32,
+        acronym: Option<&str>,
+        parent_name: Option<&str>,
+        parent_acronym: Option<&str>,
     ) -> Result<LlmCallOutcome<Vec<String>>, Self::Error> {
         info!(
-            "Generating {} search queries for region: {} (using tool calling)",
-            count, region_name
+            "Generating {} search queries for region: {} (acronym={:?}, parent={:?}/{:?}) (using tool calling)",
+            count, region_name, acronym, parent_name, parent_acronym
         );
+
+        // Build a structured identity context block. The prompt template
+        // substitutes {{REGION_CONTEXT_BLOCK}} with this so the LLM has
+        // every anchor it needs to construct on-target OR groups.
+        let region_context_block =
+            render_region_identity_context(region_name, acronym, parent_name, parent_acronym);
 
         let system_prompt = render_template(
             load_prompt("generate_queries_tool_system"),
-            &[("count", &count.to_string())],
+            &[
+                ("count", &count.to_string()),
+                ("REGION_NAME", region_name),
+                ("REGION_ACRONYM", acronym.unwrap_or("(unknown)")),
+                ("PARENT_NAME", parent_name.unwrap_or("(unknown)")),
+                ("PARENT_ACRONYM", parent_acronym.unwrap_or("(unknown)")),
+                ("REGION_CONTEXT_BLOCK", &region_context_block),
+            ],
         );
 
         let user_prompt = format!(
-            "Generate exactly {} distinct PubMed search queries for the brain region: {}. \
+            "Generate exactly {} distinct PubMed search queries for the brain region: {}{}. \
              Each query should target a different research aspect (anatomy, function, connectivity, disorders, development, etc.). \
              Use the create_pubmed_query tool for each query.",
-            count, region_name
+            count,
+            region_name,
+            acronym
+                .map(|a| format!(" (acronym: {})", a))
+                .unwrap_or_default(),
         );
 
         // Generate JSON schema for BooleanQuery using schemars
