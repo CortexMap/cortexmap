@@ -15,12 +15,15 @@ fn get_test_database_url() -> String {
 async fn setup_test_context() -> InfraContext<StdInfra> {
     let ctx = StdInfraContext {
         database_url: get_test_database_url(),
-        endpoint: std::env::var("S3_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:9000".to_string()),
-        access_key: std::env::var("S3_ACCESS_KEY")
-            .unwrap_or_else(|_| "test_access_key".to_string()),
-        secret_key: std::env::var("S3_SECRET_KEY")
-            .unwrap_or_else(|_| "test_secret_key".to_string()),
+        endpoint: Some(
+            std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string()),
+        ),
+        access_key: Some(
+            std::env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "test_access_key".to_string()),
+        ),
+        secret_key: Some(
+            std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "test_secret_key".to_string()),
+        ),
         bucket: std::env::var("S3_BUCKET").unwrap_or_else(|_| "test-bucket".to_string()),
     };
 

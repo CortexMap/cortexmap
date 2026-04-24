@@ -679,8 +679,11 @@ async fn get_config_propagates_service_error_as_500() {
 }
 
 #[tokio::test]
-async fn pipeline_trigger_empty_body_is_noop_returning_defaults() {
-    // PipelineTriggerRequest defaults every flag to false → no phase runs.
+async fn pipeline_trigger_empty_body_accepted_with_echo() {
+    // PipelineTriggerRequest defaults every flag to false. The handler spawns
+    // the pipeline work in the background and returns 202 Accepted immediately
+    // with an echo of the parsed request (per-phase results are observable via
+    // tracing, not the HTTP response).
     let svc = Arc::new(FakeServices::new());
     let app = router(svc.clone());
 
@@ -691,21 +694,20 @@ async fn pipeline_trigger_empty_body_is_noop_returning_defaults() {
         ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
     let body = read_body_json(resp).await;
-    // All per-phase outcomes stay `null` when their flag is false.
-    assert!(body["reset_queries_deleted"].is_null());
-    assert!(body["generate_queries_result"].is_null());
-    assert!(body["discover_papers_result"].is_null());
-    assert!(body["ensure_workers_ok"].is_null());
-    // `errors` is always present as an array (never omitted).
-    assert!(body["errors"].is_array());
-    assert_eq!(body["errors"].as_array().unwrap().len(), 0);
+    // Async ack shape: status + message + request echo.
+    assert_eq!(body["status"], "accepted");
+    assert!(body["message"].is_string());
+    assert_eq!(body["request"]["reset_queries"], false);
+    assert_eq!(body["request"]["generate_queries"], false);
+    assert_eq!(body["request"]["discover_papers"], false);
+    assert_eq!(body["request"]["ensure_workers"], false);
 }
 
 #[tokio::test]
-async fn pipeline_trigger_with_per_phase_opt_in_runs_selected_phases() {
+async fn pipeline_trigger_with_per_phase_opt_in_accepted_with_echo() {
     let svc = Arc::new(FakeServices::new());
     *svc.pipeline_trigger_delete_count.lock().unwrap() = Some(42);
     *svc.pipeline_trigger_gen_queries.lock().unwrap() = Some((10, 30));
@@ -724,17 +726,16 @@ async fn pipeline_trigger_with_per_phase_opt_in_runs_selected_phases() {
         .oneshot(post_json("/orch/api/pipeline/trigger", req_body))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    // Pipeline work is spawned into a background task; the handler returns
+    // 202 Accepted with an echo of the parsed flags.
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
     let body = read_body_json(resp).await;
-    assert_eq!(body["reset_queries_deleted"], 42);
-    // Tuple serializes as a two-element array.
-    assert_eq!(body["generate_queries_result"][0], 10);
-    assert_eq!(body["generate_queries_result"][1], 30);
-    assert_eq!(body["discover_papers_result"][0], 5);
-    assert_eq!(body["discover_papers_result"][1], 12);
-    assert_eq!(body["ensure_workers_ok"], true);
-    assert!(body["errors"].as_array().unwrap().is_empty());
+    assert_eq!(body["status"], "accepted");
+    assert_eq!(body["request"]["reset_queries"], true);
+    assert_eq!(body["request"]["generate_queries"], true);
+    assert_eq!(body["request"]["discover_papers"], true);
+    assert_eq!(body["request"]["ensure_workers"], true);
 }
 
 #[tokio::test]
@@ -1001,14 +1002,15 @@ async fn eval_run_cost_endpoint_rejects_invalid_uuid_with_400() {
 }
 
 #[tokio::test]
-async fn pipeline_trigger_preserves_errors_on_partial_phase_failure() {
-    // Opt in to all phases but have Phase 1 return staged OK and Phase 2 fail
-    // by leaving `pipeline_trigger_discover` None (which yields `not staged`
-    // error). The trigger_pipeline orchestrator is expected to SWALLOW the
-    // per-phase error and return it in `errors: [..]` rather than 500.
+async fn pipeline_trigger_returns_accepted_even_when_phase_would_fail() {
+    // With the async handler, per-phase results (including failures) happen on
+    // a spawned task and surface via tracing, not the HTTP response. The
+    // endpoint's contract is now to accept the request and return 202
+    // immediately regardless of whether downstream phases will succeed.
     let svc = Arc::new(FakeServices::new());
     *svc.pipeline_trigger_gen_queries.lock().unwrap() = Some((3, 5));
-    // Leave pipeline_trigger_discover unset so discover_new_papers errors.
+    // Leave pipeline_trigger_discover unset so discover_new_papers errors in
+    // the background; the HTTP response must still be 202 Accepted.
 
     let app = router(svc);
 
@@ -1020,25 +1022,14 @@ async fn pipeline_trigger_preserves_errors_on_partial_phase_failure() {
         .oneshot(post_json("/orch/api/pipeline/trigger", req_body))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
     let body = read_body_json(resp).await;
-    assert_eq!(body["generate_queries_result"][0], 3);
-    assert_eq!(body["generate_queries_result"][1], 5);
-    assert!(body["discover_papers_result"].is_null());
-    let errors = body["errors"].as_array().expect("errors array");
-    assert!(
-        !errors.is_empty(),
-        "expected at least one phase error, got {body:#}"
-    );
-    assert!(
-        errors
-            .iter()
-            .any(|e| e.as_str().unwrap_or("").contains("discover")
-                || e.as_str().unwrap_or("").contains("Phase 2")
-                || e.as_str().unwrap_or("").contains("not staged")),
-        "expected the Phase-2 failure surface to include a descriptive message: {body:#}"
-    );
+    assert_eq!(body["status"], "accepted");
+    assert_eq!(body["request"]["generate_queries"], true);
+    assert_eq!(body["request"]["discover_papers"], true);
+    assert_eq!(body["request"]["reset_queries"], false);
+    assert_eq!(body["request"]["ensure_workers"], false);
 }
 
 // ---------------------------------------------------------------------------

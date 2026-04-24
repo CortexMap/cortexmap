@@ -698,10 +698,11 @@ mod http_handler_tests {
 
     // -- POST /orch/api/pipeline/trigger -------------------------------------
 
-    /// Empty body → every phase flag defaults to `false` → every phase is
-    /// skipped → response fields stay `None` and `errors` is empty.
+    /// Empty body → every phase flag defaults to `false`. With the async
+    /// handler the request is accepted and spawned into a background task,
+    /// so the HTTP response is 202 Accepted with a parsed-request echo.
     /// Exercises: route table, Json extractor, #[serde(default)] on every
-    /// PipelineTriggerRequest field, trigger_pipeline control flow.
+    /// PipelineTriggerRequest field, async spawn ack.
     #[tokio::test]
     async fn pipeline_trigger_empty_body_is_noop() {
         if !should_run() {
@@ -710,28 +711,29 @@ mod http_handler_tests {
         }
         let router = build_router();
         let resp = post_json(&router, "/orch/api/pipeline/trigger", serde_json::json!({})).await;
-        assert_eq!(resp.status(), StatusCode::OK, "empty body should be 200");
+        assert_eq!(
+            resp.status(),
+            StatusCode::ACCEPTED,
+            "empty body should be accepted (202)"
+        );
         let body = read_body_json(resp).await;
 
-        // Every phase was skipped → every result slot is null.
-        assert!(body["reset_queries_deleted"].is_null());
-        assert!(body["generate_queries_result"].is_null());
-        assert!(body["discover_papers_result"].is_null());
-        assert!(body["ensure_workers_ok"].is_null());
-
-        let errors = body["errors"].as_array().expect("errors array");
-        assert!(
-            errors.is_empty(),
-            "no phases ran, so no errors expected, got {errors:?}"
-        );
-        println!("✅ POST /pipeline/trigger {{}} is a no-op");
+        // Async ack shape: the handler echoes the parsed flags but does NOT
+        // wait for the spawned pipeline task to finish.
+        assert_eq!(body["status"], "accepted");
+        assert!(body["message"].is_string());
+        assert_eq!(body["request"]["reset_queries"], false);
+        assert_eq!(body["request"]["generate_queries"], false);
+        assert_eq!(body["request"]["discover_papers"], false);
+        assert_eq!(body["request"]["ensure_workers"], false);
+        println!("✅ POST /pipeline/trigger {{}} returns 202 accepted");
     }
 
     /// Completely missing body (no content-type, no JSON) → axum's Json
     /// extractor returns 400 or 415. Either is fine; we just assert the
-    /// handler did NOT return 200. Guards against accidental `#[derive(Default)]`
-    /// + `Option<Json<...>>` regressions that would make the endpoint
-    /// accept any input.
+    /// handler did NOT accept the request (no 2xx). Guards against accidental
+    /// `#[derive(Default)]` + `Option<Json<...>>` regressions that would make
+    /// the endpoint accept any input.
     #[tokio::test]
     async fn pipeline_trigger_malformed_body_rejected() {
         if !should_run() {
@@ -746,10 +748,10 @@ mod http_handler_tests {
             .body(Body::from("not json at all"))
             .unwrap();
         let resp = router.oneshot(req).await.expect("oneshot");
-        assert_ne!(
-            resp.status(),
-            StatusCode::OK,
-            "malformed JSON must not return 200"
+        assert!(
+            !resp.status().is_success(),
+            "malformed JSON must not be accepted, got {}",
+            resp.status()
         );
         // Axum's Json extractor maps body-decode failures to 400 by default.
         assert!(
@@ -761,15 +763,13 @@ mod http_handler_tests {
     }
 
     /// `ensure_workers: true` with no downstream fetcher service (or an
-    /// unreachable one) → the phase fails but the endpoint still returns
-    /// 200 with the error surfaced inside `errors` and `ensure_workers_ok
-    /// = false`. This exercises the "per-phase failure is swallowed"
-    /// contract documented on `trigger_pipeline`.
+    /// unreachable one) → the phase will fail in the background task, but
+    /// the endpoint still returns 202 Accepted immediately. The handler
+    /// always returns 202 regardless of downstream availability because
+    /// pipeline work happens on a spawned task.
     ///
-    /// We set `FETCHER_HTTP_ADDR` to an unreachable port BEFORE building
-    /// the router so the lazy http client tries and fails quickly.
-    /// Wrapped in a 30s guardrail — fetcher calls on an unreachable port
-    /// should RST immediately on localhost.
+    /// We still set `FETCHER_HTTP_ADDR` to an unreachable port so the
+    /// spawned task fails fast rather than leaking into later tests.
     #[tokio::test]
     async fn pipeline_trigger_ensure_workers_returns_200_even_on_failure() {
         if !should_run() {
@@ -808,54 +808,31 @@ mod http_handler_tests {
 
         let resp = resp.expect("pipeline_trigger ensure_workers blocked for >30s");
 
-        // Regardless of fetcher availability the HTTP status MUST be 200 —
-        // errors are returned inline, not as a 5xx.
+        // The HTTP status MUST be 202 — pipeline work is spawned into a
+        // background task so upstream availability cannot influence the
+        // response code.
         assert_eq!(
             resp.status(),
-            StatusCode::OK,
-            "per-phase failure must NOT produce a 5xx"
+            StatusCode::ACCEPTED,
+            "trigger handler must return 202 Accepted regardless of downstream state"
         );
         let body = read_body_json(resp).await;
 
-        // Other phases must remain unexecuted.
-        assert!(body["reset_queries_deleted"].is_null());
-        assert!(body["generate_queries_result"].is_null());
-        assert!(body["discover_papers_result"].is_null());
-
-        // ensure_workers_ok is either Some(true) on success or Some(false) on
-        // failure, never None (the phase was requested).
-        let ok = body["ensure_workers_ok"].as_bool();
-        assert!(
-            ok.is_some(),
-            "ensure_workers phase ran, so ensure_workers_ok must be set"
-        );
-
-        // `errors` array shape invariant: each entry is a string.
-        let errors = body["errors"].as_array().expect("errors array");
-        for e in errors {
-            assert!(e.is_string(), "every error entry must be a string");
-        }
-
-        // Cross-check: if the phase failed, there must be exactly one error
-        // prefixed "ensure_workers:".
-        if ok == Some(false) {
-            assert!(
-                errors
-                    .iter()
-                    .any(|e| e.as_str().unwrap_or("").starts_with("ensure_workers:")),
-                "failed ensure_workers must record an error with the phase prefix"
-            );
-        }
+        // Ack body echoes the parsed flags.
+        assert_eq!(body["status"], "accepted");
+        assert_eq!(body["request"]["ensure_workers"], true);
+        assert_eq!(body["request"]["reset_queries"], false);
+        assert_eq!(body["request"]["generate_queries"], false);
+        assert_eq!(body["request"]["discover_papers"], false);
         println!(
-            "✅ POST /pipeline/trigger {{ensure_workers: true}} returns 200 + well-formed body"
+            "✅ POST /pipeline/trigger {{ensure_workers: true}} returns 202 + well-formed ack"
         );
     }
 
-    /// Per-phase opt-in: sending `{"ensure_workers": true}` alone must leave
-    /// the other result slots as `None` (not `false`/0/empty-tuple) in the
-    /// response body. This is the contract guarantee for the dashboard UI
-    /// which renders "not requested" vs. "requested and failed" differently.
-    /// Uses a fast-failing fetcher addr so the whole test stays bounded.
+    /// Per-phase opt-in: sending `{"ensure_workers": true}` alone must echo
+    /// back exactly those flags in the ack body. The actual pipeline work
+    /// happens asynchronously, so this test only verifies the ack contract.
+    /// Uses a fast-failing fetcher addr so the spawned task doesn't leak.
     #[tokio::test]
     async fn pipeline_trigger_per_phase_opt_in_leaves_others_none() {
         if !should_run() {
@@ -889,36 +866,29 @@ mod http_handler_tests {
         }
 
         let resp = resp.expect("pipeline_trigger opt-in blocked for >30s");
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
         let body = read_body_json(resp).await;
 
-        // Per-phase opt-in contract: slots stay null for phases we did NOT
-        // request. This is how the dashboard distinguishes "phase skipped"
-        // from "phase ran and returned 0". If the serde serialisation of
-        // `Option<(usize, usize)>` ever changes to `null → []` or `None →
-        // false`, this assertion flags it.
-        assert!(
-            body["reset_queries_deleted"].is_null(),
-            "reset_queries was not requested; slot must be null, got {}",
-            body["reset_queries_deleted"]
+        // Ack-body contract: `request` mirrors the parsed PipelineTriggerRequest.
+        // Flags we did NOT request remain `false`; the one we requested is `true`.
+        assert_eq!(body["status"], "accepted");
+        assert_eq!(
+            body["request"]["reset_queries"], false,
+            "reset_queries was not requested, ack should echo false"
         );
-        assert!(
-            body["generate_queries_result"].is_null(),
-            "generate_queries was not requested; slot must be null, got {}",
-            body["generate_queries_result"]
+        assert_eq!(
+            body["request"]["generate_queries"], false,
+            "generate_queries was not requested, ack should echo false"
         );
-        assert!(
-            body["discover_papers_result"].is_null(),
-            "discover_papers was not requested; slot must be null, got {}",
-            body["discover_papers_result"]
+        assert_eq!(
+            body["request"]["discover_papers"], false,
+            "discover_papers was not requested, ack should echo false"
         );
-        // ensure_workers_ok IS populated because the phase ran.
-        assert!(
-            body["ensure_workers_ok"].is_boolean(),
-            "ensure_workers was requested; slot must be a bool, got {}",
-            body["ensure_workers_ok"]
+        assert_eq!(
+            body["request"]["ensure_workers"], true,
+            "ensure_workers was requested, ack should echo true"
         );
-        println!("✅ POST /pipeline/trigger per-phase opt-in contract holds");
+        println!("✅ POST /pipeline/trigger per-phase opt-in ack contract holds");
     }
 
     // -- GET /orch/dev/api/redis-stats ---------------------------------------

@@ -864,12 +864,12 @@ async fn full_init_step_done_round_trip_through_http() {
     .expect("eval loop should complete without error");
 
     // The state machine must run the full pipeline: structural (4) +
-    // groundedness (2) + rubric (5) + deterministic citation (3) = 14.
-    // Matches `cache_hit.rs:454-459`.
+    // groundedness (2) + rubric (5) + gated rubric (5) + deterministic
+    // citation (3) = 19. Matches `cache_hit.rs:454-459`.
     assert_eq!(
         metrics.len(),
-        14,
-        "first run must produce 14 metrics, got {}",
+        19,
+        "first run must produce 19 metrics, got {}",
         metrics.len()
     );
 
@@ -914,7 +914,7 @@ async fn second_run_hits_cache_and_returns_done_without_any_step() {
     )
     .await
     .expect("first run");
-    assert_eq!(first_metrics.len(), 14);
+    assert_eq!(first_metrics.len(), 19);
 
     // Second run — must short-circuit to Done on init.
     let (step_count, metrics) = drive_one(
@@ -931,7 +931,7 @@ async fn second_run_hits_cache_and_returns_done_without_any_step() {
         step_count, 0,
         "second run must issue ZERO CallLlm steps (full cache hit)"
     );
-    assert_eq!(metrics.len(), 14);
+    assert_eq!(metrics.len(), 19);
     assert!(
         metrics.iter().all(|m| m.cached),
         "every metric on the second run must be cached=true"
