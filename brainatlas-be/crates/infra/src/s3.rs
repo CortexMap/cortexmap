@@ -42,7 +42,7 @@ impl BrainAtlasS3 {
     /// chain (e.g. the EC2 instance profile) for native AWS S3.
     ///
     /// Empty-string values are treated as absent: passing `Some("")` to
-    /// `endpoint_url` or `Credentials::from_keys` produces a broken SDK client
+    /// `endpoint_url` or the credentials provider produces a broken SDK client
     /// (dispatch failures, empty-endpoint URLs), so the helper below strips
     /// them out and callers can't accidentally wire an empty env var through.
     pub fn new(
