@@ -34,18 +34,32 @@ impl BrainAtlasInfra {
     pub fn new() -> Self {
         let env = BrainAtlasEnvInfra::new();
 
-        // Read S3 bucket name from env; credentials are sourced from EC2
-        // instance profile. Empty-string env vars must not be passed through
-        // unchanged: the SDK treats `Some("")` like a configured value and
-        // produces dispatch failures instead of a clear error.
+        // Read S3 bucket name from env. Empty-string env vars must not be
+        // passed through unchanged: the SDK treats `Some("")` like a configured
+        // value and produces dispatch failures instead of a clear error.
         let s3_bucket = env
             .get("S3_BUCKET")
             .ok()
             .filter(|s| !s.trim().is_empty())
             .expect("S3_BUCKET env var is required and must be non-empty");
 
+        // Optional S3 endpoint/credentials. When set (e.g. via docker-compose
+        // for MinIO / NAS), the S3 client uses static credentials + path-style
+        // addressing against the custom endpoint. When unset, it falls back to
+        // the AWS default credential chain (EC2 instance profile) for native
+        // AWS S3. `BrainAtlasS3::new` filters empty strings, so passing the raw
+        // env values (including `${VAR:-}` empties from compose) is safe.
+        let s3_endpoint = env.get("S3_ENDPOINT").ok();
+        let s3_access_key = env.get("S3_ACCESS_KEY").ok();
+        let s3_secret_key = env.get("S3_SECRET_KEY").ok();
+
         let pg = BrainAtlasPostgresql::new();
-        let s3 = BrainAtlasS3::new(s3_bucket);
+        let s3 = BrainAtlasS3::new(
+            s3_endpoint.as_deref(),
+            s3_access_key.as_deref(),
+            s3_secret_key.as_deref(),
+            s3_bucket,
+        );
         let llm = OpenAiCompatibleClient::new();
         let vectordb = BrainAtlasVectorDB::new();
         let llm_usage = BrainAtlasLlmUsage::new();
